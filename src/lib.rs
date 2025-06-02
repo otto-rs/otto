@@ -1,7 +1,11 @@
 pub mod cfg;
-#[macro_use]
 pub mod cli;
 pub mod cmd;
+pub mod executor;
+
+pub use cfg::otto::Otto;
+pub use cli::parse::Parser;
+pub use executor::{Task, TaskSpec, TaskStatus, TaskScheduler};
 
 #[cfg(test)]
 mod tests {

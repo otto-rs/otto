@@ -15,6 +15,7 @@ use hex;
 use sha2::{Digest, Sha256};
 
 use crate::cfg::config::{Config, Otto, Param, Task, Tasks, Value};
+  // Test-only imports
 
 pub type DAG<T> = Dag<T, (), u32>;
 
@@ -143,7 +144,10 @@ impl TaskSpec {
     #[must_use]
     pub fn from_task(task: &Task) -> Self {
         let name = task.name.clone();
-        let deps = task.before.clone();
+        let mut deps = task.deps.clone();
+        // Add before dependencies - tasks that must complete before this one
+        deps.extend(task.before.iter().cloned());
+        // Note: We do NOT add after tasks here since they depend on us, not vice versa
         let envs = HashMap::new();
         let values = HashMap::new();
         let action = task.action.clone();
@@ -232,7 +236,10 @@ impl Parser {
     }
 
     fn load_config(args: &mut Vec<String>) -> Result<(Config, String)> {
-        let index = args.iter().position(|x| x == "--ottofile");
+        // Look for either "-o" or "--ottofile" in the argument list.
+        let index = args
+            .iter()
+            .position(|x| x == "-o" || x == "--ottofile");
         let value = index.map_or_else(
             || env::var("OTTOFILE").unwrap_or_else(|_| "./".to_owned()),
             |index| {
@@ -308,6 +315,14 @@ impl Parser {
                     .value_name("LEVEL")
                     .default_value("1")
                     .help("verbosity level"),
+            )
+            .arg(
+                Arg::new("timeout")
+                    .short('T')
+                    .long("timeout")
+                    .value_name("SECONDS")
+                    .value_parser(value_parser!(u64))
+                    .help("global timeout in seconds (overrides task-specific timeouts)"),
             );
         for task in tasks.values() {
             command = command.subcommand(Self::task_to_command(task));
@@ -347,41 +362,57 @@ impl Parser {
     }
 
     pub fn parse(&mut self) -> Result<(Otto, DAG<TaskSpec>, String)> {
-        // Create clap commands for 'otto' and jobs
-        let otto_command = Self::otto_to_command(&self.config.otto, &self.config.tasks);
-
-        // Parse 'otto' command and update Otto fields
-        let mut otto = self.parse_otto_command(otto_command, &self.pargs[0])?;
-
-        // Process the jobs with their default values and command line parameters
-        let tasks = self.process_tasks()?;
+        // Process the otto command arguments
+        let mut otto = self.process_args()?;
 
         // Collect the first item in each parg, skipping the first one.
         let configured_tasks = self.pargs.iter().skip(1).map(|p| p[0].clone()).collect::<Vec<String>>();
 
         // If tasks were passed as arguments, they replace the default tasks.
-        // Otherwise, the default tasks remain.
+        // Otherwise, use the default tasks from the config.
         if configured_tasks.is_empty() {
             otto.tasks = self.config.otto.tasks.clone();
         } else {
             otto.tasks = configured_tasks;
         }
 
+        // Process only the requested tasks and their dependencies
+        let tasks = self.process_tasks_with_filter(&otto.tasks)?;
+
         // Return all jobs from the Ottofile, and the updated Otto struct
         Ok((otto, tasks, self.hash.clone()))
     }
 
-    fn process_tasks(&self) -> Result<DAG<TaskSpec>> {
+    fn process_tasks_with_filter(&self, requested_tasks: &[String]) -> Result<DAG<TaskSpec>> {
         // Initialize an empty Dag and an index map
         let mut dag: DAG<TaskSpec> = DAG::new();
         let mut indices: HashMap<String, NodeIndex<u32>> = HashMap::new();
 
-        // Iterate through the tasks loaded from the Ottofile
-        for task in self.config.tasks.values() {
-            // Create a new job based on the task
+        // Helper function to recursively add a task and its dependencies
+        fn add_task_and_deps(
+            task_name: &str,
+            config: &Config,
+            dag: &mut DAG<TaskSpec>,
+            indices: &mut HashMap<String, NodeIndex<u32>>,
+            pargs: &[Vec<String>],
+        ) -> Result<()> {
+            // Skip if already added
+            if indices.contains_key(task_name) {
+                return Ok(());
+            }
+
+            let task = config.tasks.get(task_name)
+                .ok_or_else(|| eyre!("Task {} not found", task_name))?;
+
+            // First add all dependencies recursively
+            for dep in task.deps.iter().chain(task.before.iter()) {
+                add_task_and_deps(dep, config, dag, indices, pargs)?;
+            }
+
+            // Create the task spec
             let mut spec = TaskSpec::from_task(task);
 
-            // Apply the default values for each task
+            // Apply default values and command line parameters
             for (name, param) in &task.params {
                 if let Some(default_value) = &param.default {
                     let value = Value::Item(default_value.clone());
@@ -389,37 +420,45 @@ impl Parser {
                 }
             }
 
-            // Check if the task is mentioned in the command line and override the default values with the passed parameters
-            if let Some(task_args) = self.pargs[1..].iter().find(|partition| partition[0] == task.name) {
-                // Create a clap command for the given task
-                let task_command = Self::task_to_command(task);
-
-                // Parse args using the task command
+            // Check for command line parameters
+            if let Some(task_args) = pargs[1..].iter().find(|partition| partition[0] == task.name) {
+                let task_command = Parser::task_to_command(task);
                 let matches = task_command.get_matches_from(task_args);
 
-                // Update the job fields with the parsed values
                 for param in task.params.values() {
                     if let Some(value) = matches.get_one::<String>(param.name.as_str()) {
                         spec.values.insert(param.name.clone(), Value::Item(value.to_string()));
+                        // Also add to environment variables
+                        spec.envs.insert(param.name.clone(), value.to_string());
                     }
                 }
             }
 
-            // Add the processed job to the Dag and index map
+            // Add the task to the DAG
             let index = dag.add_node(spec.clone());
-            indices.insert(spec.name.clone(), index);
-        }
+            indices.insert(task_name.to_string(), index);
 
-        // Iterate over the jobs a second time to handle 'after' dependencies
-        for task in self.config.tasks.values() {
-            for after_task_name in &task.after {
-                let node = indices.get(&task.name).expect("Job not found in indices");
-                let dep_node = indices.get(after_task_name).expect("Dependency not found in indices");
-                dag.add_edge(*dep_node, *node, ())?;
+            // Add edges for dependencies
+            for dep_name in task.deps.iter().chain(task.before.iter()) {
+                let dep_index = indices.get(dep_name).expect("Dependency should exist");
+                dag.add_edge(*dep_index, index, ())?;
             }
+
+            // Add edges for 'after' dependencies
+            for after_name in &task.after {
+                add_task_and_deps(after_name, config, dag, indices, pargs)?;
+                let after_index = indices.get(after_name).expect("After task should exist");
+                dag.add_edge(index, *after_index, ())?;
+            }
+
+            Ok(())
         }
 
-        // Return the completed Dag
+        // Add each requested task and its dependencies
+        for task_name in requested_tasks {
+            add_task_and_deps(task_name, &self.config, &mut dag, &mut indices, &self.pargs)?;
+        }
+
         Ok(dag)
     }
 
@@ -429,48 +468,38 @@ impl Parser {
         otto_command.get_matches_from(["otto", "--help"]);
     }
 
-    fn parse_otto_command(&self, otto_command: Command, args: &[String]) -> Result<Otto> {
-        // Parse 'otto' command using args and update the Otto fields
+    fn process_args(&mut self) -> Result<Otto> {
+        let mut otto = self.config.otto.clone();
 
         // if config.tasks is empty, then show default help for 'otto' command and exit
         if self.config.tasks.is_empty() {
             self.handle_no_input();
         }
 
-        // Parse the arguments using clap's get_matches_from method
-        let matches = otto_command.get_matches_from(args);
+        // Create command with all task subcommands
+        let command = Self::otto_to_command(&otto, &self.config.tasks);
+        let matches = command.get_matches_from(&self.args);
 
-        let mut otto = self.config.otto.clone();
-
-        if matches.contains_id("api") {
-            if let Some(api) = matches.get_one::<String>("api") {
-                otto.api = api.to_string();
-            }
+        if let Some(api) = matches.get_one::<String>("api") {
+            otto.api = api.to_string();
         }
-        if matches.contains_id("verbosity") {
-            if let Some(verbosity) = matches.get_one::<String>("verbosity") {
-                otto.verbosity = verbosity.to_string();
-            }
+        if let Some(home) = matches.get_one::<String>("home") {
+            otto.home = home.to_string();
         }
-
-        if matches.contains_id("jobs") {
-            if let Some(jobs) = matches.get_one::<usize>("jobs") {
-                otto.jobs = *jobs;
-            }
+        if let Some(verbosity) = matches.get_one::<String>("verbosity") {
+            otto.verbosity = verbosity.parse::<u8>().unwrap_or(1);
         }
-        if matches.contains_id("tasks") {
-            if let Some(tasks) = matches.get_many::<String>("tasks") {
-                otto.tasks = tasks
-                    .into_iter()
-                    .map(std::string::ToString::to_string)
-                    .collect::<Vec<String>>();
-            }
+        if let Some(jobs) = matches.get_one::<usize>("jobs") {
+            otto.jobs = *jobs;
+        }
+        if let Some(timeout) = matches.get_one::<u64>("timeout") {
+            otto.timeout = Some(*timeout);
         }
 
         // right now args will have at least one element, the name of the otto binary
         // tasks will be ["*"]
         // so this logic is bunk at the moment
-        if args.len() == 1 && otto.tasks.is_empty() {
+        if self.args.len() == 1 && otto.tasks.is_empty() {
             return Err(eyre!("No tasks configified"));
         }
 
@@ -482,6 +511,8 @@ impl Parser {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::collections::HashSet;
+    use crate::cfg::param::{ParamType, Nargs};  // Test-only imports
 
     #[test]
     fn test_indices() {
@@ -514,19 +545,9 @@ mod tests {
             about: "A task runner".to_string(),
             api: "http://localhost:8000".to_string(),
             jobs: num_cpus::get(),
-            verbosity: "1".to_string(),
+            verbosity: 1,
             tasks: vec!["build".to_string()],
-        }
-    }
-
-    fn generate_test_task() -> Task {
-        Task {
-            name: "build".to_string(),
-            help: Some("Build the project".to_string()),
-            params: HashMap::new(),
-            before: vec![],
-            after: vec![],
-            action: "echo 'building'".to_string(),
+            timeout: None,
         }
     }
 
@@ -578,10 +599,21 @@ mod tests {
     #[test]
     fn test_parse_with_args() {
         let otto = generate_test_otto();
-        let task = generate_test_task();
+        
+        // Create a build task that matches what's expected
+        let build_task = Task {
+            name: "build".to_string(),
+            action: "echo build".to_string(),
+            deps: vec![],
+            before: vec![],
+            after: vec![],
+            params: HashMap::new(),
+            help: None,
+            timeout: Some(10),
+        };
 
         let mut tasks = HashMap::new();
-        tasks.insert(task.name.clone(), task);
+        tasks.insert(build_task.name.clone(), build_task);
 
         let args = vec!["otto".to_string(), "build".to_string()];
         let pargs = partitions(&args, &["build"]);
@@ -613,5 +645,297 @@ mod tests {
 
         // Assert job name
         assert_eq!(first_task.name, "build".to_string(), "comparing task name");
+    }
+
+    #[test]
+    fn test_task_dependencies() {
+        let task = Task {
+            name: "main".to_string(),
+            action: "echo main".to_string(),
+            deps: vec!["dep1".to_string()],
+            before: vec!["before1".to_string()],
+            after: vec!["after1".to_string()],
+            params: HashMap::new(),
+            help: None,
+            timeout: Some(10),
+        };
+
+        // Test that TaskSpec::from_task only includes deps and before tasks
+        let spec = TaskSpec::from_task(&task);
+        let expected_deps: HashSet<String> = vec!["dep1".to_string(), "before1".to_string()]
+            .into_iter()
+            .collect();
+        let actual_deps: HashSet<String> = spec.deps.into_iter().collect();
+        assert_eq!(actual_deps, expected_deps, "TaskSpec should only include deps and before tasks");
+
+        // Test DAG construction with all dependency types
+        let mut tasks = HashMap::new();
+        tasks.insert(task.name.clone(), task.clone());
+
+        // Add the dependency tasks
+        for name in ["dep1", "before1", "after1"] {
+            let dep_task = Task {
+                name: name.to_string(),
+                action: format!("echo {}", name),
+                deps: vec![],
+                before: vec![],
+                after: vec![],
+                params: HashMap::new(),
+                help: None,
+                timeout: Some(10),
+            };
+            tasks.insert(name.to_string(), dep_task);
+        }
+
+        let args = vec!["otto".to_string()];
+        let pargs = vec![args.clone()];  // Initialize pargs with just the program name
+
+        let parser = Parser {
+            prog: "otto".to_string(),
+            cwd: PathBuf::from("/"),
+            user: "test".to_string(),
+            config: Config {
+                otto: Otto::default(),
+                tasks,
+            },
+            hash: "test".to_string(),
+            args,
+            pargs,
+        };
+
+        let dag = parser.process_tasks_with_filter(&[String::from("main")]).unwrap();
+
+        // Verify edges in the DAG
+        let main_idx = (0..dag.raw_nodes().len())
+            .map(NodeIndex::new)
+            .find(|&i| dag[i].name == "main")
+            .expect("Main task not found in DAG");
+        let dep1_idx = (0..dag.raw_nodes().len())
+            .map(NodeIndex::new)
+            .find(|&i| dag[i].name == "dep1")
+            .expect("dep1 task not found in DAG");
+        let before1_idx = (0..dag.raw_nodes().len())
+            .map(NodeIndex::new)
+            .find(|&i| dag[i].name == "before1")
+            .expect("before1 task not found in DAG");
+        let after1_idx = (0..dag.raw_nodes().len())
+            .map(NodeIndex::new)
+            .find(|&i| dag[i].name == "after1")
+            .expect("after1 task not found in DAG");
+
+        // Check that dep1 and before1 are dependencies of main
+        assert!(dag.find_edge(dep1_idx, main_idx).is_some(), "dep1 should be a dependency of main");
+        assert!(dag.find_edge(before1_idx, main_idx).is_some(), "before1 should be a dependency of main");
+
+        // Check that main is a dependency of after1
+        assert!(dag.find_edge(main_idx, after1_idx).is_some(), "main should be a dependency of after1");
+    }
+
+    #[test]
+    fn test_task_selection() -> Result<()> {
+        // Create a config with multiple tasks
+        let mut tasks = HashMap::new();
+        
+        // Task with no dependencies
+        tasks.insert("standalone".to_string(), Task {
+            name: "standalone".to_string(),
+            action: "echo standalone".to_string(),
+            deps: vec![],
+            before: vec![],
+            after: vec![],
+            params: HashMap::new(),
+            help: None,
+            timeout: Some(10),
+        });
+
+        // Task with dependencies
+        tasks.insert("dependent".to_string(), Task {
+            name: "dependent".to_string(),
+            action: "echo dependent".to_string(),
+            deps: vec!["dependency1".to_string()],
+            before: vec!["dependency2".to_string()],
+            after: vec!["after1".to_string()],
+            params: HashMap::new(),
+            help: None,
+            timeout: Some(10),
+        });
+
+        // Dependencies
+        tasks.insert("dependency1".to_string(), Task {
+            name: "dependency1".to_string(),
+            action: "echo dep1".to_string(),
+            deps: vec![],
+            before: vec![],
+            after: vec![],
+            params: HashMap::new(),
+            help: None,
+            timeout: Some(10),
+        });
+
+        tasks.insert("dependency2".to_string(), Task {
+            name: "dependency2".to_string(),
+            action: "echo dep2".to_string(),
+            deps: vec![],
+            before: vec![],
+            after: vec![],
+            params: HashMap::new(),
+            help: None,
+            timeout: Some(10),
+        });
+
+        tasks.insert("after1".to_string(), Task {
+            name: "after1".to_string(),
+            action: "echo after1".to_string(),
+            deps: vec![],
+            before: vec![],
+            after: vec![],
+            params: HashMap::new(),
+            help: None,
+            timeout: Some(10),
+        });
+
+        let otto = Otto {
+            name: "otto".to_string(),
+            about: "test".to_string(),
+            api: "1".to_string(),
+            jobs: 1,
+            home: "~/.otto".to_string(),
+            tasks: vec!["standalone".to_string()],
+            verbosity: 1,
+            timeout: None,
+        };
+
+        let config = Config { otto, tasks };
+
+        // Test 1: Running standalone task
+        let args = vec!["otto".to_string(), "standalone".to_string()];
+        let mut parser = Parser {
+            prog: "otto".to_string(),
+            cwd: PathBuf::from("/"),
+            user: "test".to_string(),
+            config: config.clone(),
+            hash: "test".to_string(),
+            args: args.clone(),
+            pargs: partitions(&args, &["standalone"]),
+        };
+
+        let (_, dag, _) = parser.parse()?;
+        assert_eq!(dag.node_count(), 1, "Standalone task should create exactly one node");
+        assert_eq!(dag.edge_count(), 0, "Standalone task should have no edges");
+
+        // Test 2: Running dependent task
+        let args = vec!["otto".to_string(), "dependent".to_string()];
+        let mut parser = Parser {
+            prog: "otto".to_string(),
+            cwd: PathBuf::from("/"),
+            user: "test".to_string(),
+            config: config.clone(),
+            hash: "test".to_string(),
+            args: args.clone(),
+            pargs: partitions(&args, &["dependent"]),
+        };
+
+        let (_, dag, _) = parser.parse()?;
+        assert_eq!(dag.node_count(), 4, "Should include dependent task and its dependencies");
+        
+        // Verify the correct edges exist
+        let mut found_edges = HashSet::new();
+        for edge in dag.raw_edges() {
+            let from = &dag.raw_nodes()[edge.source().index()].weight.name;
+            let to = &dag.raw_nodes()[edge.target().index()].weight.name;
+            found_edges.insert((from.clone(), to.clone()));
+        }
+
+        assert!(found_edges.contains(&("dependency1".to_string(), "dependent".to_string())), 
+            "Should have edge from dependency1 to dependent");
+        assert!(found_edges.contains(&("dependency2".to_string(), "dependent".to_string())), 
+            "Should have edge from dependency2 to dependent");
+        assert!(found_edges.contains(&("dependent".to_string(), "after1".to_string())), 
+            "Should have edge from dependent to after1");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parameter_passing() -> Result<()> {
+        // Create a task with parameters
+        let mut params = HashMap::new();
+        params.insert("-g|--greeting".to_string(), Param {
+            name: "greeting".to_string(),
+            short: Some('g'),
+            long: Some("greeting".to_string()),
+            default: Some("hello".to_string()),
+            choices: vec!["hello".to_string(), "howdy".to_string()],
+            help: Some("greeting help".to_string()),
+            param_type: ParamType::OPT,
+            dest: None,
+            metavar: None,
+            constant: Value::Empty,
+            nargs: Nargs::One,
+            value: Value::Empty,
+        });
+
+        let mut tasks = HashMap::new();
+        tasks.insert("greet".to_string(), Task {
+            name: "greet".to_string(),
+            action: "echo ${greeting}".to_string(),
+            deps: vec![],
+            before: vec![],
+            after: vec![],
+            params,
+            help: None,
+            timeout: Some(10),
+        });
+
+        let otto = Otto {
+            name: "otto".to_string(),
+            about: "test".to_string(),
+            api: "1".to_string(),
+            jobs: 1,
+            home: "~/.otto".to_string(),
+            tasks: vec!["greet".to_string()],
+            verbosity: 1,
+            timeout: None,
+        };
+
+        let config = Config { otto, tasks };
+
+        // Test 1: Default parameter value
+        let args = vec!["otto".to_string(), "greet".to_string()];
+        let mut parser = Parser {
+            prog: "otto".to_string(),
+            cwd: PathBuf::from("/"),
+            user: "test".to_string(),
+            config: config.clone(),
+            hash: "test".to_string(),
+            args: args.clone(),
+            pargs: partitions(&args, &["greet"]),
+        };
+
+        let (_, dag, _) = parser.parse()?;
+        let task = &dag.raw_nodes()[0].weight;
+        assert_eq!(task.values.get("greeting").unwrap(), &Value::Item("hello".to_string()),
+            "Default parameter value not set correctly");
+
+        // Test 2: Override parameter value
+        let args = vec!["otto".to_string(), "greet".to_string(), "-g".to_string(), "howdy".to_string()];
+        let mut parser = Parser {
+            prog: "otto".to_string(),
+            cwd: PathBuf::from("/"),
+            user: "test".to_string(),
+            config: config.clone(),
+            hash: "test".to_string(),
+            args: args.clone(),
+            pargs: partitions(&args, &["greet"]),
+        };
+
+        let (_, dag, _) = parser.parse()?;
+        let task = &dag.raw_nodes()[0].weight;
+        assert_eq!(task.values.get("greeting").unwrap(), &Value::Item("howdy".to_string()),
+            "Parameter override not working");
+        assert_eq!(task.envs.get("greeting").unwrap(), "howdy",
+            "Parameter not added to environment variables");
+
+        Ok(())
     }
 }

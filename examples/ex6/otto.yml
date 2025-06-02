@@ -1,0 +1,70 @@
+name: complex-workflow
+description: Demonstrates complex task dependencies and concurrent execution
+
+tasks:
+  start:
+    action: |
+      #!/bin/bash
+      echo "[START] Beginning workflow"
+      sleep 1
+      echo "[START] Complete"
+    type: io
+    timeout: 60
+
+  task1:
+    action: |
+      #!/bin/bash
+      echo "[TASK1] Processing"
+      sleep 2
+      echo "[TASK1] Complete"
+    type: cpu
+    timeout: 60
+    deps: [start]
+
+  task2:
+    action: |
+      #!/bin/bash
+      echo "[TASK2] Processing"
+      sleep 2
+      echo "[TASK2] Complete"
+    type: cpu
+    timeout: 60
+    deps: [start]
+
+  task3:
+    action: |
+      #!/bin/bash
+      echo "[TASK3] Processing"
+      sleep 3
+      echo "[TASK3] Complete"
+    type: cpu
+    timeout: 60
+    deps: [task1]
+
+  task4:
+    action: |
+      #!/bin/bash
+      echo "[TASK4] Processing"
+      sleep 3
+      echo "[TASK4] Complete"
+    type: cpu
+    timeout: 60
+    deps: [task2]
+
+  combine:
+    action: |
+      #!/bin/bash
+      echo "[COMBINE] Processing results from Task3 and Task4"
+      sleep 1
+      echo "[COMBINE] Complete"
+    type: io
+    timeout: 60
+    deps: [task3, task4]
+
+  finish:
+    action: |
+      #!/bin/bash
+      echo "[FINISH] All tasks completed successfully!"
+    type: io
+    timeout: 60
+    deps: [combine] 

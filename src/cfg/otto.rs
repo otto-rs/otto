@@ -27,8 +27,8 @@ fn default_tasks() -> Vec<String> {
     vec!["*".to_string()]
 }
 
-fn default_verbosity() -> String {
-    "1".to_string()
+fn default_verbosity() -> u8 {
+    1
 }
 
 #[must_use]
@@ -41,6 +41,7 @@ pub fn default_otto() -> Otto {
         home: default_home(),
         tasks: default_tasks(),
         verbosity: default_verbosity(),
+        timeout: None,
     }
 }
 
@@ -65,11 +66,23 @@ pub struct Otto {
     pub tasks: Vec<String>,
 
     #[serde(default = "default_verbosity")]
-    pub verbosity: String,
+    pub verbosity: u8,
+
+    #[serde(default)]
+    pub timeout: Option<u64>,
 }
 
 impl Default for Otto {
     fn default() -> Self {
-        default_otto()
+        Self {
+            name: default_name(),
+            about: default_about(),
+            api: default_api(),
+            jobs: default_jobs(),
+            home: default_home(),
+            tasks: default_tasks(),
+            verbosity: default_verbosity(),
+            timeout: None,
+        }
     }
 }
