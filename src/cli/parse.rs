@@ -34,7 +34,7 @@ fn calculate_hash(action: &String) -> String {
     let mut hasher = Sha256::new();
     hasher.update(action);
     let result = hasher.finalize();
-    hex::encode(result)
+    hex::encode(&result)[..8].to_string()
 }
 
 #[allow(dead_code)]
@@ -150,7 +150,7 @@ impl TaskSpec {
         // Note: We do NOT add after tasks here since they depend on us, not vice versa
         let envs = HashMap::new();
         let values = HashMap::new();
-        let action = task.action.clone();
+        let action = task.action.trim().to_string();  // Trim whitespace from script content
         Self::new(name, deps, envs, values, action)
     }
 }

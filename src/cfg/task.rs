@@ -31,11 +31,42 @@ pub struct Task {
     #[serde(default, deserialize_with = "deserialize_param_map")]
     pub params: Params,
 
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_script")]
     pub action: String,
 
     #[serde(default)]
     pub timeout: Option<u64>,
+}
+
+fn deserialize_script<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    // For block scalars, preserve the exact content but trim any common indentation
+    let lines: Vec<&str> = s.lines().collect();
+
+    // Find minimum indentation (ignoring empty lines)
+    let min_indent = lines.iter()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.len() - line.trim_start().len())
+        .min()
+        .unwrap_or(0);
+
+    // Remove common indentation from each line
+    let dedented: Vec<String> = lines.iter()
+        .map(|line| {
+            if line.len() > min_indent {
+                line[min_indent..].to_string()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect();
+
+    // Join lines and trim any leading/trailing empty lines
+    let result = dedented.join("\n");
+    Ok(result.trim_start().trim_end().to_string())
 }
 
 impl Task {

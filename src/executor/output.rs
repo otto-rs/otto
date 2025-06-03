@@ -46,18 +46,15 @@ pub struct TaskStreams {
 
 impl TaskStreams {
     /// Create new output streams for a task
-    pub async fn new(_task_name: &str, output_dir: &PathBuf) -> Result<Self> {
-        let timestamp = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs();
-
-        let stdout_file = output_dir.join(format!("stdout.{}.log", timestamp));
-        let stderr_file = output_dir.join(format!("stderr.{}.log", timestamp));
-
-        // Create output directory if it doesn't exist
-        if !output_dir.exists() {
-            tokio::fs::create_dir_all(output_dir).await?;
+    pub async fn new(task_name: &str, output_dir: &PathBuf) -> Result<Self> {
+        // Create task directory if it doesn't exist
+        let task_dir = output_dir.join(task_name);
+        if !task_dir.exists() {
+            tokio::fs::create_dir_all(&task_dir).await?;
         }
+
+        let stdout_file = task_dir.join("stdout.log");
+        let stderr_file = task_dir.join("stderr.log");
 
         // Create empty log files
         File::create(&stdout_file).await?;

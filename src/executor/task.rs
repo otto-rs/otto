@@ -6,6 +6,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
+use hex;
 
 /// Classification of task types for optimal execution strategy
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,15 +58,13 @@ pub struct Task {
     pub task_type: TaskType,
     /// Current status
     pub status: TaskStatus,
-    /// Output directory for artifacts
-    pub output_dir: PathBuf,
     /// Creation timestamp
     pub created_at: SystemTime,
 }
 
 impl Task {
     /// Create a new task from a specification
-    pub fn new(spec: TaskSpec, output_dir: PathBuf) -> Self {
+    pub fn new(spec: TaskSpec, _work_dir: PathBuf) -> Self {
         let task_type = Self::classify_task(&spec);
         let timeout = if spec.timeout == 0 {
             Self::get_default_timeout(&task_type)
@@ -77,7 +76,6 @@ impl Task {
             task_type,
             status: TaskStatus::Pending,
             spec: TaskSpec { timeout, ..spec },
-            output_dir,
             created_at: SystemTime::now(),
         }
     }
@@ -85,12 +83,9 @@ impl Task {
     /// Calculate task hash for storage
     pub fn calculate_hash(&self) -> String {
         let mut hasher = Sha256::new();
-        hasher.update(&self.spec.name);
         hasher.update(&self.spec.action);
-        for dep in &self.spec.deps {
-            hasher.update(dep);
-        }
-        format!("{:x}", hasher.finalize())
+        let result = hasher.finalize();
+        hex::encode(&result)[..8].to_string()
     }
 
     /// Classify task based on its properties
@@ -118,9 +113,9 @@ impl Task {
     /// Get default timeout based on task type
     fn get_default_timeout(task_type: &TaskType) -> u64 {
         match task_type {
-            TaskType::CPUBound => 1800,     // 30 minutes for build tasks
-            TaskType::NetworkBound => 300,   // 5 minutes for network tasks
-            TaskType::IOBound => 120,        // 2 minutes for I/O tasks
+            TaskType::IOBound => 60,      // 1 minute
+            TaskType::CPUBound => 300,    // 5 minutes
+            TaskType::NetworkBound => 180, // 3 minutes
         }
     }
 }

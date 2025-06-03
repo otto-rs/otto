@@ -3,6 +3,7 @@ use std::{
     path::PathBuf,
     sync::Arc,
     time::Duration,
+    os::unix::fs::PermissionsExt,
 };
 
 use eyre::{eyre, Result};
@@ -15,8 +16,8 @@ use tokio::{
 use tracing::{error, info};
 
 use super::{
-    output::TaskStreams,
     task::{Task, TaskStatus, TaskType},
+    workspace::Workspace,
 };
 
 /// Task scheduler that manages concurrent execution
@@ -27,10 +28,8 @@ pub struct TaskScheduler {
     io_semaphore: Arc<Semaphore>,
     /// Semaphore for CPU task limiting
     cpu_semaphore: Arc<Semaphore>,
-    /// Working directory for tasks
-    work_dir: PathBuf,
-    /// Task output streams
-    pub streams: Arc<TaskStreams>,
+    /// Workspace for path management
+    workspace: Arc<Workspace>,
     /// Tasks to execute
     tasks: Vec<Task>,
 }
@@ -42,14 +41,15 @@ impl TaskScheduler {
         io_limit: usize,
         cpu_limit: usize,
     ) -> Result<Self> {
-        let streams = TaskStreams::new("default", &work_dir).await?;
+        // Initialize workspace
+        let workspace = Workspace::new(work_dir).await?;
+        workspace.init().await?;
 
         Ok(Self {
             task_statuses: Arc::new(Mutex::new(HashMap::new())),
             io_semaphore: Arc::new(Semaphore::new(io_limit)),
             cpu_semaphore: Arc::new(Semaphore::new(cpu_limit)),
-            work_dir,
-            streams: Arc::new(streams),
+            workspace: Arc::new(workspace),
             tasks,
         })
     }
@@ -160,10 +160,14 @@ impl TaskScheduler {
         };
 
         let task_name = task.spec.name.clone();
-        let output_dir = task.output_dir.clone();
+        let task_dir = self.workspace.task(&task_name);
         let timeout_secs = task.spec.timeout;
         let task_statuses = self.task_statuses.clone();
         let deps = task.spec.deps.clone();
+        let workspace = self.workspace.clone();
+        let script_content = task.spec.action.clone();
+        let script_hash = task.calculate_hash();
+        let envs = task.spec.envs.clone();
 
         Ok(tokio::spawn(async move {
             // Acquire semaphore permit
@@ -187,19 +191,55 @@ impl TaskScheduler {
 
             info!("Starting task {}", task_name);
 
+            // Create task directory
+            tokio::fs::create_dir_all(&task_dir).await?;
+
+            // Cache script content
+            let script_cache = workspace.script_cache(&task_name, &script_hash);
+            tokio::fs::create_dir_all(script_cache.parent().unwrap()).await?;
+            if !script_cache.exists() {
+                tokio::fs::write(&script_cache, &script_content).await?;
+                // Make script executable
+                let mut perms = tokio::fs::metadata(&script_cache).await?.permissions();
+                perms.set_mode(0o755);
+                tokio::fs::set_permissions(&script_cache, perms).await?;
+            }
+
+            // Create script symlink
+            let script_path = workspace.script(&task_name, script_content.contains("python"));
+            if script_path.exists() {
+                tokio::fs::remove_file(&script_path).await?;
+            }
+            tokio::fs::symlink(&script_cache, &script_path).await?;
+
+            // Create output files
+            let stdout = workspace.stdout(&task_name);
+            let stderr = workspace.stderr(&task_name);
+
             // Execute the task with timeout
             let result = timeout(
                 Duration::from_secs(timeout_secs),
                 async {
-                    let mut cmd = Command::new("sh")
-                        .current_dir(&output_dir)
-                        .arg("-c")
-                        .arg(&task.spec.action)
-                        .envs(&task.spec.envs)
-                        .stdout(std::process::Stdio::inherit())
-                        .stderr(std::process::Stdio::inherit())
+                    let mut cmd = Command::new(&script_path)  // Execute the script directly
+                        .current_dir(&task_dir)
+                        .envs(&envs)  // Pass environment variables
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
                         .kill_on_drop(true)
                         .spawn()?;
+
+                    let mut stdout_file = tokio::fs::File::create(&stdout).await?;
+                    let mut stderr_file = tokio::fs::File::create(&stderr).await?;
+
+                    if let Some(stdout_handle) = cmd.stdout.take() {
+                        let mut stdout_reader = tokio::io::BufReader::new(stdout_handle);
+                        tokio::io::copy(&mut stdout_reader, &mut stdout_file).await?;
+                    }
+
+                    if let Some(stderr_handle) = cmd.stderr.take() {
+                        let mut stderr_reader = tokio::io::BufReader::new(stderr_handle);
+                        tokio::io::copy(&mut stderr_reader, &mut stderr_file).await?;
+                    }
 
                     // Wait for command completion
                     let status = cmd.wait().await?;
@@ -235,11 +275,9 @@ impl TaskScheduler {
         }))
     }
 
-    /// Get the directory for a task
-    pub fn get_task_dir(&self, task_name: &str) -> Result<PathBuf> {
-        let task_dir = self.work_dir.join(".otto").join(task_name);
-        std::fs::create_dir_all(&task_dir)?;
-        Ok(task_dir)
+    /// Get all task statuses
+    pub async fn get_task_statuses(&self) -> HashMap<String, TaskStatus> {
+        self.task_statuses.lock().await.clone()
     }
 
     /// Get the current status of a task
@@ -248,11 +286,6 @@ impl TaskScheduler {
         statuses.get(task_name)
             .cloned()
             .unwrap_or(TaskStatus::Pending)
-    }
-
-    /// Get all task statuses
-    pub async fn get_task_statuses(&self) -> HashMap<String, TaskStatus> {
-        self.task_statuses.lock().await.clone()
     }
 }
 
