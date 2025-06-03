@@ -198,6 +198,12 @@ impl TaskScheduler {
             let script_cache = workspace.script_cache(&task_name, &script_hash);
             tokio::fs::create_dir_all(script_cache.parent().unwrap()).await?;
             if !script_cache.exists() {
+                // Add shebang line if not present
+                let script_content = if !script_content.starts_with("#!") {
+                    format!("#!/bin/sh\n{}", script_content)
+                } else {
+                    script_content.clone()
+                };
                 tokio::fs::write(&script_cache, &script_content).await?;
                 // Make script executable
                 let mut perms = tokio::fs::metadata(&script_cache).await?.permissions();
@@ -297,7 +303,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[tokio::test]
-    async fn test_single_task_execution() -> Result<()> {
+    async fn test_task_execution() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
 
@@ -310,12 +316,88 @@ mod tests {
             timeout: 10,
         };
 
-        let task = Task::new(task, work_dir.clone());
+        let task = Task::new(task);
         let scheduler = TaskScheduler::new(vec![task], work_dir, 2, 2).await?;
         scheduler.execute_all().await?;
 
         let status = scheduler.get_task_status("test").await;
         assert_eq!(status, TaskStatus::Completed);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_task_dependencies() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let work_dir = PathBuf::from(temp_dir.path());
+
+        let tasks = vec![
+            TaskSpec {
+                name: "task1".to_string(),
+                action: "echo task1".to_string(),
+                deps: vec!["task2".to_string()],
+                envs: HashMap::new(),
+                working_dir: None,
+                timeout: 10,
+            },
+            TaskSpec {
+                name: "task2".to_string(),
+                action: "echo task2".to_string(),
+                deps: vec![],
+                envs: HashMap::new(),
+                working_dir: None,
+                timeout: 10,
+            },
+        ];
+
+        let tasks = tasks.into_iter()
+            .map(|spec| Task::new(spec))
+            .collect::<Vec<_>>();
+
+        let scheduler = TaskScheduler::new(tasks, work_dir, 2, 2).await?;
+        scheduler.execute_all().await?;
+
+        let task1_status = scheduler.get_task_status("task1").await;
+        let task2_status = scheduler.get_task_status("task2").await;
+
+        assert_eq!(task1_status, TaskStatus::Completed);
+        assert_eq!(task2_status, TaskStatus::Completed);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_task_failure() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let work_dir = PathBuf::from(temp_dir.path());
+
+        let tasks = vec![
+            TaskSpec {
+                name: "task1".to_string(),
+                action: "exit 1".to_string(),
+                deps: vec![],
+                envs: HashMap::new(),
+                working_dir: None,
+                timeout: 10,
+            },
+            TaskSpec {
+                name: "task2".to_string(),
+                action: "echo task2".to_string(),
+                deps: vec!["task1".to_string()],
+                envs: HashMap::new(),
+                working_dir: None,
+                timeout: 10,
+            },
+        ];
+
+        let tasks = tasks.into_iter()
+            .map(|spec| Task::new(spec))
+            .collect::<Vec<_>>();
+
+        let scheduler = TaskScheduler::new(tasks, work_dir, 2, 2).await?;
+        let result = scheduler.execute_all().await;
+
+        assert!(result.is_err());
 
         Ok(())
     }
@@ -346,7 +428,7 @@ mod tests {
         ];
 
         let tasks = tasks.into_iter()
-            .map(|spec| Task::new(spec, work_dir.clone()))
+            .map(|spec| Task::new(spec))
             .collect::<Vec<_>>();
 
         let scheduler = TaskScheduler::new(tasks, work_dir, 2, 2).await?;
@@ -393,7 +475,7 @@ mod tests {
         ];
 
         let tasks = tasks.into_iter()
-            .map(|spec| Task::new(spec, work_dir.clone()))
+            .map(|spec| Task::new(spec))
             .collect::<Vec<_>>();
 
         let start = Instant::now();
@@ -473,7 +555,7 @@ mod tests {
         ];
 
         let tasks = tasks.into_iter()
-            .map(|spec| Task::new(spec, work_dir.clone()))
+            .map(|spec| Task::new(spec))
             .collect::<Vec<_>>();
 
         let scheduler = TaskScheduler::new(tasks, work_dir, 2, 2).await?;

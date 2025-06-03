@@ -64,7 +64,7 @@ pub struct Task {
 
 impl Task {
     /// Create a new task from a specification
-    pub fn new(spec: TaskSpec, _work_dir: PathBuf) -> Self {
+    pub fn new(spec: TaskSpec) -> Self {
         let task_type = Self::classify_task(&spec);
         let timeout = if spec.timeout == 0 {
             Self::get_default_timeout(&task_type)
@@ -161,9 +161,9 @@ mod tests {
             timeout: 0,
         };
 
-        let task = Task::new(spec.clone(), PathBuf::from("/tmp"));
+        let task = Task::new(spec.clone());
         let hash1 = task.calculate_hash();
-        let task2 = Task::new(spec, PathBuf::from("/tmp"));
+        let task2 = Task::new(spec);
         let hash2 = task2.calculate_hash();
 
         assert_eq!(hash1, hash2, "Same task should produce same hash");

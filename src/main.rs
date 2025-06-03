@@ -31,7 +31,7 @@ async fn main() -> Result<(), Report> {
             working_dir: None,
             timeout: otto.timeout.unwrap_or(0),
         };
-        let task = Task::new(task_spec, work_dir.clone());
+        let task = Task::new(task_spec);
         task_map.insert(parse_spec.name, tasks.len());
         tasks.push(task);
     }
