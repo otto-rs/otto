@@ -12,12 +12,14 @@ use tokio::{
     sync::{mpsc, Mutex, Semaphore},
     task::JoinHandle,
     time::timeout,
+    io::BufReader,
 };
 use tracing::{error, info};
 
 use super::{
     task::{Task, TaskStatus, TaskType},
     workspace::Workspace,
+    output::{TaskStreams, OutputType},
 };
 
 /// Task scheduler that manages concurrent execution
@@ -218,9 +220,8 @@ impl TaskScheduler {
             }
             tokio::fs::symlink(&script_cache, &script_path).await?;
 
-            // Create output files
-            let stdout = workspace.stdout(&task_name);
-            let stderr = workspace.stderr(&task_name);
+            // Initialize task streams
+            let streams = TaskStreams::new(&task_name, &task_dir).await?;
 
             // Execute the task with timeout
             let result = timeout(
@@ -234,21 +235,34 @@ impl TaskScheduler {
                         .kill_on_drop(true)
                         .spawn()?;
 
-                    let mut stdout_file = tokio::fs::File::create(&stdout).await?;
-                    let mut stderr_file = tokio::fs::File::create(&stderr).await?;
+                    let stdout = cmd.stdout.take().unwrap();
+                    let stderr = cmd.stderr.take().unwrap();
 
-                    if let Some(stdout_handle) = cmd.stdout.take() {
-                        let mut stdout_reader = tokio::io::BufReader::new(stdout_handle);
-                        tokio::io::copy(&mut stdout_reader, &mut stdout_file).await?;
-                    }
+                    // Process stdout and stderr concurrently
+                    let stdout_handle = {
+                        let streams = streams.clone();
+                        let task_name = task_name.clone();
+                        tokio::spawn(async move {
+                            let reader = BufReader::new(stdout);
+                            streams.process_output(task_name, OutputType::Stdout, reader).await
+                        })
+                    };
 
-                    if let Some(stderr_handle) = cmd.stderr.take() {
-                        let mut stderr_reader = tokio::io::BufReader::new(stderr_handle);
-                        tokio::io::copy(&mut stderr_reader, &mut stderr_file).await?;
-                    }
+                    let stderr_handle = {
+                        let streams = streams.clone();
+                        let task_name = task_name.clone();
+                        tokio::spawn(async move {
+                            let reader = BufReader::new(stderr);
+                            streams.process_output(task_name, OutputType::Stderr, reader).await
+                        })
+                    };
 
                     // Wait for command completion
                     let status = cmd.wait().await?;
+
+                    // Wait for output processing to complete
+                    stdout_handle.await??;
+                    stderr_handle.await??;
 
                     if !status.success() {
                         return Err(eyre!(
@@ -313,7 +327,7 @@ mod tests {
             deps: vec![],
             envs: HashMap::new(),
             working_dir: None,
-            timeout: 10,
+            timeout: 5,
         };
 
         let task = Task::new(task);
@@ -338,7 +352,7 @@ mod tests {
                 deps: vec!["task2".to_string()],
                 envs: HashMap::new(),
                 working_dir: None,
-                timeout: 10,
+                timeout: 5,
             },
             TaskSpec {
                 name: "task2".to_string(),
@@ -346,7 +360,7 @@ mod tests {
                 deps: vec![],
                 envs: HashMap::new(),
                 working_dir: None,
-                timeout: 10,
+                timeout: 5,
             },
         ];
 
@@ -378,7 +392,7 @@ mod tests {
                 deps: vec![],
                 envs: HashMap::new(),
                 working_dir: None,
-                timeout: 10,
+                timeout: 5,
             },
             TaskSpec {
                 name: "task2".to_string(),
@@ -386,7 +400,7 @@ mod tests {
                 deps: vec!["task1".to_string()],
                 envs: HashMap::new(),
                 working_dir: None,
-                timeout: 10,
+                timeout: 5,
             },
         ];
 
@@ -415,7 +429,7 @@ mod tests {
                 deps: vec![],
                 envs: HashMap::new(),
                 working_dir: None,
-                timeout: 10,
+                timeout: 5,
             },
             TaskSpec {
                 name: "main".to_string(),
@@ -423,7 +437,7 @@ mod tests {
                 deps: vec!["dep".to_string()],
                 envs: HashMap::new(),
                 working_dir: None,
-                timeout: 10,
+                timeout: 5,
             },
         ];
 
@@ -454,7 +468,7 @@ mod tests {
                 deps: vec![],
                 envs: HashMap::new(),
                 working_dir: None,
-                timeout: 10,
+                timeout: 5,
             },
             TaskSpec {
                 name: "parallel2".to_string(),
@@ -462,7 +476,7 @@ mod tests {
                 deps: vec![],
                 envs: HashMap::new(),
                 working_dir: None,
-                timeout: 10,
+                timeout: 5,
             },
             TaskSpec {
                 name: "after".to_string(),
@@ -470,7 +484,7 @@ mod tests {
                 deps: vec!["parallel1".to_string(), "parallel2".to_string()],
                 envs: HashMap::new(),
                 working_dir: None,
-                timeout: 10,
+                timeout: 5,
             },
         ];
 
@@ -510,7 +524,7 @@ mod tests {
                 deps: vec![],
                 envs: HashMap::new(),
                 working_dir: None,
-                timeout: 10,
+                timeout: 5,
             },
             TaskSpec {
                 name: "task1".to_string(),
@@ -518,7 +532,7 @@ mod tests {
                 deps: vec!["start".to_string()],
                 envs: HashMap::new(),
                 working_dir: None,
-                timeout: 10,
+                timeout: 5,
             },
             TaskSpec {
                 name: "task2".to_string(),
@@ -526,7 +540,7 @@ mod tests {
                 deps: vec!["start".to_string()],
                 envs: HashMap::new(),
                 working_dir: None,
-                timeout: 10,
+                timeout: 5,
             },
             TaskSpec {
                 name: "task3".to_string(),
@@ -534,7 +548,7 @@ mod tests {
                 deps: vec!["task1".to_string()],
                 envs: HashMap::new(),
                 working_dir: None,
-                timeout: 10,
+                timeout: 5,
             },
             TaskSpec {
                 name: "task4".to_string(),
@@ -542,7 +556,7 @@ mod tests {
                 deps: vec!["task2".to_string()],
                 envs: HashMap::new(),
                 working_dir: None,
-                timeout: 10,
+                timeout: 5,
             },
             TaskSpec {
                 name: "finish".to_string(),
@@ -550,7 +564,7 @@ mod tests {
                 deps: vec!["task3".to_string(), "task4".to_string()],
                 envs: HashMap::new(),
                 working_dir: None,
-                timeout: 10,
+                timeout: 5,
             },
         ];
 

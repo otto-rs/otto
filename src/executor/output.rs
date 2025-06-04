@@ -1,6 +1,7 @@
 use std::{
     path::PathBuf,
     time::SystemTime,
+    io::{self, Write},
 };
 
 use eyre::Result;
@@ -33,8 +34,52 @@ pub struct TaskOutput {
     pub content: String,
 }
 
+/// A writer that writes to both a file and a terminal
+pub struct TeeWriter {
+    /// File to write to
+    file: File,
+    /// Whether this is stderr (true) or stdout (false)
+    is_stderr: bool,
+    /// Task name for prefixing output
+    task_name: String,
+}
+
+impl TeeWriter {
+    /// Create a new TeeWriter
+    pub async fn new(file: File, is_stderr: bool, task_name: String) -> Self {
+        Self {
+            file,
+            is_stderr,
+            task_name,
+        }
+    }
+
+    /// Write data to both file and terminal
+    pub async fn write(&mut self, data: &[u8]) -> Result<()> {
+        // Write to file
+        self.file.write_all(data).await?;
+        
+        // Write to terminal with task name prefix
+        let terminal_output = format!("[{}] {}", self.task_name, String::from_utf8_lossy(data));
+        if self.is_stderr {
+            eprint!("{}", terminal_output);
+        } else {
+            print!("{}", terminal_output);
+        }
+        
+        // Ensure terminal output is flushed
+        if self.is_stderr {
+            io::stderr().flush()?;
+        } else {
+            io::stdout().flush()?;
+        }
+        
+        Ok(())
+    }
+}
+
 /// Manages output streams for a task
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TaskStreams {
     /// Path to stdout log file
     pub stdout_file: PathBuf,
@@ -69,7 +114,7 @@ impl TaskStreams {
         })
     }
 
-    /// Process an output stream and write to file
+    /// Process an output stream and write to file and terminal
     pub async fn process_output(
         &self,
         task_name: String,
@@ -81,7 +126,13 @@ impl TaskStreams {
             OutputType::Stderr => &self.stderr_file,
         };
 
-        let mut file = File::create(output_file).await?;
+        let file = File::create(output_file).await?;
+        let mut writer = TeeWriter::new(
+            file,
+            matches!(output_type, OutputType::Stderr),
+            task_name.clone()
+        ).await;
+
         let mut line = String::new();
 
         while let Ok(n) = reader.read_line(&mut line).await {
@@ -96,8 +147,8 @@ impl TaskStreams {
                 content: line.clone(),
             };
 
-            // Write to file
-            file.write_all(line.as_bytes()).await?;
+            // Write to both file and terminal
+            writer.write(line.as_bytes()).await?;
             
             // Broadcast for real-time monitoring
             let _ = self.output_tx.send(output);

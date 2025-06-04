@@ -5,7 +5,7 @@ use eyre::Report;
 
 use otto::{
     cli::parse::Parser,
-    executor::{task::{Task, TaskSpec}, TaskScheduler},
+    executor::{task::{Task, TaskSpec}, TaskScheduler, Workspace},
 };
 
 #[tokio::main]
@@ -13,8 +13,9 @@ async fn main() -> Result<(), Report> {
     let args: Vec<String> = env::args().collect();
     let mut parser = Parser::new(args)?;
 
-    let (otto, dag, _) = parser.parse()?;
-    let work_dir = PathBuf::from(&otto.home);
+    let (otto, dag, hash) = parser.parse()?;
+    let workspace = Workspace::new_with_hash(PathBuf::from(&otto.home), hash).await?;
+    workspace.init().await?;
 
     // Convert DAG nodes into Tasks
     let mut tasks = Vec::new();
@@ -45,7 +46,7 @@ async fn main() -> Result<(), Report> {
         }
     }
 
-    let scheduler = TaskScheduler::new(tasks, work_dir, otto.jobs * 2, otto.jobs).await?;
+    let scheduler = TaskScheduler::new(tasks, workspace.run().clone(), otto.jobs * 2, otto.jobs).await?;
     scheduler.execute_all().await?;
 
     Ok(())

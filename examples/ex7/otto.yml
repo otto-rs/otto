@@ -1,0 +1,53 @@
+otto:
+  api: 1
+  jobs: 4
+  tasks:
+  - final
+
+tasks:
+  task1:
+    action: |
+      echo "Starting task1"
+      sleep 1
+      echo "Task1 step 1"
+      sleep 1
+      echo "Task1 step 2"
+      sleep 1
+      echo "Task1 complete"
+    timeout: 5
+
+  task2:
+    action: |
+      echo "Starting task2"
+      sleep 2
+      echo "Task2 step 1"
+      sleep 1
+      echo "Task2 complete"
+    timeout: 5
+
+  task3:
+    action: |
+      echo "Starting task3"
+      sleep 1
+      echo "Task3 step 1"
+      sleep 1
+      echo "Task3 complete"
+    deps: ["task1"]
+    timeout: 5
+
+  task4:
+    action: |
+      echo "Starting task4"
+      sleep 1
+      echo "Task4 step 1"
+      sleep 1
+      echo "Task4 complete"
+    deps: ["task2"]
+    timeout: 5
+
+  final:
+    action: |
+      echo "Starting final task"
+      echo "All tasks completed!"
+    deps: ["task3", "task4"]
+    timeout: 5

@@ -46,6 +46,11 @@ impl Workspace {
         let hash = format!("{:x}", hasher.finalize());
         let hash = hash[..8].to_string();
 
+        Self::new_with_hash(root, hash).await
+    }
+
+    /// Create new workspace with a specific hash
+    pub async fn new_with_hash(root: PathBuf, hash: String) -> Result<Self> {
         // Get timestamp for this run
         let time = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)?

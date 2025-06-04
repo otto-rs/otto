@@ -113,9 +113,9 @@ impl Task {
     /// Get default timeout based on task type
     fn get_default_timeout(task_type: &TaskType) -> u64 {
         match task_type {
-            TaskType::IOBound => 60,      // 1 minute
-            TaskType::CPUBound => 300,    // 5 minutes
-            TaskType::NetworkBound => 180, // 3 minutes
+            TaskType::IOBound => 30,      // 30 seconds
+            TaskType::CPUBound => 120,    // 2 minutes
+            TaskType::NetworkBound => 60,  // 1 minute
         }
     }
 }
