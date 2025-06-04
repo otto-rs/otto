@@ -1,7 +1,8 @@
 //#![allow(unused_imports, unused_variables, unused_attributes, unused_mut, dead_code)]
 
-use std::{env, path::PathBuf};
+use std::env;
 use eyre::Report;
+use std::sync::Arc;
 
 use otto::{
     cli::parse::Parser,
@@ -13,8 +14,11 @@ async fn main() -> Result<(), Report> {
     let args: Vec<String> = env::args().collect();
     let mut parser = Parser::new(args)?;
 
-    let (otto, dag, hash) = parser.parse()?;
-    let workspace = Workspace::new_with_hash(PathBuf::from(&otto.home), hash).await?;
+    let (otto, dag, _hash) = parser.parse()?;
+    
+    // Use current working directory for workspace hash calculation
+    let current_dir = env::current_dir()?;
+    let workspace = Workspace::new(current_dir).await?;
     workspace.init().await?;
 
     // Convert DAG nodes into Tasks
@@ -46,7 +50,7 @@ async fn main() -> Result<(), Report> {
         }
     }
 
-    let scheduler = TaskScheduler::new(tasks, workspace.run().clone(), otto.jobs * 2, otto.jobs).await?;
+    let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), otto.jobs * 2, otto.jobs).await?;
     scheduler.execute_all().await?;
 
     Ok(())

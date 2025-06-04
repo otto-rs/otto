@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    path::PathBuf,
     sync::Arc,
     time::Duration,
     os::unix::fs::PermissionsExt,
@@ -39,19 +38,15 @@ pub struct TaskScheduler {
 impl TaskScheduler {
     pub async fn new(
         tasks: Vec<Task>,
-        work_dir: PathBuf,
+        workspace: Arc<Workspace>,
         io_limit: usize,
         cpu_limit: usize,
     ) -> Result<Self> {
-        // Initialize workspace
-        let workspace = Workspace::new(work_dir).await?;
-        workspace.init().await?;
-
         Ok(Self {
             task_statuses: Arc::new(Mutex::new(HashMap::new())),
             io_semaphore: Arc::new(Semaphore::new(io_limit)),
             cpu_semaphore: Arc::new(Semaphore::new(cpu_limit)),
-            workspace: Arc::new(workspace),
+            workspace,
             tasks,
         })
     }
@@ -170,6 +165,7 @@ impl TaskScheduler {
         let script_content = task.spec.action.clone();
         let script_hash = task.calculate_hash();
         let envs = task.spec.envs.clone();
+        let tasks_dir = self.workspace.run().join("tasks");
 
         Ok(tokio::spawn(async move {
             // Acquire semaphore permit
@@ -220,8 +216,8 @@ impl TaskScheduler {
             }
             tokio::fs::symlink(&script_cache, &script_path).await?;
 
-            // Initialize task streams
-            let streams = TaskStreams::new(&task_name, &task_dir).await?;
+            // Initialize task streams - pass parent directory, TaskStreams will create task subdir
+            let streams = TaskStreams::new(&task_name, &tasks_dir).await?;
 
             // Execute the task with timeout
             let result = timeout(
@@ -331,7 +327,9 @@ mod tests {
         };
 
         let task = Task::new(task);
-        let scheduler = TaskScheduler::new(vec![task], work_dir, 2, 2).await?;
+        let workspace = Workspace::new(work_dir).await?;
+        workspace.init().await?;
+        let scheduler = TaskScheduler::new(vec![task], Arc::new(workspace), 2, 2).await?;
         scheduler.execute_all().await?;
 
         let status = scheduler.get_task_status("test").await;
@@ -368,7 +366,9 @@ mod tests {
             .map(|spec| Task::new(spec))
             .collect::<Vec<_>>();
 
-        let scheduler = TaskScheduler::new(tasks, work_dir, 2, 2).await?;
+        let workspace = Workspace::new(work_dir).await?;
+        workspace.init().await?;
+        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), 2, 2).await?;
         scheduler.execute_all().await?;
 
         let task1_status = scheduler.get_task_status("task1").await;
@@ -408,7 +408,9 @@ mod tests {
             .map(|spec| Task::new(spec))
             .collect::<Vec<_>>();
 
-        let scheduler = TaskScheduler::new(tasks, work_dir, 2, 2).await?;
+        let workspace = Workspace::new(work_dir).await?;
+        workspace.init().await?;
+        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), 2, 2).await?;
         let result = scheduler.execute_all().await;
 
         assert!(result.is_err());
@@ -445,7 +447,9 @@ mod tests {
             .map(|spec| Task::new(spec))
             .collect::<Vec<_>>();
 
-        let scheduler = TaskScheduler::new(tasks, work_dir, 2, 2).await?;
+        let workspace = Workspace::new(work_dir.clone()).await?;
+        workspace.init().await?;
+        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), 2, 2).await?;
         scheduler.execute_all().await?;
 
         // Verify execution order through file contents
@@ -493,7 +497,9 @@ mod tests {
             .collect::<Vec<_>>();
 
         let start = Instant::now();
-        let scheduler = TaskScheduler::new(tasks, work_dir, 2, 2).await?;
+        let workspace = Workspace::new(work_dir.clone()).await?;
+        workspace.init().await?;
+        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), 2, 2).await?;
         scheduler.execute_all().await?;
         let duration = start.elapsed();
 
@@ -572,7 +578,9 @@ mod tests {
             .map(|spec| Task::new(spec))
             .collect::<Vec<_>>();
 
-        let scheduler = TaskScheduler::new(tasks, work_dir, 2, 2).await?;
+        let workspace = Workspace::new(work_dir.clone()).await?;
+        workspace.init().await?;
+        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), 2, 2).await?;
         scheduler.execute_all().await?;
 
         // Verify execution order

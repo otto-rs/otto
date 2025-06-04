@@ -29,7 +29,18 @@ impl Workspace {
             if let Some(parent) = root.parent() {
                 tokio::fs::create_dir_all(parent).await?;
             }
-            root
+            // For non-existent paths, still try to canonicalize the parent and join the last component
+            if let Some(parent) = root.parent() {
+                let canonical_parent = parent.canonicalize()
+                    .map_err(|e| eyre!("Failed to canonicalize parent directory: {}", e))?;
+                if let Some(file_name) = root.file_name() {
+                    canonical_parent.join(file_name)
+                } else {
+                    root
+                }
+            } else {
+                root
+            }
         } else {
             root.canonicalize()
                 .map_err(|e| eyre!("Failed to canonicalize project root: {}", e))?
