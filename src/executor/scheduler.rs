@@ -3,6 +3,7 @@ use std::{
     sync::Arc,
     time::Duration,
     os::unix::fs::PermissionsExt,
+    path::PathBuf,
 };
 
 use eyre::{eyre, Result};
@@ -17,7 +18,7 @@ use tracing::{error, info};
 
 use super::{
     task::{Task, TaskStatus, TaskType},
-    workspace::Workspace,
+    workspace::{Workspace, ExecutionContext},
     output::{TaskStreams, OutputType},
 };
 
@@ -31,22 +32,29 @@ pub struct TaskScheduler {
     cpu_semaphore: Arc<Semaphore>,
     /// Workspace for path management
     workspace: Arc<Workspace>,
+    /// Execution context for metadata
+    execution_context: ExecutionContext,
     /// Tasks to execute
     tasks: Vec<Task>,
 }
 
 impl TaskScheduler {
+    /// Create a new task scheduler
     pub async fn new(
         tasks: Vec<Task>,
         workspace: Arc<Workspace>,
+        execution_context: ExecutionContext,
         io_limit: usize,
         cpu_limit: usize,
     ) -> Result<Self> {
+        let task_statuses = Arc::new(Mutex::new(HashMap::new()));
+
         Ok(Self {
-            task_statuses: Arc::new(Mutex::new(HashMap::new())),
+            task_statuses,
             io_semaphore: Arc::new(Semaphore::new(io_limit)),
             cpu_semaphore: Arc::new(Semaphore::new(cpu_limit)),
             workspace,
+            execution_context,
             tasks,
         })
     }
@@ -166,6 +174,7 @@ impl TaskScheduler {
         let script_hash = task.calculate_hash();
         let envs = task.spec.envs.clone();
         let tasks_dir = self.workspace.run().join("tasks");
+        let execution_context = self.execution_context.clone();
 
         Ok(tokio::spawn(async move {
             // Acquire semaphore permit
@@ -191,6 +200,9 @@ impl TaskScheduler {
 
             // Create task directory
             tokio::fs::create_dir_all(&task_dir).await?;
+
+            // Save task-specific execution context metadata
+            workspace.save_task_context(&task_name, &execution_context).await?;
 
             // Cache script content
             let script_cache = workspace.script_cache(&task_name, &script_hash);
@@ -329,7 +341,7 @@ mod tests {
         let task = Task::new(task);
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task], Arc::new(workspace), 2, 2).await?;
+        let scheduler = TaskScheduler::new(vec![task], Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
         scheduler.execute_all().await?;
 
         let status = scheduler.get_task_status("test").await;
@@ -368,7 +380,7 @@ mod tests {
 
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), 2, 2).await?;
+        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
         scheduler.execute_all().await?;
 
         let task1_status = scheduler.get_task_status("task1").await;
@@ -410,7 +422,7 @@ mod tests {
 
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), 2, 2).await?;
+        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
         let result = scheduler.execute_all().await;
 
         assert!(result.is_err());
@@ -449,7 +461,7 @@ mod tests {
 
         let workspace = Workspace::new(work_dir.clone()).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), 2, 2).await?;
+        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
         scheduler.execute_all().await?;
 
         // Verify execution order through file contents
@@ -499,7 +511,7 @@ mod tests {
         let start = Instant::now();
         let workspace = Workspace::new(work_dir.clone()).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), 2, 2).await?;
+        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
         scheduler.execute_all().await?;
         let duration = start.elapsed();
 
@@ -580,7 +592,7 @@ mod tests {
 
         let workspace = Workspace::new(work_dir.clone()).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), 2, 2).await?;
+        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
         scheduler.execute_all().await?;
 
         // Verify execution order

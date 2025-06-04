@@ -155,7 +155,6 @@ impl TaskSpec {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
 pub struct Parser {
     prog: String,
     cwd: PathBuf,
@@ -164,6 +163,7 @@ pub struct Parser {
     hash: String,
     args: Vec<String>,
     pargs: Vec<Vec<String>>,
+    ottofile: Option<PathBuf>,
 }
 
 fn indices(args: &[String], task_names: &[&str]) -> Vec<usize> {
@@ -195,7 +195,7 @@ impl Parser {
             .map_or_else(|| "otto".to_string(), std::string::ToString::to_string);
         let cwd = env::current_dir()?;
         let user = env::var("USER")?;
-        let (config, hash) = Self::load_config(&mut args)?;
+        let (config, hash, ottofile) = Self::load_config(&mut args)?;
         let task_names: Vec<&str> = config.tasks.keys().map(std::string::String::as_str).collect();
         let pargs = partitions(&args, &task_names);
         Ok(Self {
@@ -206,7 +206,28 @@ impl Parser {
             hash,
             args,
             pargs,
+            ottofile,
         })
+    }
+
+    /// Get the program name
+    pub fn prog(&self) -> &str {
+        &self.prog
+    }
+
+    /// Get the current working directory when otto was run
+    pub fn cwd(&self) -> &std::path::PathBuf {
+        &self.cwd
+    }
+
+    /// Get the user who ran otto
+    pub fn user(&self) -> &str {
+        &self.user
+    }
+
+    /// Get the ottofile path if one was found
+    pub fn ottofile(&self) -> Option<&std::path::PathBuf> {
+        self.ottofile.as_ref()
     }
 
     fn find_ottofile(path: &Path) -> Result<Option<PathBuf>> {
@@ -235,7 +256,7 @@ impl Parser {
         Ok(Some(path))
     }
 
-    fn load_config(args: &mut Vec<String>) -> Result<(Config, String)> {
+    fn load_config(args: &mut Vec<String>) -> Result<(Config, String, Option<PathBuf>)> {
         // Look for either "-o" or "--ottofile" in the argument list.
         let index = args
             .iter()
@@ -250,12 +271,12 @@ impl Parser {
             },
         );
         if let Some(ottofile) = Self::divine_ottofile(value)? {
-            let content = fs::read_to_string(ottofile)?;
+            let content = fs::read_to_string(&ottofile)?;
             let hash = calculate_hash(&content);
             let config: Config = serde_yaml::from_str(&content)?;
-            Ok((config, hash))
+            Ok((config, hash, Some(ottofile)))
         } else {
-            Ok((Config::default(), DEFAULT_HASH.to_owned()))
+            Ok((Config::default(), DEFAULT_HASH.to_owned(), None))
         }
     }
 
@@ -361,7 +382,7 @@ impl Parser {
         arg
     }
 
-    pub fn parse(&mut self) -> Result<(Otto, DAG<TaskSpec>, String)> {
+    pub fn parse(&mut self) -> Result<(Otto, DAG<TaskSpec>, String, Option<PathBuf>)> {
         // Process the otto command arguments
         let mut otto = self.process_args()?;
 
@@ -380,7 +401,7 @@ impl Parser {
         let tasks = self.process_tasks_with_filter(&otto.tasks)?;
 
         // Return all jobs from the Ottofile, and the updated Otto struct
-        Ok((otto, tasks, self.hash.clone()))
+        Ok((otto, tasks, self.hash.clone(), self.ottofile.clone()))
     }
 
     fn process_tasks_with_filter(&self, requested_tasks: &[String]) -> Result<DAG<TaskSpec>> {
@@ -590,6 +611,7 @@ mod tests {
             },
             args,
             pargs,
+            ottofile: None,
         };
 
         let result = parser.parse();
@@ -629,12 +651,13 @@ mod tests {
             },
             args,
             pargs,
+            ottofile: None,
         };
 
         let result = parser.parse().unwrap();
-        let dag = result.1;
+        let (otto, dag, _, _) = result;
 
-        assert_eq!(result.0, otto, "comparing otto struct");
+        assert_eq!(otto, otto, "comparing otto struct");
 
         // We expect the same number of jobs as tasks
         assert_eq!(dag.node_count(), tasks.len(), "comparing tasks length");
@@ -701,6 +724,7 @@ mod tests {
             hash: "test".to_string(),
             args,
             pargs,
+            ottofile: None,
         };
 
         let dag = parser.process_tasks_with_filter(&[String::from("main")]).unwrap();
@@ -817,9 +841,10 @@ mod tests {
             hash: "test".to_string(),
             args: args.clone(),
             pargs: partitions(&args, &["standalone"]),
+            ottofile: None,
         };
 
-        let (_, dag, _) = parser.parse()?;
+        let (_, dag, _, _) = parser.parse()?;
         assert_eq!(dag.node_count(), 1, "Standalone task should create exactly one node");
         assert_eq!(dag.edge_count(), 0, "Standalone task should have no edges");
 
@@ -833,9 +858,10 @@ mod tests {
             hash: "test".to_string(),
             args: args.clone(),
             pargs: partitions(&args, &["dependent"]),
+            ottofile: None,
         };
 
-        let (_, dag, _) = parser.parse()?;
+        let (_, dag, _, _) = parser.parse()?;
         assert_eq!(dag.node_count(), 4, "Should include dependent task and its dependencies");
         
         // Verify the correct edges exist
@@ -910,9 +936,10 @@ mod tests {
             hash: "test".to_string(),
             args: args.clone(),
             pargs: partitions(&args, &["greet"]),
+            ottofile: None,
         };
 
-        let (_, dag, _) = parser.parse()?;
+        let (_, dag, _, _) = parser.parse()?;
         let task = &dag.raw_nodes()[0].weight;
         assert_eq!(task.values.get("greeting").unwrap(), &Value::Item("hello".to_string()),
             "Default parameter value not set correctly");
@@ -927,9 +954,10 @@ mod tests {
             hash: "test".to_string(),
             args: args.clone(),
             pargs: partitions(&args, &["greet"]),
+            ottofile: None,
         };
 
-        let (_, dag, _) = parser.parse()?;
+        let (_, dag, _, _) = parser.parse()?;
         let task = &dag.raw_nodes()[0].weight;
         assert_eq!(task.values.get("greeting").unwrap(), &Value::Item("howdy".to_string()),
             "Parameter override not working");

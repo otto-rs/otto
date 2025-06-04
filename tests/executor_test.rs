@@ -8,6 +8,7 @@ use std::sync::Arc;
 use otto::executor::{
     Task, TaskSpec, TaskStatus,
     TaskScheduler, Workspace,
+    workspace::ExecutionContext,
 };
 
 #[tokio::test]
@@ -27,7 +28,7 @@ async fn test_task_execution_with_output() -> Result<()> {
     let task = Task::new(task_spec);
     let workspace = Workspace::new(work_dir).await?;
     workspace.init().await?;
-    let scheduler = TaskScheduler::new(vec![task], Arc::new(workspace), 2, 2).await?;
+    let scheduler = TaskScheduler::new(vec![task], Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
 
     // Execute task with timeout
     timeout(Duration::from_secs(1), scheduler.execute_all()).await??;
@@ -75,7 +76,7 @@ async fn test_task_dependencies() -> Result<()> {
 
     let workspace = Workspace::new(work_dir).await?;
     workspace.init().await?;
-    let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), 2, 2).await?;
+    let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
 
     // Execute task with timeout
     timeout(Duration::from_secs(1), scheduler.execute_all()).await??;
@@ -105,7 +106,7 @@ async fn test_task_failure() -> Result<()> {
     let task = Task::new(task_spec);
     let workspace = Workspace::new(work_dir).await?;
     workspace.init().await?;
-    let scheduler = TaskScheduler::new(vec![task], Arc::new(workspace), 2, 2).await?;
+    let scheduler = TaskScheduler::new(vec![task], Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
     
     // Execute task with timeout
     let result = timeout(Duration::from_secs(1), scheduler.execute_all()).await?;
@@ -132,7 +133,7 @@ async fn test_task_timeout() -> Result<()> {
     let task = Task::new(task_spec);
     let workspace = Workspace::new(work_dir).await?;
     workspace.init().await?;
-    let scheduler = TaskScheduler::new(vec![task], Arc::new(workspace), 2, 2).await?;
+    let scheduler = TaskScheduler::new(vec![task], Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
     
     // Execute task with timeout
     let result = scheduler.execute_all().await;
@@ -159,7 +160,7 @@ async fn test_output_capture() -> Result<()> {
     let task = Task::new(task_spec);
     let workspace = Workspace::new(work_dir).await?;
     workspace.init().await?;
-    let scheduler = TaskScheduler::new(vec![task], Arc::new(workspace), 2, 2).await?;
+    let scheduler = TaskScheduler::new(vec![task], Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
 
     // Execute task with timeout
     timeout(Duration::from_secs(1), scheduler.execute_all()).await??;
@@ -218,7 +219,7 @@ async fn test_dependency_ordering() -> Result<()> {
 
     let workspace = Workspace::new(work_dir.clone()).await?;
     workspace.init().await?;
-    let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), 2, 2).await?;
+    let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
 
     // Execute tasks with timeout
     timeout(Duration::from_secs(2), scheduler.execute_all()).await??;
@@ -261,7 +262,7 @@ async fn test_parallel_execution() -> Result<()> {
     let task = Task::new(task_spec);
     let workspace = Workspace::new(work_dir).await?;
     workspace.init().await?;
-    let scheduler = TaskScheduler::new(vec![task], Arc::new(workspace), 2, 2).await?;
+    let scheduler = TaskScheduler::new(vec![task], Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
 
     // Execute task with timeout
     timeout(Duration::from_secs(1), scheduler.execute_all()).await??;

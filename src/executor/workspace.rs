@@ -3,6 +3,37 @@ use std::time::SystemTime;
 use eyre::{eyre, Result};
 use sha2::{Sha256, Digest};
 use expanduser::expanduser;
+use serde::{Deserialize, Serialize};
+use serde_yaml;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionContext {
+    pub prog: String,
+    pub cwd: PathBuf,
+    pub user: String,
+    pub timestamp: u64,
+    pub hash: String,
+    pub ottofile: Option<PathBuf>,
+    pub args: Vec<String>,
+}
+
+impl ExecutionContext {
+    /// Create a minimal execution context for testing
+    pub fn new() -> Self {
+        Self {
+            prog: "otto".to_string(),
+            cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
+            user: std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            hash: "test".to_string(),
+            ottofile: None,
+            args: vec!["otto".to_string()],
+        }
+    }
+}
 
 /// Handles Otto's directory structure and storage paths
 pub struct Workspace {
@@ -46,6 +77,9 @@ impl Workspace {
                 .map_err(|e| eyre!("Failed to canonicalize project root: {}", e))?
         };
 
+        // Log the path being used for hashing
+        println!("DEBUG: Using path for hash calculation: {}", root.display());
+
         // Get project name from last component (unused but kept for future use)
         let _name = root.file_name()
             .and_then(|n| n.to_str())
@@ -56,6 +90,8 @@ impl Workspace {
         hasher.update(root.to_string_lossy().as_bytes());
         let hash = format!("{:x}", hasher.finalize());
         let hash = hash[..8].to_string();
+
+        println!("DEBUG: Calculated hash: {}", hash);
 
         Self::new_with_hash(root, hash).await
     }
@@ -121,7 +157,7 @@ impl Workspace {
         self.task(task).join(format!("script.{}", ext))
     }
 
-    /// Get path for task output file 
+    /// Get path for task output file
     pub fn output(&self, task: &str) -> PathBuf {
         self.task(task).join("output.json")
     }
@@ -149,7 +185,7 @@ impl Workspace {
     /// Verify a task's directory structure exists
     pub async fn verify_task(&self, name: &str) -> Result<()> {
         let task_dir = self.task(name);
-        
+
         // Check if task directory exists
         if !task_dir.exists() {
             return Err(eyre!("Task directory does not exist: {}", task_dir.display()));
@@ -198,9 +234,9 @@ impl Workspace {
         path.as_ref()
             .strip_prefix(&self.root)
             .map(|p| p.to_path_buf())
-            .map_err(|e| eyre!("Path {} is not relative to root {}: {}", 
-                path.as_ref().display(), 
-                self.root.display(), 
+            .map_err(|e| eyre!("Path {} is not relative to root {}: {}",
+                path.as_ref().display(),
+                self.root.display(),
                 e))
     }
 
@@ -213,6 +249,32 @@ impl Workspace {
     pub fn join_root<P: AsRef<Path>>(&self, path: P) -> PathBuf {
         self.root.join(path)
     }
+
+    /// Save execution context metadata to run.yaml
+    pub async fn save_execution_context(&self, context: ExecutionContext) -> Result<()> {
+        let run_yaml_path = self.metadata("run");
+        let yaml_content = serde_yaml::to_string(&context)
+            .map_err(|e| eyre!("Failed to serialize execution context: {}", e))?;
+
+        tokio::fs::write(&run_yaml_path, yaml_content)
+            .await
+            .map_err(|e| eyre!("Failed to write run.yaml: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Save task-specific execution context to task directory
+    pub async fn save_task_context(&self, task_name: &str, context: &ExecutionContext) -> Result<()> {
+        let task_run_yaml = self.task(task_name).join("run.yaml");
+        let yaml_content = serde_yaml::to_string(context)
+            .map_err(|e| eyre!("Failed to serialize task context: {}", e))?;
+
+        tokio::fs::write(&task_run_yaml, yaml_content)
+            .await
+            .map_err(|e| eyre!("Failed to write task run.yaml: {}", e))?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -224,7 +286,7 @@ mod tests {
     async fn test_workspace_creation() -> Result<()> {
         let temp = TempDir::new()?;
         let root = temp.path().to_path_buf();
-        
+
         let ws = Workspace::new(root.clone()).await?;
         ws.init().await?;
 
@@ -241,7 +303,7 @@ mod tests {
     async fn test_task_paths() -> Result<()> {
         let temp = TempDir::new()?;
         let root = temp.path().to_path_buf();
-        
+
         let ws = Workspace::new(root.clone()).await?;
         ws.init().await?;
 
@@ -264,7 +326,7 @@ mod tests {
     async fn test_metadata_paths() -> Result<()> {
         let temp = TempDir::new()?;
         let root = temp.path().to_path_buf();
-        
+
         let ws = Workspace::new(root.clone()).await?;
 
         assert!(ws.metadata("run").ends_with("run.yaml"));
@@ -273,4 +335,4 @@ mod tests {
 
         Ok(())
     }
-} 
+}
