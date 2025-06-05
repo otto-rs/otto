@@ -3,7 +3,6 @@ use std::{
     sync::Arc,
     time::Duration,
     os::unix::fs::PermissionsExt,
-    path::PathBuf,
 };
 
 use eyre::{eyre, Result};
@@ -322,6 +321,7 @@ mod tests {
     use super::*;
     use crate::executor::task::TaskSpec;
     use std::time::Instant;
+    use std::path::PathBuf;
     use tempfile::TempDir;
 
     #[tokio::test]

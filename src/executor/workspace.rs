@@ -77,9 +77,6 @@ impl Workspace {
                 .map_err(|e| eyre!("Failed to canonicalize project root: {}", e))?
         };
 
-        // Log the path being used for hashing
-        println!("DEBUG: Using path for hash calculation: {}", root.display());
-
         // Get project name from last component (unused but kept for future use)
         let _name = root.file_name()
             .and_then(|n| n.to_str())
@@ -90,8 +87,6 @@ impl Workspace {
         hasher.update(root.to_string_lossy().as_bytes());
         let hash = format!("{:x}", hasher.finalize());
         let hash = hash[..8].to_string();
-
-        println!("DEBUG: Calculated hash: {}", hash);
 
         Self::new_with_hash(root, hash).await
     }
