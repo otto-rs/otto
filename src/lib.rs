@@ -4,7 +4,7 @@ pub mod executor;
 
 pub use cfg::otto::Otto;
 pub use cli::parse::Parser;
-pub use executor::{Task, TaskSpec, TaskStatus, TaskScheduler, Workspace};
+pub use executor::{TaskSpec, TaskScheduler, TaskStatus, TaskType, Workspace};
 
 #[cfg(test)]
 mod tests {

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use otto::{
     cli::parse::Parser,
-    executor::{task::{Task, TaskSpec}, TaskScheduler, Workspace},
+    executor::{TaskScheduler, Workspace},
 };
 
 #[tokio::main]
@@ -38,33 +38,12 @@ async fn main() -> Result<(), Report> {
     };
     workspace.save_execution_context(execution_context.clone()).await?;
 
-    // Convert DAG nodes into Tasks
+    // Convert DAG nodes into TaskSpecs for scheduler
     let mut tasks = Vec::new();
-    let mut task_map = std::collections::HashMap::new();
 
-    // First pass: Create tasks without dependencies
+    // Extract TaskSpecs from DAG nodes (they already have dependencies resolved)
     for node in dag.raw_nodes() {
-        let parse_spec = node.weight.clone();
-        let task_spec = TaskSpec {
-            name: parse_spec.name.clone(),
-            action: parse_spec.action,
-            deps: Vec::new(), // Start with empty deps, we'll fill them in second pass
-            envs: parse_spec.envs,
-            working_dir: None,
-            timeout: otto.timeout.unwrap_or(0),
-        };
-        let task = Task::new(task_spec);
-        task_map.insert(parse_spec.name, tasks.len());
-        tasks.push(task);
-    }
-
-    // Second pass: Add dependencies from DAG edges
-    for edge in dag.raw_edges() {
-        let from = &dag.raw_nodes()[edge.source().index()].weight;
-        let to = &dag.raw_nodes()[edge.target().index()].weight;
-        if let Some(&to_idx) = task_map.get(&to.name) {
-            tasks[to_idx].spec.deps.push(from.name.clone());
-        }
+        tasks.push(node.weight.clone());
     }
 
     let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), execution_context.clone(), otto.jobs * 2, otto.jobs).await?;
