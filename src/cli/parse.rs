@@ -503,7 +503,10 @@ impl Parser {
             // Filter out tasks that don't exist in the configuration
             otto.tasks.retain(|task| self.config.tasks.contains_key(task));
             if otto.tasks.is_empty() {
-                return Err(eyre!("No tasks configured"));
+                // No tasks configured - show help instead of erroring
+                let mut help_cmd = Self::help_command(&self.config.otto, &self.config.tasks);
+                help_cmd.print_help()?;
+                std::process::exit(0);
             }
         } else {
             // Check for task-level help
