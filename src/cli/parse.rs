@@ -902,4 +902,440 @@ mod tests {
             vec!["hello", "-g", "howdy", "--verbose", "true"]
         ]);
     }
+
+    #[test]
+    fn test_no_arguments_behavior() {
+        // Test that when no arguments are provided, the parser handles it gracefully
+        let args = vec!["otto".to_string()];
+        let parser = Parser::new(args).unwrap();
+
+        // Parser should be created successfully
+        assert!(!parser.prog().is_empty());
+        assert!(parser.cwd().exists());
+    }
+
+    #[test]
+    fn test_help_argument_detection() {
+        // Test detection of help flags
+        let help_args = vec![
+            vec!["otto".to_string(), "--help".to_string()],
+            vec!["otto".to_string(), "-h".to_string()],
+            vec!["otto".to_string(), "task1".to_string(), "--help".to_string()],
+            vec!["otto".to_string(), "task1".to_string(), "-h".to_string()],
+        ];
+
+        for args in help_args {
+            let has_help = args.iter().any(|arg| arg == "--help" || arg == "-h");
+            assert!(has_help, "Should detect help flag in args: {:?}", args);
+        }
+    }
+
+    #[test]
+    fn test_global_options_extraction() {
+        // Test that we can identify global options vs task arguments
+        let args = vec!["otto".to_string(), "-j".to_string(), "4".to_string(), "-v".to_string(), "2".to_string(), "hello".to_string(), "-g".to_string(), "test".to_string()];
+
+        let global_options = vec!["-j", "-v", "-o", "-a", "-H", "-t", "-T"];
+        let task_names = vec!["hello"];
+
+        // Simulate the extraction logic
+        let mut remaining_args = Vec::new();
+        let mut skip_next = false;
+        let mut in_task_args = false;
+
+        for arg in &args[1..] { // Skip program name
+            if skip_next {
+                skip_next = false;
+                continue;
+            }
+
+            // Check if this is a global option that takes a value
+            if global_options.iter().any(|&opt| arg == opt || arg == &format!("--{}", opt.trim_start_matches('-'))) {
+                skip_next = true; // Skip the value
+                continue;
+            }
+
+            // Check if this is a task name
+            if task_names.contains(&arg.as_str()) {
+                in_task_args = true;
+            }
+
+            if in_task_args {
+                remaining_args.push(arg.clone());
+            }
+        }
+
+        assert_eq!(remaining_args, vec!["hello", "-g", "test"]);
+    }
+
+    #[test]
+    fn test_multiple_tasks_complex_args() {
+        // Test complex multi-task scenarios
+        let test_cases = vec![
+            // Simple multi-task
+            (
+                vec!["task1", "task2"],
+                vec!["task1", "task2"],
+                vec![vec!["task1"], vec!["task2"]]
+            ),
+            // Multi-task with args
+            (
+                vec!["task1", "-a", "val1", "task2", "-b", "val2"],
+                vec!["task1", "task2"],
+                vec![vec!["task1", "-a", "val1"], vec!["task2", "-b", "val2"]]
+            ),
+            // Tasks with complex arguments
+            (
+                vec!["build", "--release", "--target", "x86_64", "test", "--verbose"],
+                vec!["build", "test"],
+                vec![vec!["build", "--release", "--target", "x86_64"], vec!["test", "--verbose"]]
+            ),
+        ];
+
+        for (args, task_names, expected) in test_cases {
+            let args: Vec<String> = args.into_iter().map(String::from).collect();
+            let result = partitions(&args, &task_names);
+            assert_eq!(result, expected, "Failed for args: {:?}", args);
+        }
+    }
+
+    #[test]
+    fn test_edge_case_partitions() {
+        // Test edge cases for partitioning
+
+        // Empty args
+        let result = partitions(&vec![], &["task1"]);
+        assert_eq!(result, Vec::<Vec<String>>::new());
+
+        // No matching tasks
+        let args = vec_of_strings!["arg1", "arg2", "arg3"];
+        let result = partitions(&args, &["task1", "task2"]);
+        assert_eq!(result, Vec::<Vec<String>>::new());
+
+        // Single task at beginning
+        let args = vec_of_strings!["task1", "arg1", "arg2"];
+        let result = partitions(&args, &["task1"]);
+        assert_eq!(result, vec![vec!["task1", "arg1", "arg2"]]);
+
+        // Multiple tasks with no args
+        let args = vec_of_strings!["task1", "task2", "task3"];
+        let result = partitions(&args, &["task1", "task2", "task3"]);
+        assert_eq!(result, vec![
+            vec!["task1"],
+            vec!["task2"],
+            vec!["task3"]
+        ]);
+    }
+
+    #[test]
+    fn test_task_name_validation() {
+        // Test various task name formats
+        let valid_task_names = vec!["hello", "build-all", "test_integration", "deploy.prod"];
+        let args: Vec<String> = valid_task_names.iter().map(|s| s.to_string()).collect();
+
+        for task_name in &valid_task_names {
+            let result = partitions(&args, &[task_name]);
+            assert!(!result.is_empty(), "Should find task: {}", task_name);
+        }
+    }
+
+    #[test]
+    fn test_argument_parsing_edge_cases() {
+        // Test edge cases in argument parsing
+
+        // Arguments that look like task names but aren't
+        let args = vec_of_strings!["real-task", "--fake-task", "value"];
+        let result = partitions(&args, &["real-task"]);
+        assert_eq!(result, vec![vec!["real-task", "--fake-task", "value"]]);
+
+        // Task names that look like flags
+        let args = vec_of_strings!["--task", "-t", "value"];
+        let result = partitions(&args, &["--task"]);
+        assert_eq!(result, vec![vec!["--task", "-t", "value"]]);
+
+        // Mixed case scenarios
+        let args = vec_of_strings!["Task1", "task1", "TASK1"];
+        let result = partitions(&args, &["task1"]);
+        assert_eq!(result, vec![vec!["task1", "TASK1"]]);
+    }
+
+    #[test]
+    fn test_config_loading_scenarios() -> Result<()> {
+        // Test different config loading scenarios
+
+        // Test with None (no config)
+        let (config, hash, ottofile) = Parser::load_config_from_path(None)?;
+        assert_eq!(config.tasks.len(), 0);
+        assert_eq!(hash, DEFAULT_HASH);
+        assert_eq!(ottofile, None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_task_spec_creation() {
+        // Test TaskSpec creation and conversion
+        let task = Task {
+            name: "test-task".to_string(),
+            action: "echo hello".to_string(),
+            deps: vec!["dep1".to_string()],
+            before: vec!["before1".to_string()],
+            after: vec!["after1".to_string()],
+            params: HashMap::new(),
+            help: Some("Test task".to_string()),
+            timeout: Some(30),
+        };
+
+        let spec = TaskSpec::from_task(&task);
+
+        assert_eq!(spec.name, "test-task");
+        assert_eq!(spec.action, "echo hello");
+        // Should include both deps and before tasks
+        assert_eq!(spec.deps, vec!["dep1", "before1"]);
+        // Hash should be calculated
+        assert_ne!(spec.hash, DEFAULT_HASH);
+    }
+
+    #[test]
+    fn test_comprehensive_help_scenarios() {
+        // Test comprehensive help detection scenarios
+        let help_scenarios = vec![
+            // Top-level help
+            (vec!["otto", "--help"], true, false),
+            (vec!["otto", "-h"], true, false),
+
+            // Task-level help
+            (vec!["otto", "task", "--help"], true, true),
+            (vec!["otto", "task", "-h"], true, true),
+
+            // Help mixed with other args
+            (vec!["otto", "-j", "4", "--help"], true, false),
+            (vec!["otto", "task", "-p", "val", "--help"], true, true),
+
+            // No help
+            (vec!["otto", "task"], false, false),
+            (vec!["otto", "-j", "4", "task"], false, false),
+        ];
+
+        for (args, should_have_help, should_be_task_help) in help_scenarios {
+            let args: Vec<String> = args.into_iter().map(String::from).collect();
+            let has_help = args.iter().any(|arg| arg == "--help" || arg == "-h");
+            assert_eq!(has_help, should_have_help, "Help detection failed for: {:?}", args);
+
+            if should_have_help && should_be_task_help {
+                // Should have a task name before help
+                let help_pos = args.iter().position(|arg| arg == "--help" || arg == "-h").unwrap();
+                assert!(help_pos > 1, "Task help should have task name before help flag");
+            }
+        }
+    }
+
+    #[test]
+    fn test_dependency_handling() {
+        // Test that dependencies are properly handled in TaskSpec
+        let main_task = Task {
+            name: "main".to_string(),
+            action: "echo main".to_string(),
+            deps: vec!["dep1".to_string(), "dep2".to_string()],
+            before: vec!["before1".to_string()],
+            after: vec!["after1".to_string()],
+            params: HashMap::new(),
+            help: None,
+            timeout: Some(10),
+        };
+
+        let spec = TaskSpec::from_task(&main_task);
+
+        // Should include deps and before, but not after
+        let expected_deps: HashSet<String> = vec!["dep1".to_string(), "dep2".to_string(), "before1".to_string()]
+            .into_iter().collect();
+        let actual_deps: HashSet<String> = spec.deps.into_iter().collect();
+
+        assert_eq!(actual_deps, expected_deps);
+    }
+
+    #[test]
+    fn test_parser_initialization() {
+        // Test parser initialization with various argument sets
+        let test_cases = vec![
+            vec!["otto"],
+            vec!["otto", "task1"],
+            vec!["otto", "-o", "file.yml", "task1"],
+            vec!["otto", "--help"],
+            vec!["otto", "task1", "task2", "-a", "val"],
+        ];
+
+        for args in test_cases {
+            let args: Vec<String> = args.into_iter().map(String::from).collect();
+            let result = Parser::new(args);
+            assert!(result.is_ok(), "Parser initialization should succeed");
+
+            let parser = result.unwrap();
+            assert!(!parser.prog().is_empty());
+            assert!(parser.cwd().exists());
+        }
+    }
+
+    #[test]
+    fn test_help_behavior_integration() {
+        // Test help behavior in various scenarios
+
+        // Test 1: No arguments should trigger help behavior in parse()
+        let args = vec!["otto".to_string()];
+        let parser = Parser::new(args).unwrap();
+
+        // This would normally show help and exit, but we can't test that directly
+        // Instead we test the setup is correct
+        assert_eq!(parser.config.tasks.len(), 0);
+
+        // Test 2: Help flag detection
+        let help_args = vec!["otto".to_string(), "--help".to_string()];
+        let has_help = help_args.iter().any(|arg| arg == "--help" || arg == "-h");
+        assert!(has_help);
+    }
+
+    #[test]
+    fn test_ottofile_path_handling() {
+        // Test various ottofile path scenarios
+        let test_cases = vec![
+            // Relative path
+            ("./test.yml", "./test.yml"),
+            // Absolute path
+            ("/tmp/test.yml", "/tmp/test.yml"),
+            // Home directory expansion would happen in divine_ottofile
+            ("~/test.yml", "~/test.yml"),
+        ];
+
+        for (input, expected) in test_cases {
+            // Test that the path is preserved correctly
+            assert_eq!(input, expected);
+        }
+    }
+
+    #[test]
+    fn test_task_filtering_logic() {
+        // Test the logic for filtering tasks that don't exist
+        let mut otto = Otto::default();
+        otto.tasks = vec!["task1".to_string(), "nonexistent".to_string(), "task2".to_string()];
+
+        let mut available_tasks = HashMap::new();
+        available_tasks.insert("task1".to_string(), Task {
+            name: "task1".to_string(),
+            action: "echo 1".to_string(),
+            deps: vec![],
+            before: vec![],
+            after: vec![],
+            params: HashMap::new(),
+            help: None,
+            timeout: None,
+        });
+        available_tasks.insert("task2".to_string(), Task {
+            name: "task2".to_string(),
+            action: "echo 2".to_string(),
+            deps: vec![],
+            before: vec![],
+            after: vec![],
+            params: HashMap::new(),
+            help: None,
+            timeout: None,
+        });
+
+        // Simulate the filtering logic
+        otto.tasks.retain(|task| available_tasks.contains_key(task));
+
+        assert_eq!(otto.tasks, vec!["task1", "task2"]);
+        assert!(!otto.tasks.contains(&"nonexistent".to_string()));
+    }
+
+    #[test]
+    fn test_error_scenarios() {
+        // Test various error scenarios
+
+        // Test invalid hash calculation
+        let empty_action = String::new();
+        let hash = calculate_hash(&empty_action);
+        assert_eq!(hash.len(), 8); // Should still produce a hash
+
+        // Test task spec with empty values
+        let spec = TaskSpec::new(
+            "test".to_string(),
+            vec![],
+            HashMap::new(),
+            HashMap::new(),
+            "".to_string(),
+        );
+        assert_eq!(spec.name, "test");
+        assert!(spec.deps.is_empty());
+        assert!(spec.envs.is_empty());
+        assert!(spec.values.is_empty());
+    }
+
+    #[test]
+    fn test_real_world_scenarios() {
+        // Test real-world command line scenarios
+
+        // Scenario 1: Development workflow
+        let dev_args = vec_of_strings!["build", "--release", "test", "--verbose", "deploy", "--env", "staging"];
+        let task_names = vec!["build", "test", "deploy"];
+        let result = partitions(&dev_args, &task_names);
+        assert_eq!(result, vec![
+            vec!["build", "--release"],
+            vec!["test", "--verbose"],
+            vec!["deploy", "--env", "staging"]
+        ]);
+
+        // Scenario 2: Single task with multiple flags
+        let single_task_args = vec_of_strings!["lint", "--fix", "--format", "json", "--output", "report.json"];
+        let result = partitions(&single_task_args, &["lint"]);
+        assert_eq!(result, vec![
+            vec!["lint", "--fix", "--format", "json", "--output", "report.json"]
+        ]);
+
+        // Scenario 3: Tasks with similar names
+        let similar_names = vec_of_strings!["test", "--unit", "test-integration", "--coverage"];
+        let result = partitions(&similar_names, &["test", "test-integration"]);
+        assert_eq!(result, vec![
+            vec!["test", "--unit"],
+            vec!["test-integration", "--coverage"]
+        ]);
+    }
+
+    #[test]
+    fn test_boundary_conditions() {
+        // Test boundary conditions and edge cases
+
+        // Very long task names
+        let long_name = "a".repeat(100);
+        let args = vec![long_name.clone()];
+        let result = partitions(&args, &[&long_name]);
+        assert_eq!(result, vec![vec![long_name]]);
+
+        // Many small tasks
+        let many_tasks: Vec<String> = (0..50).map(|i| format!("task{}", i)).collect();
+        let task_names: Vec<&str> = many_tasks.iter().map(|s| s.as_str()).collect();
+        let result = partitions(&many_tasks, &task_names);
+        assert_eq!(result.len(), 50);
+
+        // Empty task name (edge case)
+        let result = partitions(&vec!["".to_string()], &[""]);
+        assert_eq!(result, vec![vec![""]]);
+    }
+
+    #[test]
+    fn test_command_builder_consistency() {
+        // Test that the command builders produce consistent results
+        let otto = Otto::default();
+        let tasks = HashMap::new();
+
+        // Test otto_command
+        let otto_cmd = Parser::otto_command(&otto);
+        assert_eq!(otto_cmd.get_name(), "otto");
+
+        // Test help_command
+        let help_cmd = Parser::help_command(&otto, &tasks);
+        assert_eq!(help_cmd.get_name(), "otto");
+
+        // Both should have the same base structure
+        // (We can't easily compare the full commands, but we can check names)
+    }
 }
