@@ -125,17 +125,19 @@ impl TaskScheduler {
             }
         }
 
-        // Initialize in-degree counts for each task
+        // Initialize in-degree count for all tasks
         let mut in_degree: HashMap<String, usize> = HashMap::new();
-        for task in &self.tasks {
-            in_degree.insert(task.name.clone(), task.deps.len());
-        }
-
-        // Initialize ready queue with tasks that have no dependencies
         let mut ready_queue = std::collections::VecDeque::new();
+        let mut blocked_tasks = Vec::new();
+
         for task in &self.tasks {
-            if task.deps.is_empty() {
-                ready_queue.push_back(task);
+            in_degree.insert(task.name.clone(), task.task_deps.len());
+
+            // Tasks with no dependencies can be queued immediately
+            if task.task_deps.is_empty() {
+                ready_queue.push_back(task.clone());
+            } else {
+                blocked_tasks.push(task.clone());
             }
         }
 
@@ -153,7 +155,7 @@ impl TaskScheduler {
                 let task = ready_queue.pop_front().unwrap();
 
                 // Double-check dependencies
-                let deps_completed = task.deps.iter().all(|dep| completed_set.contains(dep));
+                let deps_completed = task.task_deps.iter().all(|dep| completed_set.contains(dep));
                 if !deps_completed {
                     // Put it back at the end of the queue
                     ready_queue.push_back(task);
@@ -182,13 +184,23 @@ impl TaskScheduler {
                     completed_tasks += 1;
                     active_tasks.remove(&completed_task);
 
-                    // Find tasks that are now ready
-                    for task in &self.tasks {
-                        if task.deps.contains(&completed_task) {
-                            let degree = in_degree.get_mut(&task.name).unwrap();
-                            *degree -= 1;
-                            if *degree == 0 && !completed_set.contains(&task.name) {
-                                ready_queue.push_back(task);
+                    // Check if any blocked tasks are now ready
+                    blocked_tasks.retain(|task| {
+                        let task_deps_completed = task.task_deps.iter().all(|task_dep| completed_set.contains(task_dep));
+                        if !task_deps_completed {
+                            return true; // Keep the task in blocked list
+                        }
+
+                        // All dependencies are completed, move to ready queue
+                        ready_queue.push_back(task.clone());
+                        false // Remove from blocked list
+                    });
+
+                    // Update in-degree for dependent tasks
+                    for remaining_task in &blocked_tasks {
+                        if remaining_task.task_deps.contains(&completed_task) {
+                            if let Some(degree) = in_degree.get_mut(&remaining_task.name) {
+                                *degree = degree.saturating_sub(1);
                             }
                         }
                     }
@@ -223,7 +235,7 @@ impl TaskScheduler {
         let task_dir = self.workspace.task(&task_name);
         let timeout_secs = Self::get_default_timeout(&task_type);
         let task_statuses = self.task_statuses.clone();
-        let deps = task.deps.clone();
+        let task_deps = task.task_deps.clone();
         let workspace = self.workspace.clone();
         let script_content = task.action.clone();
         let script_hash = task.hash.clone();
@@ -238,7 +250,7 @@ impl TaskScheduler {
             // Double-check dependencies are still complete before starting
             {
                 let statuses = task_statuses.lock().await;
-                for dep in &deps {
+                for dep in &task_deps {
                     if !matches!(statuses.get(dep), Some(TaskStatus::Completed)) {
                         return Err(eyre!("Dependency {} not completed for task {}", dep, task_name));
                     }

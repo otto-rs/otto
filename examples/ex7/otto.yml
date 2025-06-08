@@ -1,53 +1,47 @@
 otto:
-  api: 1
+  name: otto
+  about: A task runner
+  api: "1"
+  home: ~/.otto
   jobs: 4
-  tasks:
-  - final
+  tasks: ["final"]
 
 tasks:
   task1:
+    help: First parallel task
     action: |
-      echo "Starting task1"
-      sleep 1
       echo "Task1 step 1"
-      sleep 1
+      sleep 2
       echo "Task1 step 2"
       sleep 1
       echo "Task1 complete"
-    timeout: 5
 
   task2:
+    help: Second parallel task
     action: |
-      echo "Starting task2"
-      sleep 2
       echo "Task2 step 1"
-      sleep 1
+      sleep 3
       echo "Task2 complete"
-    timeout: 5
 
   task3:
+    help: Task dependent on task1
+    before: ["task1"]
     action: |
-      echo "Starting task3"
-      sleep 1
       echo "Task3 step 1"
       sleep 1
       echo "Task3 complete"
-    deps: ["task1"]
-    timeout: 5
 
   task4:
+    help: Task dependent on task2
+    before: ["task2"]
     action: |
-      echo "Starting task4"
-      sleep 1
       echo "Task4 step 1"
       sleep 1
       echo "Task4 complete"
-    deps: ["task2"]
-    timeout: 5
 
   final:
+    help: Final task that depends on task3 and task4
+    before: ["task3", "task4"]
     action: |
       echo "Starting final task"
       echo "All tasks completed!"
-    deps: ["task3", "task4"]
-    timeout: 5

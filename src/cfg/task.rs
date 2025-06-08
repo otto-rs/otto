@@ -25,9 +25,6 @@ pub struct Task {
     #[serde(default)]
     pub before: Vec<String>,
 
-    #[serde(default)]
-    pub deps: Vec<String>,
-
     #[serde(default, deserialize_with = "deserialize_param_map")]
     pub params: Params,
 
@@ -76,7 +73,6 @@ impl Task {
         help: Option<String>,
         after: Vec<String>,
         before: Vec<String>,
-        deps: Vec<String>,
         params: Params,
         action: String,
         timeout: Option<u64>,
@@ -86,7 +82,6 @@ impl Task {
             help,
             after,
             before,
-            deps,
             params,
             action,
             timeout,
