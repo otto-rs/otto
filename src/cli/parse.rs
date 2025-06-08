@@ -13,6 +13,7 @@ use expanduser::expanduser;
 use eyre::{eyre, Result};
 use hex;
 use sha2::{Digest, Sha256};
+use glob;
 
 use crate::cfg::config::{Config, Otto, Param, Task, Tasks, Value};
   // Test-only imports
@@ -116,6 +117,7 @@ fn path_relative_from(path: &Path, base: &Path) -> Option<PathBuf> {
 pub struct TaskSpec {
     pub name: String,
     pub task_deps: Vec<String>,
+    pub file_deps: Vec<String>,
     pub envs: HashMap<String, String>,
     pub values: HashMap<String, Value>,
     pub action: String,
@@ -127,6 +129,7 @@ impl TaskSpec {
     pub fn new(
         name: String,
         task_deps: Vec<String>,
+        file_deps: Vec<String>,
         envs: HashMap<String, String>,
         values: HashMap<String, Value>,
         action: String,
@@ -135,22 +138,55 @@ impl TaskSpec {
         Self {
             name,
             task_deps,
+            file_deps,
             envs,
             values,
             action,
             hash,
         }
     }
+
     #[must_use]
     pub fn from_task(task: &Task) -> Self {
         let name = task.name.clone();
         let task_deps = task.before.clone();
+
+        // Resolve file globs from input to canonical paths
+        let file_deps = Self::resolve_file_globs(&task.input);
+
         // Note: We do NOT add after tasks here since they depend on us, not vice versa
         // The after dependencies will be handled during DAG construction
         let envs = HashMap::new();
         let values = HashMap::new();
         let action = task.action.trim().to_string();  // Trim whitespace from script content
-        Self::new(name, task_deps, envs, values, action)
+        Self::new(name, task_deps, file_deps, envs, values, action)
+    }
+
+    /// Resolve file glob patterns to canonical file paths
+    fn resolve_file_globs(patterns: &[String]) -> Vec<String> {
+        let mut resolved_files = Vec::new();
+
+        for pattern in patterns {
+            // Use glob to expand patterns
+            match glob::glob(pattern) {
+                Ok(paths) => {
+                    for path in paths.flatten() {
+                        if let Ok(canonical) = path.canonicalize() {
+                            resolved_files.push(canonical.to_string_lossy().to_string());
+                        } else {
+                            // If canonicalize fails, still add the path as-is
+                            resolved_files.push(path.to_string_lossy().to_string());
+                        }
+                    }
+                }
+                Err(_) => {
+                    // If glob fails, treat as literal file path
+                    resolved_files.push(pattern.clone());
+                }
+            }
+        }
+
+        resolved_files
     }
 }
 
@@ -707,6 +743,8 @@ mod tests {
             action: "echo main".to_string(),
             before: vec!["dep1".to_string(), "before1".to_string()],
             after: vec!["after1".to_string()],
+            input: vec![],
+            output: vec![],
             params: HashMap::new(),
             help: None,
             timeout: Some(10),
@@ -731,6 +769,8 @@ mod tests {
                 action: format!("echo {}", name),
                 before: vec![],
                 after: vec![],
+                input: vec![],
+                output: vec![],
                 params: HashMap::new(),
                 help: None,
                 timeout: Some(10),
@@ -1050,6 +1090,8 @@ mod tests {
             action: "echo test".to_string(),
             before: vec!["dep1".to_string(), "before1".to_string()],
             after: vec!["after1".to_string()],
+            input: vec![],
+            output: vec![],
             params: HashMap::new(),
             help: Some("Test task".to_string()),
             timeout: Some(30),
@@ -1104,6 +1146,8 @@ mod tests {
             action: "echo main".to_string(),
             before: vec!["dep1".to_string(), "dep2".to_string(), "before1".to_string()],
             after: vec!["after1".to_string()],
+            input: vec![],
+            output: vec![],
             params: HashMap::new(),
             help: None,
             timeout: None,
@@ -1189,6 +1233,8 @@ mod tests {
             action: "echo 1".to_string(),
             before: vec![],
             after: vec![],
+            input: vec![],
+            output: vec![],
             params: HashMap::new(),
             help: None,
             timeout: None,
@@ -1198,6 +1244,8 @@ mod tests {
             action: "echo 2".to_string(),
             before: vec![],
             after: vec![],
+            input: vec![],
+            output: vec![],
             params: HashMap::new(),
             help: None,
             timeout: None,
@@ -1223,12 +1271,14 @@ mod tests {
         let spec = TaskSpec::new(
             "test".to_string(),
             vec![],
+            vec![],
             HashMap::new(),
             HashMap::new(),
             "".to_string(),
         );
         assert_eq!(spec.name, "test");
         assert!(spec.task_deps.is_empty());
+        assert!(spec.file_deps.is_empty());
         assert!(spec.envs.is_empty());
         assert!(spec.values.is_empty());
     }

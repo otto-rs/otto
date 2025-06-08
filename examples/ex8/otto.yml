@@ -1,0 +1,75 @@
+otto:
+  name: otto
+  about: Example 8 - File Dependencies and Task Dependencies
+  api: 1
+  jobs: 4
+  tasks:
+  - process
+
+tasks:
+  # Task that depends on input files
+  count_lines:
+    input:
+    - data/*.txt
+    - config.json
+    action: |
+      #!/bin/bash
+      echo "Counting lines in input files..."
+      total=0
+      for file in data/*.txt; do
+        if [ -f "$file" ]; then
+          lines=$(wc -l < "$file")
+          echo "$file: $lines lines"
+          total=$((total + lines))
+        fi
+      done
+      echo "Total lines: $total"
+      echo "Config: $(cat config.json)"
+      echo "$total" > line_count.txt
+    help: Count lines in all text files and read config
+    
+  # Task that depends on other files
+  summarize:
+    input:
+    - README.md
+    - data/summary.txt
+    action: |
+      #!/bin/bash
+      echo "Creating summary..."
+      echo "README content:"
+      cat README.md
+      echo ""
+      echo "Summary content:"
+      cat data/summary.txt
+      echo ""
+      echo "Summary created at $(date)" > summary_output.txt
+    help: Summarize README and data files
+    
+  # Task that depends on both files AND other tasks
+  process:
+    before:
+    - count_lines
+    - summarize
+    input:
+    - process_config.yml
+    action: |
+      #!/bin/bash
+      echo "Processing results..."
+      echo "Line count result: $(cat line_count.txt)"
+      echo "Summary result: $(cat summary_output.txt)"
+      echo "Process config: $(cat process_config.yml)"
+      echo "All processing complete at $(date)"
+    help: Process results from count_lines and summarize tasks
+    
+  # Task that shows file glob patterns
+  check_logs:
+    input:
+    - logs/*.log
+    - logs/**/*.log
+    action: |
+      #!/bin/bash
+      echo "Checking log files..."
+      find logs -name "*.log" -type f | while read logfile; do
+        echo "Log: $logfile ($(wc -l < "$logfile") lines)"
+      done
+    help: Check all log files using glob patterns 

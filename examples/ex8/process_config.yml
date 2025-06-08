@@ -1,0 +1,9 @@
+process:
+  name: "File Dependency Demo"
+  steps:
+    - count
+    - summarize
+    - output
+  options:
+    parallel: false
+    verbose: true 

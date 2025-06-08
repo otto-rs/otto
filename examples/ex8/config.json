@@ -1,0 +1,8 @@
+{
+  "version": "1.0",
+  "environment": "demo",
+  "settings": {
+    "verbose": true,
+    "max_lines": 1000
+  }
+} 

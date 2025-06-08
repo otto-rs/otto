@@ -393,6 +393,7 @@ mod tests {
         let task = TaskSpec::new(
             "test".to_string(),
             vec![],
+            vec![],
             HashMap::new(),
             HashMap::new(),
             "echo hello".to_string(),
@@ -418,12 +419,14 @@ mod tests {
             TaskSpec::new(
                 "task1".to_string(),
                 vec!["task2".to_string()],
+                vec![],
                 HashMap::new(),
                 HashMap::new(),
                 "echo task1".to_string(),
             ),
             TaskSpec::new(
                 "task2".to_string(),
+                vec![],
                 vec![],
                 HashMap::new(),
                 HashMap::new(),
@@ -454,6 +457,7 @@ mod tests {
             TaskSpec::new(
                 "task1".to_string(),
                 vec![],
+                vec![],
                 HashMap::new(),
                 HashMap::new(),
                 "exit 1".to_string(),
@@ -461,6 +465,7 @@ mod tests {
             TaskSpec::new(
                 "task2".to_string(),
                 vec!["task1".to_string()],
+                vec![],
                 HashMap::new(),
                 HashMap::new(),
                 "echo task2".to_string(),
