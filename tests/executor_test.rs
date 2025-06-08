@@ -21,6 +21,7 @@ async fn test_task_execution_with_output() -> Result<()> {
         "test".to_string(),
         vec![],
         vec![],
+        vec![],
         HashMap::new(),
         HashMap::new(),
         "true".to_string(),
@@ -45,6 +46,7 @@ async fn test_task_dependencies() -> Result<()> {
         "task1".to_string(),
         vec![],
         vec![],
+        vec![],
         HashMap::new(),
         HashMap::new(),
         "true".to_string(),
@@ -54,6 +56,7 @@ async fn test_task_dependencies() -> Result<()> {
         "task2".to_string(),
         vec!["task1".to_string()],
         vec![],
+        vec![],
         HashMap::new(),
         HashMap::new(),
         "true".to_string(),
@@ -62,6 +65,7 @@ async fn test_task_dependencies() -> Result<()> {
     let task3_spec = TaskSpec::new(
         "task3".to_string(),
         vec!["task2".to_string()],
+        vec![],
         vec![],
         HashMap::new(),
         HashMap::new(),
@@ -94,6 +98,7 @@ async fn test_task_failure() -> Result<()> {
         "failing_task".to_string(),
         vec![],
         vec![],
+        vec![],
         HashMap::new(),
         HashMap::new(),
         "exit 1".to_string(),
@@ -117,6 +122,7 @@ async fn test_output_capture() -> Result<()> {
 
     let task_spec = TaskSpec::new(
         "output_test".to_string(),
+        vec![],
         vec![],
         vec![],
         HashMap::new(),
@@ -144,6 +150,7 @@ async fn test_dependency_ordering() -> Result<()> {
         "task1".to_string(),
         vec!["task2".to_string(), "task3".to_string()],
         vec![],
+        vec![],
         HashMap::new(),
         HashMap::new(),
         format!("echo 'task1' >> {}", output_file.display()),
@@ -152,6 +159,7 @@ async fn test_dependency_ordering() -> Result<()> {
     let task2_spec = TaskSpec::new(
         "task2".to_string(),
         vec!["task4".to_string()],
+        vec![],
         vec![],
         HashMap::new(),
         HashMap::new(),
@@ -162,6 +170,7 @@ async fn test_dependency_ordering() -> Result<()> {
         "task3".to_string(),
         vec!["task4".to_string()],
         vec![],
+        vec![],
         HashMap::new(),
         HashMap::new(),
         format!("echo 'task3' >> {}", output_file.display()),
@@ -169,6 +178,7 @@ async fn test_dependency_ordering() -> Result<()> {
 
     let task4_spec = TaskSpec::new(
         "task4".to_string(),
+        vec![],
         vec![],
         vec![],
         HashMap::new(),
@@ -211,6 +221,7 @@ async fn test_parallel_execution() -> Result<()> {
         "parallel1".to_string(),
         vec![],
         vec![],
+        vec![],
         HashMap::new(),
         HashMap::new(),
         "sleep 0.5 && echo 'parallel1'".to_string(),
@@ -218,6 +229,7 @@ async fn test_parallel_execution() -> Result<()> {
 
     let task2_spec = TaskSpec::new(
         "parallel2".to_string(),
+        vec![],
         vec![],
         vec![],
         HashMap::new(),

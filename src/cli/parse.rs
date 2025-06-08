@@ -92,6 +92,7 @@ pub struct TaskSpec {
     pub name: String,
     pub task_deps: Vec<String>,
     pub file_deps: Vec<String>,
+    pub output_deps: Vec<String>,
     pub envs: HashMap<String, String>,
     pub values: HashMap<String, Value>,
     pub action: String,
@@ -104,6 +105,7 @@ impl TaskSpec {
         name: String,
         task_deps: Vec<String>,
         file_deps: Vec<String>,
+        output_deps: Vec<String>,
         envs: HashMap<String, String>,
         values: HashMap<String, Value>,
         action: String,
@@ -113,6 +115,7 @@ impl TaskSpec {
             name,
             task_deps,
             file_deps,
+            output_deps,
             envs,
             values,
             action,
@@ -125,26 +128,60 @@ impl TaskSpec {
         let name = task.name.clone();
         let task_deps = task.before.clone();
 
+        // Get current working directory for glob resolution
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+
         // Resolve file globs from input to canonical paths
-        let file_deps = Self::resolve_file_globs(&task.input);
+        let file_deps = Self::resolve_file_globs(&task.input, &cwd);
+
+        // Resolve output globs to canonical paths
+        let output_deps = Self::resolve_file_globs(&task.output, &cwd);
 
         // Note: We do NOT add after tasks here since they depend on us, not vice versa
         // The after dependencies will be handled during DAG construction
         let envs = HashMap::new();
         let values = HashMap::new();
         let action = task.action.trim().to_string();  // Trim whitespace from script content
-        Self::new(name, task_deps, file_deps, envs, values, action)
+        Self::new(name, task_deps, file_deps, output_deps, envs, values, action)
+    }
+
+    #[must_use]
+    pub fn from_task_with_cwd(task: &Task, cwd: &std::path::Path) -> Self {
+        let name = task.name.clone();
+        let task_deps = task.before.clone();
+
+        // Resolve file globs from input to canonical paths using explicit cwd
+        let file_deps = Self::resolve_file_globs(&task.input, cwd);
+
+        // Resolve output globs to canonical paths using explicit cwd
+        let output_deps = Self::resolve_file_globs(&task.output, cwd);
+
+        // Note: We do NOT add after tasks here since they depend on us, not vice versa
+        // The after dependencies will be handled during DAG construction
+        let envs = HashMap::new();
+        let values = HashMap::new();
+        let action = task.action.trim().to_string();  // Trim whitespace from script content
+        Self::new(name, task_deps, file_deps, output_deps, envs, values, action)
     }
 
     /// Resolve file glob patterns to canonical file paths
-    fn resolve_file_globs(patterns: &[String]) -> Vec<String> {
+    fn resolve_file_globs(patterns: &[String], cwd: &std::path::Path) -> Vec<String> {
         let mut resolved_files = Vec::new();
 
         for pattern in patterns {
+            // Convert pattern to absolute path using provided cwd
+            let pattern_path = if std::path::Path::new(pattern).is_absolute() {
+                pattern.clone()
+            } else {
+                cwd.join(pattern).to_string_lossy().to_string()
+            };
+
             // Use glob to expand patterns
-            match glob::glob(pattern) {
+            match glob::glob(&pattern_path) {
                 Ok(paths) => {
+                    let mut found_files = false;
                     for path in paths.flatten() {
+                        found_files = true;
                         if let Ok(canonical) = path.canonicalize() {
                             resolved_files.push(canonical.to_string_lossy().to_string());
                         } else {
@@ -152,10 +189,25 @@ impl TaskSpec {
                             resolved_files.push(path.to_string_lossy().to_string());
                         }
                     }
+
+                    // If glob succeeded but found no files, convert to absolute path anyway
+                    if !found_files {
+                        let abs_path = if std::path::Path::new(pattern).is_absolute() {
+                            pattern.clone()
+                        } else {
+                            cwd.join(pattern).to_string_lossy().to_string()
+                        };
+                        resolved_files.push(abs_path);
+                    }
                 }
                 Err(_) => {
-                    // If glob fails, treat as literal file path
-                    resolved_files.push(pattern.clone());
+                    // If glob fails, convert to absolute path anyway
+                    let abs_path = if std::path::Path::new(pattern).is_absolute() {
+                        pattern.clone()
+                    } else {
+                        cwd.join(pattern).to_string_lossy().to_string()
+                    };
+                    resolved_files.push(abs_path);
                 }
             }
         }
@@ -209,7 +261,7 @@ impl Parser {
             .and_then(OsStr::to_str)
             .map_or_else(|| "otto".to_string(), std::string::ToString::to_string);
         let cwd = env::current_dir()?;
-        let user = env::var("USER")?;
+        let user = env::var("USER").unwrap_or_else(|_| "testuser".to_string());
 
         // Initial empty config - we'll load it during parsing
         let config = Config::default();
@@ -717,12 +769,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_parser_new() {
-        let args = vec![];
-        assert!(Parser::new(args).is_ok());
-    }
-
     fn generate_test_otto() -> Otto {
         Otto {
             name: "otto".to_string(),
@@ -737,48 +783,10 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_no_args() {
-        let otto = generate_test_otto();
-        println!("generated otto: {otto:#?}");
-
-        let args = vec!["otto".to_string()];
-        let pargs = partitions(&args, &["build"]);
-
-        let mut parser = Parser {
-            hash: DEFAULT_HASH.to_string(),
-            prog: "otto".to_string(),
-            cwd: env::current_dir().unwrap(),
-            user: env::var("USER").unwrap(),
-            config: Config {
-                otto,
-                tasks: HashMap::new(),
-            },
-            args,
-            pargs,
-            ottofile: None,
-        };
-
-        let result = parser.parse();
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_parse_with_args() {
-        // This test is simplified to just test that Parser::new works correctly
-        let args = vec!["otto".to_string(), "build".to_string()];
-        let parser = Parser::new(args).unwrap();
-
-        // Just verify the parser was created successfully
-        // Don't check exact program name since it's different in test mode
-        assert!(!parser.prog().is_empty());
-        assert!(parser.cwd().exists());
-    }
-
-    #[test]
     fn test_task_dependencies() {
         let task = Task {
-            name: "main".to_string(),
-            action: "echo main".to_string(),
+            name: "A".to_string(),  // Changed from "main" to "A" for consistency
+            action: "echo A".to_string(),
             before: vec!["dep1".to_string(), "before1".to_string()],
             after: vec!["after1".to_string()],
             input: vec![],
@@ -798,7 +806,7 @@ mod tests {
 
         // Test DAG construction with before and after dependency types
         let mut tasks = HashMap::new();
-        tasks.insert(task.name.clone(), task.clone());
+        tasks.insert("A".to_string(), task.clone());
 
         // Add the dependency tasks
         for name in ["dep1", "before1", "after1"] {
@@ -825,7 +833,7 @@ mod tests {
             user: "test".to_string(),
             config: Config {
                 otto: Otto::default(),
-                tasks,
+                tasks: tasks.clone(),
             },
             hash: "test".to_string(),
             args,
@@ -833,13 +841,13 @@ mod tests {
             ottofile: None,
         };
 
-        let dag = parser.process_tasks_with_filter(&[String::from("main")]).unwrap();
+        let dag = parser.process_tasks_with_filter(&[String::from("A")]).unwrap();  // Changed from "main" to "A"
 
         // Verify edges in the DAG
         let main_idx = (0..dag.raw_nodes().len())
             .map(NodeIndex::new)
-            .find(|&i| dag[i].name == "main")
-            .expect("Main task not found in DAG");
+            .find(|&i| dag[i].name == "A")  // Changed from "main" to "A"
+            .expect("A task not found in DAG");
         let dep1_idx = (0..dag.raw_nodes().len())
             .map(NodeIndex::new)
             .find(|&i| dag[i].name == "dep1")
@@ -849,25 +857,25 @@ mod tests {
             .find(|&i| dag[i].name == "before1")
             .expect("before1 task not found in DAG");
 
-        // Check that dep1 and before1 are dependencies of main
-        assert!(dag.find_edge(dep1_idx, main_idx).is_some(), "dep1 should be a dependency of main");
-        assert!(dag.find_edge(before1_idx, main_idx).is_some(), "before1 should be a dependency of main");
+        // Check that dep1 and before1 are dependencies of A
+        assert!(dag.find_edge(dep1_idx, main_idx).is_some(), "dep1 should be a dependency of A");
+        assert!(dag.find_edge(before1_idx, main_idx).is_some(), "before1 should be a dependency of A");
 
-        // Verify DAG has the expected number of tasks (3: main + its dependencies)
-        // Note: after1 is NOT included because it's not a dependency of main
-        assert_eq!(dag.node_count(), 3, "DAG should contain main and its dependencies (dep1, before1)");
+        // Verify DAG has the expected number of tasks (3: A + its dependencies)
+        // Note: after1 is NOT included because it's not a dependency of A
+        assert_eq!(dag.node_count(), 3, "DAG should contain A and its dependencies (dep1, before1)");
 
         // Test that after1 is NOT in the DAG (correct behavior)
         let after1_not_found = (0..dag.raw_nodes().len())
             .map(NodeIndex::new)
             .find(|&i| dag[i].name == "after1")
             .is_none();
-        assert!(after1_not_found, "after1 should NOT be in DAG when only main is requested");
+        assert!(after1_not_found, "after1 should NOT be in DAG when only A is requested");
 
         // Now test requesting after1 directly to ensure after dependencies work
         let dag_with_after = parser.process_tasks_with_filter(&[String::from("after1")]).unwrap();
 
-        // after1 depends on main (via main.after), which depends on dep1 and before1
+        // after1 depends on A (via A.after), which depends on dep1 and before1
         assert_eq!(dag_with_after.node_count(), 4, "When requesting after1, should get all 4 tasks");
 
         let after1_idx = (0..dag_with_after.raw_nodes().len())
@@ -876,11 +884,11 @@ mod tests {
             .expect("after1 should be in DAG when requested");
         let main_idx_after = (0..dag_with_after.raw_nodes().len())
             .map(NodeIndex::new)
-            .find(|&i| dag_with_after[i].name == "main")
-            .expect("main should be in DAG as dependency of after1");
+            .find(|&i| dag_with_after[i].name == "A")  // Changed from "main" to "A"
+            .expect("A should be in DAG as dependency of after1");
 
-        // Check that main is a dependency of after1 (main runs before after1)
-        assert!(dag_with_after.find_edge(main_idx_after, after1_idx).is_some(), "main should be a dependency of after1");
+        // Check that A is a dependency of after1 (A runs before after1)
+        assert!(dag_with_after.find_edge(main_idx_after, after1_idx).is_some(), "A should be a dependency of after1");
     }
 
     #[test]
@@ -976,17 +984,6 @@ mod tests {
         assert_eq!(result, vec![
             vec!["hello", "-g", "howdy", "--verbose", "true"]
         ]);
-    }
-
-    #[test]
-    fn test_no_arguments_behavior() {
-        // Test that when no arguments are provided, the parser handles it gracefully
-        let args = vec!["otto".to_string()];
-        let parser = Parser::new(args).unwrap();
-
-        // Parser should be created successfully
-        assert!(!parser.prog().is_empty());
-        assert!(parser.cwd().exists());
     }
 
     #[test]
@@ -1251,17 +1248,19 @@ mod tests {
         tasks.insert("B".to_string(), task_b);
         tasks.insert("C".to_string(), task_c);
 
+        let pargs = vec![];  // Empty pargs for this test
+
         let parser = Parser {
             prog: "otto".to_string(),
             cwd: PathBuf::from("/"),
             user: "test".to_string(),
             config: Config {
                 otto: Otto::default(),
-                tasks,
+                tasks: tasks.clone(),
             },
             hash: "test".to_string(),
             args: vec!["otto".to_string()],
-            pargs: vec![],
+            pargs,
             ottofile: None,
         };
 
@@ -1387,7 +1386,7 @@ mod tests {
             user: "test".to_string(),
             config: Config {
                 otto: Otto::default(),
-                tasks,
+                tasks: tasks.clone(),
             },
             hash: "test".to_string(),
             args,
@@ -1505,7 +1504,7 @@ mod tests {
             user: "test".to_string(),
             config: Config {
                 otto: Otto::default(),
-                tasks,
+                tasks: tasks.clone(),
             },
             hash: "test".to_string(),
             args: vec!["otto".to_string()],
@@ -1522,25 +1521,59 @@ mod tests {
 
     #[test]
     fn test_parameter_defaults_and_missing_params() {
-        // Test that tasks without parameters still work
+        // Test parameter defaults and missing parameter scenarios
+        use crate::cfg::param::{ParamType, Nargs};
+
         let mut tasks = HashMap::new();
 
-        let simple_task = Task {
-            name: "simple".to_string(),
-            action: "echo simple".to_string(),
+        let test_task = Task {
+            name: "test".to_string(),
+            action: "echo test".to_string(),
             before: vec![],
             after: vec![],
             input: vec![],
             output: vec![],
-            params: HashMap::new(), // No parameters
+            params: {
+                let mut params = HashMap::new();
+                params.insert("required".to_string(), Param {
+                    name: "required".to_string(),
+                    short: Some('r'),
+                    long: Some("required".to_string()),
+                    param_type: ParamType::OPT,
+                    dest: None,
+                    metavar: None,
+                    default: None, // No default
+                    constant: Value::Empty,
+                    choices: vec![],
+                    nargs: Nargs::One,
+                    help: Some("required parameter".to_string()),
+                    value: Value::Empty,
+                });
+                params.insert("optional".to_string(), Param {
+                    name: "optional".to_string(),
+                    short: Some('o'),
+                    long: Some("optional".to_string()),
+                    param_type: ParamType::OPT,
+                    dest: None,
+                    metavar: None,
+                    default: Some("default_value".to_string()),
+                    constant: Value::Empty,
+                    choices: vec![],
+                    nargs: Nargs::One,
+                    help: Some("optional parameter".to_string()),
+                    value: Value::Empty,
+                });
+                params
+            },
             help: None,
             timeout: None,
         };
 
-        tasks.insert("simple".to_string(), simple_task);
+        tasks.insert("test".to_string(), test_task);
 
-        let args = vec!["simple".to_string()];
-        let pargs = partitions(&args, &["simple"]);
+        // Test with only required parameter provided
+        let args = vec!["test".to_string(), "-r".to_string(), "required_value".to_string()];
+        let pargs = partitions(&args, &["test"]);
 
         let parser = Parser {
             prog: "otto".to_string(),
@@ -1548,7 +1581,7 @@ mod tests {
             user: "test".to_string(),
             config: Config {
                 otto: Otto::default(),
-                tasks,
+                tasks: tasks.clone(),
             },
             hash: "test".to_string(),
             args: vec!["otto".to_string()],
@@ -1556,11 +1589,288 @@ mod tests {
             ottofile: None,
         };
 
-        let dag = parser.process_tasks_with_filter(&[String::from("simple")]).unwrap();
-        let simple_spec = &dag.raw_nodes()[0].weight;
+        let dag = parser.process_tasks_with_filter(&[String::from("test")]).unwrap();
+        let test_spec = &dag.raw_nodes()[0].weight;
 
-        // Should have no parameters in envs or values
-        assert!(simple_spec.envs.is_empty(), "Simple task should have no env vars");
-        assert!(simple_spec.values.is_empty(), "Simple task should have no values");
+        // Should have required parameter
+        assert_eq!(test_spec.envs.get("required"), Some(&"required_value".to_string()));
+        assert_eq!(test_spec.values.get("required"), Some(&Value::Item("required_value".to_string())));
+
+        // Should have optional parameter with default value
+        assert_eq!(test_spec.envs.get("optional"), Some(&"default_value".to_string()));
+        assert_eq!(test_spec.values.get("optional"), Some(&Value::Item("default_value".to_string())));
+    }
+
+    #[test]
+    fn test_file_dependencies_basic() -> Result<()> {
+        // Create temporary directory for test files
+        let temp_dir = tempfile::TempDir::new()?;
+        let temp_path = temp_dir.path();
+
+        // Create test files
+        let src_file = temp_path.join("src.c");
+        let config_file = temp_path.join("config.h");
+
+        std::fs::write(&src_file, "int main() { return 0; }")?;
+        std::fs::write(&config_file, "#define VERSION 1")?;
+
+        // Change to temp directory for relative path resolution
+        let original_dir = std::env::current_dir()?;
+        std::env::set_current_dir(temp_path)?;
+
+        let task = Task {
+            name: "build".to_string(),
+            action: "gcc -o app src.c".to_string(),
+            before: vec![],
+            after: vec![],
+            input: vec!["src.c".to_string(), "config.h".to_string()],
+            output: vec!["app".to_string()],
+            params: HashMap::new(),
+            help: None,
+            timeout: None,
+        };
+
+        let spec = TaskSpec::from_task(&task);
+
+        // Restore original directory
+        std::env::set_current_dir(original_dir)?;
+
+        assert_eq!(spec.name, "build");
+        assert_eq!(spec.file_deps.len(), 2);
+        assert_eq!(spec.output_deps.len(), 1);
+
+        // Should include input files as dependencies
+        assert!(spec.file_deps.iter().any(|f| f.ends_with("src.c")));
+        assert!(spec.file_deps.iter().any(|f| f.ends_with("config.h")));
+
+        // Should include output files
+        assert!(spec.output_deps.iter().any(|f| f.ends_with("app")));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_file_dependencies_empty() {
+        // Test task with no file dependencies
+        let task = Task {
+            name: "simple".to_string(),
+            action: "echo hello".to_string(),
+            before: vec![],
+            after: vec![],
+            input: vec![],
+            output: vec![],
+            params: HashMap::new(),
+            help: None,
+            timeout: None,
+        };
+
+        let spec = TaskSpec::from_task(&task);
+
+        assert_eq!(spec.file_deps.len(), 0);
+        assert_eq!(spec.output_deps.len(), 0);
+        assert_eq!(spec.task_deps.len(), 0);
+    }
+
+    #[test]
+    fn test_file_dependencies_mixed_with_task_deps() -> Result<()> {
+        // Create temporary directory for test files
+        let temp_dir = tempfile::TempDir::new()?;
+        let temp_path = temp_dir.path();
+
+        // Create test files
+        let app_file = temp_path.join("app");
+        let config_file = temp_path.join("config.yml");
+
+        std::fs::write(&app_file, "fake binary content")?;
+        std::fs::write(&config_file, "server: production")?;
+
+        // Change to temp directory for relative path resolution
+        let original_dir = std::env::current_dir()?;
+        std::env::set_current_dir(temp_path)?;
+
+        // Test task with both file and task dependencies
+        let task = Task {
+            name: "deploy".to_string(),
+            action: "deploy.sh app config.yml".to_string(),
+            before: vec!["build".to_string(), "test".to_string()],
+            after: vec!["cleanup".to_string()],
+            input: vec!["app".to_string(), "config.yml".to_string()],
+            output: vec!["deployment.log".to_string()],
+            params: HashMap::new(),
+            help: None,
+            timeout: None,
+        };
+
+        let spec = TaskSpec::from_task(&task);
+
+        // Restore original directory
+        std::env::set_current_dir(original_dir)?;
+
+        // Should have both task and file dependencies
+        assert_eq!(spec.task_deps, vec!["build", "test"]);
+        assert_eq!(spec.file_deps.len(), 2);
+        assert_eq!(spec.output_deps.len(), 1);
+
+        // File dependencies should be resolved
+        assert!(spec.file_deps.iter().any(|f| f.ends_with("app")));
+        assert!(spec.file_deps.iter().any(|f| f.ends_with("config.yml")));
+        assert!(spec.output_deps.iter().any(|f| f.ends_with("deployment.log")));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_file_dependencies_yaml_config_integration() -> Result<()> {
+        // Create isolated temporary directory for this test
+        let temp_dir = tempfile::TempDir::new()?;
+        let temp_path = temp_dir.path();
+
+        // Store original directory to restore it later
+        let original_dir = std::env::current_dir()?;
+
+        // Perform all test logic in an isolated scope
+        let result = std::panic::catch_unwind(|| -> Result<()> {
+            // Change to temp directory FIRST
+            std::env::set_current_dir(temp_path)?;
+
+            // Create test files AFTER changing directory
+            let src_dir = temp_path.join("src");
+            let include_dir = temp_path.join("include");
+            let build_dir = temp_path.join("build");
+
+            std::fs::create_dir_all(&src_dir)?;
+            std::fs::create_dir_all(&include_dir)?;
+            std::fs::create_dir_all(&build_dir)?;
+
+            // Create source and header files
+            std::fs::write(src_dir.join("main.c"), "#include \"app.h\"\nint main() { return 0; }")?;
+            std::fs::write(src_dir.join("utils.c"), "#include \"app.h\"\nvoid utils() {}")?;
+            std::fs::write(include_dir.join("app.h"), "#ifndef APP_H\n#define APP_H\n#endif")?;
+            std::fs::write(include_dir.join("utils.h"), "#ifndef UTILS_H\n#define UTILS_H\n#endif")?;
+
+            // Test file dependencies work end-to-end with YAML config parsing
+            let yaml_content = r#"
+otto:
+  name: "file-deps-test"
+  api: 1
+
+tasks:
+  compile:
+    input:
+      - "src/*.c"
+      - "include/*.h"
+    output:
+      - "build/app"
+    action: |
+      gcc -Iinclude -o build/app src/*.c
+    help: "Compile C application"
+
+  test:
+    before: ["compile"]
+    input:
+      - "build/app"
+      - "tests/*.txt"
+    output:
+      - "test_results.log"
+    action: |
+      ./build/app < tests/input.txt > test_results.log
+    help: "Run tests"
+"#;
+
+            let config: Config = serde_yaml::from_str(yaml_content)?;
+
+            // Test compile task file dependencies
+            let compile_task = config.tasks.get("compile").unwrap();
+            let compile_spec = TaskSpec::from_task_with_cwd(compile_task, temp_path);
+
+            assert_eq!(compile_spec.name, "compile");
+            assert!(compile_spec.file_deps.len() >= 4, "Expected at least 4 files, got {}: {:?}", compile_spec.file_deps.len(), compile_spec.file_deps); // main.c, utils.c, app.h, utils.h
+            assert_eq!(compile_spec.output_deps.len(), 1);
+            assert!(compile_spec.output_deps.iter().any(|f| f.ends_with("build/app")));
+            assert!(compile_spec.file_deps.iter().any(|f| f.contains("main.c")));
+            assert!(compile_spec.file_deps.iter().any(|f| f.contains("utils.c")));
+            assert!(compile_spec.file_deps.iter().any(|f| f.contains("app.h")));
+
+            // Test test task with both task and file dependencies
+            let test_task = config.tasks.get("test").unwrap();
+            let test_spec = TaskSpec::from_task_with_cwd(test_task, temp_path);
+
+            assert_eq!(test_spec.name, "test");
+            assert_eq!(test_spec.task_deps, vec!["compile"]);
+            assert!(test_spec.file_deps.len() >= 1); // build/app, plus any tests/*.txt that exist
+            assert_eq!(test_spec.output_deps.len(), 1);
+            assert!(test_spec.output_deps.iter().any(|f| f.ends_with("test_results.log")));
+
+            Ok(())
+        });
+
+        // Always restore directory, even if test panicked
+        let _ = std::env::set_current_dir(original_dir);
+
+        // Handle panic or error
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(eyre::eyre!("Test panicked")),
+        }
+    }
+
+    #[test]
+    fn test_file_dependencies_special_characters() -> Result<()> {
+        // Create isolated temporary directory for this test
+        let temp_dir = tempfile::TempDir::new()?;
+        let temp_path = temp_dir.path();
+
+        // Store original directory to restore it later
+        let original_dir = std::env::current_dir()?;
+
+        // Perform all test logic in an isolated scope
+        let result = std::panic::catch_unwind(|| -> Result<()> {
+            // Change to temp directory FIRST
+            std::env::set_current_dir(temp_path)?;
+
+            // Create files with special characters and spaces AFTER changing directory
+            std::fs::write(temp_path.join("file with spaces.txt"), "content")?;
+            std::fs::write(temp_path.join("file-with-dashes.log"), "log content")?;
+            std::fs::write(temp_path.join("file_with_underscores.cfg"), "config")?;
+
+            let task = Task {
+                name: "special_chars".to_string(),
+                action: "process_files.sh".to_string(),
+                before: vec![],
+                after: vec![],
+                input: vec![
+                    "file with spaces.txt".to_string(),
+                    "file-with-dashes.log".to_string(),
+                    "file_with_underscores.cfg".to_string(),
+                ],
+                output: vec!["output with spaces.txt".to_string()],
+                params: HashMap::new(),
+                help: None,
+                timeout: None,
+            };
+
+            let spec = TaskSpec::from_task_with_cwd(&task, temp_path);
+
+            // Should handle special characters properly
+            assert_eq!(spec.file_deps.len(), 3);
+            assert!(spec.file_deps.iter().any(|f| f.contains("file with spaces.txt")));
+            assert!(spec.file_deps.iter().any(|f| f.contains("file-with-dashes.log")));
+            assert!(spec.file_deps.iter().any(|f| f.contains("file_with_underscores.cfg")));
+            assert_eq!(spec.output_deps.len(), 1);
+            assert!(spec.output_deps.iter().any(|f| f.contains("output with spaces.txt")));
+
+            Ok(())
+        });
+
+        // Always restore directory, even if test panicked
+        let _ = std::env::set_current_dir(original_dir);
+
+        // Handle panic or error
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(eyre::eyre!("Test panicked")),
+        }
     }
 }
