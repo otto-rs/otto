@@ -16,14 +16,17 @@ async fn main() -> Result<(), Report> {
 
     let (otto, dag, _hash, ottofile_path) = parser.parse()?;
 
-    // Use ottofile path for workspace hash calculation, fallback to current dir if not found
-    let hash_path = if let Some(ottofile) = ottofile_path {
-        ottofile
+    // Use ottofile directory for workspace hash calculation, fallback to current dir if not found
+    let workspace_root = if let Some(ottofile) = ottofile_path {
+        // Use the directory containing the ottofile, not the ottofile itself
+        ottofile.parent()
+            .ok_or_else(|| eyre::eyre!("Could not determine parent directory of ottofile"))?
+            .to_path_buf()
     } else {
         env::current_dir()?
     };
 
-    let workspace = Workspace::new(hash_path).await?;
+    let workspace = Workspace::new(workspace_root).await?;
     workspace.init().await?;
 
     // Save execution context metadata
