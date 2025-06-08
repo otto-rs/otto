@@ -2,9 +2,15 @@ otto:
   api: 1
   jobs: 12
   tasks:
-  - opt1
+  - sometask
 tasks:
   sometask:
+    action: |
+      echo "Running sometask with parameters:"
+      echo "  --opt1: ${opt1:-'(not provided)'}"
+      echo "  --opt2: ${opt2}"
+      echo "  positional argument: ${positional}"
+      echo "Task completed successfully!"
     params:
       --opt1:
         metavar: OPT
