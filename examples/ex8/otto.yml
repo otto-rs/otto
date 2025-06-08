@@ -12,6 +12,8 @@ tasks:
     input:
     - data/*.txt
     - config.json
+    after:
+    - cleanup  # count_lines runs before cleanup
     action: |
       #!/bin/bash
       echo "Counting lines in input files..."
@@ -27,12 +29,14 @@ tasks:
       echo "Config: $(cat config.json)"
       echo "$total" > line_count.txt
     help: Count lines in all text files and read config
-    
+
   # Task that depends on other files
   summarize:
     input:
     - README.md
     - data/summary.txt
+    after:
+    - cleanup  # summarize runs before cleanup
     action: |
       #!/bin/bash
       echo "Creating summary..."
@@ -44,7 +48,7 @@ tasks:
       echo ""
       echo "Summary created at $(date)" > summary_output.txt
     help: Summarize README and data files
-    
+
   # Task that depends on both files AND other tasks
   process:
     before:
@@ -52,6 +56,8 @@ tasks:
     - summarize
     input:
     - process_config.yml
+    after:
+    - report  # process runs before report
     action: |
       #!/bin/bash
       echo "Processing results..."
@@ -60,7 +66,7 @@ tasks:
       echo "Process config: $(cat process_config.yml)"
       echo "All processing complete at $(date)"
     help: Process results from count_lines and summarize tasks
-    
+
   # Task that shows file glob patterns
   check_logs:
     input:
@@ -72,4 +78,24 @@ tasks:
       find logs -name "*.log" -type f | while read logfile; do
         echo "Log: $logfile ($(wc -l < "$logfile") lines)"
       done
-    help: Check all log files using glob patterns 
+    help: Check all log files using glob patterns
+
+  # Cleanup task that runs after count_lines and summarize (via after deps)
+  cleanup:
+    action: |
+      #!/bin/bash
+      echo "Cleaning up temporary files..."
+      echo "Files to clean: line_count.txt, summary_output.txt"
+      # Don't actually delete in demo
+      echo "Cleanup completed at $(date)"
+    help: Clean up temporary files created by other tasks
+
+  # Report task that runs after process (via after dep)
+  report:
+    action: |
+      #!/bin/bash
+      echo "Generating final report..."
+      echo "=== OTTO TASK EXECUTION REPORT ==="
+      echo "Execution completed at $(date)"
+      echo "All tasks finished successfully"
+    help: Generate final execution report

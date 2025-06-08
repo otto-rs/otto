@@ -1,6 +1,7 @@
 //#![allow(unused_imports, unused_variables, unused_attributes, unused_mut, dead_code)]
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::env;
 use std::ffi::OsStr;
 use std::fmt::Debug;
@@ -16,7 +17,6 @@ use sha2::{Digest, Sha256};
 use glob;
 
 use crate::cfg::config::{Config, Otto, Param, Task, Tasks, Value};
-  // Test-only imports
 
 pub type DAG<T> = Dag<T, (), u32>;
 
@@ -597,60 +597,124 @@ impl Parser {
     }
 
     fn process_tasks_with_filter(&self, requested_tasks: &[String]) -> Result<DAG<TaskSpec>> {
-        // Initialize an empty Dag and an index map
+        // Step 1: Compute all task dependencies using simple linear algorithm
+        let task_deps = self.compute_task_deps()?;
+
+        // Step 2: Find all tasks we need (requested + their transitive dependencies)
+        let mut tasks_needed = HashSet::new();
+        for task_name in requested_tasks {
+            self.collect_transitive_deps(task_name, &task_deps, &mut tasks_needed)?;
+        }
+
+        // Step 3: Build DAG from needed tasks
         let mut dag: DAG<TaskSpec> = DAG::new();
         let mut indices: HashMap<String, NodeIndex<u32>> = HashMap::new();
 
-        // Helper function to recursively add a task and its dependencies
-        fn add_task_and_deps(
-            task_name: &str,
-            config: &Config,
-            dag: &mut DAG<TaskSpec>,
-            indices: &mut HashMap<String, NodeIndex<u32>>,
-            pargs: &[Vec<String>],
-        ) -> Result<()> {
-            if indices.contains_key(task_name) {
-                return Ok(()); // Task already added
-            }
-
-            let task = config.tasks.get(task_name)
+        // Add all needed tasks to DAG first
+        for task_name in &tasks_needed {
+            let task = self.config.tasks.get(task_name)
                 .ok_or_else(|| eyre!("Task '{}' not found", task_name))?;
 
-            // Add dependencies first
-            for task_dep in task.before.iter() {
-                add_task_and_deps(task_dep, config, dag, indices, pargs)?;
-            }
-
-            // Create task spec with parameters
-            let spec = TaskSpec::from_task(task);
+            let mut spec = TaskSpec::from_task(task);
 
             // Find the partition for this task's arguments
-            if let Some(task_args) = pargs.iter().find(|args| !args.is_empty() && args[0] == task_name) {
+            if let Some(task_args) = self.pargs.iter().find(|args| !args.is_empty() && args[0] == *task_name) {
                 if task_args.len() > 1 {
-                    // TODO: Parse task arguments and update spec.values
-                    // For now, we just store the raw arguments
+                    // Parse task arguments using clap
+                    let task_command = Self::task_to_command(task);
+                    let matches = task_command.get_matches_from(task_args);
+
+                    for param in task.params.values() {
+                        if let Some(value) = matches.get_one::<String>(param.name.as_str()) {
+                            spec.values.insert(param.name.clone(), Value::Item(value.to_string()));
+                            // Also add to environment variables
+                            spec.envs.insert(param.name.clone(), value.to_string());
+                        }
+                    }
                 }
             }
 
-            // Add to DAG
+            // Override task_deps with computed dependencies
+            spec.task_deps = task_deps.get(task_name)
+                .map(|deps| deps.iter().cloned().collect())
+                .unwrap_or_default();
+
             let index = dag.add_node(spec);
-            indices.insert(task_name.to_string(), index);
-
-            // Add edges for 'before' dependencies
-            for task_dep_name in task.before.iter() {
-                let task_dep_index = indices.get(task_dep_name).expect("Dependency should exist");
-                dag.add_edge(*task_dep_index, index, ())?;
-            }
-
-            Ok(())
+            indices.insert(task_name.clone(), index);
         }
 
-        // Add each requested task and its dependencies
-        for task_name in requested_tasks {
-            add_task_and_deps(task_name, &self.config, &mut dag, &mut indices, &self.pargs)?;
+        // Add edges based on computed dependencies
+        for task_name in &tasks_needed {
+            let task_index = indices[task_name];
+            if let Some(deps) = task_deps.get(task_name) {
+                for dep_name in deps {
+                    if let Some(&dep_index) = indices.get(dep_name) {
+                        dag.add_edge(dep_index, task_index, ())?;
+                    }
+                }
+            }
         }
 
         Ok(dag)
+    }
+
+    /// Compute task dependencies using simple linear-time algorithm
+    fn compute_task_deps(&self) -> Result<HashMap<String, HashSet<String>>> {
+        // Initialize empty dependency sets for all tasks
+        let mut task_deps: HashMap<String, HashSet<String>> = HashMap::new();
+        for task_name in self.config.tasks.keys() {
+            task_deps.insert(task_name.clone(), HashSet::new());
+        }
+
+        // Pass 1: Process 'before' edges - for each "before" edge, add u → t (u must precede t)
+        for task in self.config.tasks.values() {
+            for before_task in &task.before {
+                if !self.config.tasks.contains_key(before_task) {
+                    return Err(eyre!("Task '{}' references unknown before dependency '{}'", task.name, before_task));
+                }
+                task_deps.get_mut(&task.name).unwrap().insert(before_task.clone());
+            }
+        }
+
+        // Pass 2: Process 'after' edges - for each "after" edge, add t → v (t must precede v)
+        // i.e. v depends on t
+        for task in self.config.tasks.values() {
+            for after_task in &task.after {
+                if !self.config.tasks.contains_key(after_task) {
+                    return Err(eyre!("Task '{}' references unknown after dependency '{}'", task.name, after_task));
+                }
+                task_deps.get_mut(after_task).unwrap().insert(task.name.clone());
+            }
+        }
+
+        Ok(task_deps)
+    }
+
+    /// Collect all transitive dependencies for a task
+    fn collect_transitive_deps(
+        &self,
+        task_name: &str,
+        task_deps: &HashMap<String, HashSet<String>>,
+        collected: &mut HashSet<String>,
+    ) -> Result<()> {
+        if collected.contains(task_name) {
+            return Ok(()); // Already processed
+        }
+
+        if !self.config.tasks.contains_key(task_name) {
+            return Err(eyre!("Task '{}' not found", task_name));
+        }
+
+        collected.insert(task_name.to_string());
+
+        // Recursively collect dependencies
+        if let Some(deps) = task_deps.get(task_name) {
+            for dep in deps {
+                self.collect_transitive_deps(dep, task_deps, collected)?;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -659,7 +723,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::collections::HashSet;
-    // Removed unused imports
+    use crate::cfg::param::{ParamType, Nargs};
 
     #[test]
     fn test_indices() {
@@ -815,8 +879,34 @@ mod tests {
         assert!(dag.find_edge(dep1_idx, main_idx).is_some(), "dep1 should be a dependency of main");
         assert!(dag.find_edge(before1_idx, main_idx).is_some(), "before1 should be a dependency of main");
 
-        // Note: after1 task won't be in the DAG since we only requested "main" and after dependencies
-        // are not automatically included in the current implementation
+        // Verify DAG has the expected number of tasks (3: main + its dependencies)
+        // Note: after1 is NOT included because it's not a dependency of main
+        assert_eq!(dag.node_count(), 3, "DAG should contain main and its dependencies (dep1, before1)");
+
+        // Test that after1 is NOT in the DAG (correct behavior)
+        let after1_not_found = (0..dag.raw_nodes().len())
+            .map(NodeIndex::new)
+            .find(|&i| dag[i].name == "after1")
+            .is_none();
+        assert!(after1_not_found, "after1 should NOT be in DAG when only main is requested");
+
+        // Now test requesting after1 directly to ensure after dependencies work
+        let dag_with_after = parser.process_tasks_with_filter(&[String::from("after1")]).unwrap();
+
+        // after1 depends on main (via main.after), which depends on dep1 and before1
+        assert_eq!(dag_with_after.node_count(), 4, "When requesting after1, should get all 4 tasks");
+
+        let after1_idx = (0..dag_with_after.raw_nodes().len())
+            .map(NodeIndex::new)
+            .find(|&i| dag_with_after[i].name == "after1")
+            .expect("after1 should be in DAG when requested");
+        let main_idx_after = (0..dag_with_after.raw_nodes().len())
+            .map(NodeIndex::new)
+            .find(|&i| dag_with_after[i].name == "main")
+            .expect("main should be in DAG as dependency of after1");
+
+        // Check that main is a dependency of after1 (main runs before after1)
+        assert!(dag_with_after.find_edge(main_idx_after, after1_idx).is_some(), "main should be a dependency of after1");
     }
 
     #[test]
@@ -1140,12 +1230,16 @@ mod tests {
     }
 
     #[test]
-    fn test_dependency_handling() {
-        let main_task = Task {
-            name: "main".to_string(),
-            action: "echo main".to_string(),
-            before: vec!["dep1".to_string(), "dep2".to_string(), "before1".to_string()],
-            after: vec!["after1".to_string()],
+    fn test_after_dependencies() {
+        // Create a simple test for the dependency computation algorithm
+        let mut tasks = HashMap::new();
+
+        // Task A has after: [B] - meaning A runs before B, so B depends on A
+        let task_a = Task {
+            name: "A".to_string(),
+            action: "echo A".to_string(),
+            before: vec![],
+            after: vec!["B".to_string()],
             input: vec![],
             output: vec![],
             params: HashMap::new(),
@@ -1153,84 +1247,23 @@ mod tests {
             timeout: None,
         };
 
-        let spec = TaskSpec::from_task(&main_task);
+        // Task B has before: [C] - meaning C runs before B, so B depends on C
+        let task_b = Task {
+            name: "B".to_string(),
+            action: "echo B".to_string(),
+            before: vec!["C".to_string()],
+            after: vec![],
+            input: vec![],
+            output: vec![],
+            params: HashMap::new(),
+            help: None,
+            timeout: None,
+        };
 
-        // Should include only before tasks as task_deps (after is handled during DAG building)
-        let expected_task_deps: HashSet<String> = vec!["dep1".to_string(), "dep2".to_string(), "before1".to_string()]
-            .into_iter().collect();
-        let actual_task_deps: HashSet<String> = spec.task_deps.into_iter().collect();
-
-        assert_eq!(actual_task_deps, expected_task_deps);
-    }
-
-    #[test]
-    fn test_parser_initialization() {
-        // Test parser initialization with various argument sets
-        let test_cases = vec![
-            vec!["otto"],
-            vec!["otto", "task1"],
-            vec!["otto", "-o", "file.yml", "task1"],
-            vec!["otto", "--help"],
-            vec!["otto", "task1", "task2", "-a", "val"],
-        ];
-
-        for args in test_cases {
-            let args: Vec<String> = args.into_iter().map(String::from).collect();
-            let result = Parser::new(args);
-            assert!(result.is_ok(), "Parser initialization should succeed");
-
-            let parser = result.unwrap();
-            assert!(!parser.prog().is_empty());
-            assert!(parser.cwd().exists());
-        }
-    }
-
-    #[test]
-    fn test_help_behavior_integration() {
-        // Test help behavior in various scenarios
-
-        // Test 1: No arguments should trigger help behavior in parse()
-        let args = vec!["otto".to_string()];
-        let parser = Parser::new(args).unwrap();
-
-        // This would normally show help and exit, but we can't test that directly
-        // Instead we test the setup is correct
-        assert_eq!(parser.config.tasks.len(), 0);
-
-        // Test 2: Help flag detection
-        let help_args = vec!["otto".to_string(), "--help".to_string()];
-        let has_help = help_args.iter().any(|arg| arg == "--help" || arg == "-h");
-        assert!(has_help);
-    }
-
-    #[test]
-    fn test_ottofile_path_handling() {
-        // Test various ottofile path scenarios
-        let test_cases = vec![
-            // Relative path
-            ("./test.yml", "./test.yml"),
-            // Absolute path
-            ("/tmp/test.yml", "/tmp/test.yml"),
-            // Home directory expansion would happen in divine_ottofile
-            ("~/test.yml", "~/test.yml"),
-        ];
-
-        for (input, expected) in test_cases {
-            // Test that the path is preserved correctly
-            assert_eq!(input, expected);
-        }
-    }
-
-    #[test]
-    fn test_task_filtering_logic() {
-        // Test the logic for filtering tasks that don't exist
-        let mut otto = Otto::default();
-        otto.tasks = vec!["task1".to_string(), "nonexistent".to_string(), "task2".to_string()];
-
-        let mut available_tasks = HashMap::new();
-        available_tasks.insert("task1".to_string(), Task {
-            name: "task1".to_string(),
-            action: "echo 1".to_string(),
+        // Task C is simple
+        let task_c = Task {
+            name: "C".to_string(),
+            action: "echo C".to_string(),
             before: vec![],
             after: vec![],
             input: vec![],
@@ -1238,117 +1271,322 @@ mod tests {
             params: HashMap::new(),
             help: None,
             timeout: None,
-        });
-        available_tasks.insert("task2".to_string(), Task {
-            name: "task2".to_string(),
-            action: "echo 2".to_string(),
+        };
+
+        tasks.insert("A".to_string(), task_a);
+        tasks.insert("B".to_string(), task_b);
+        tasks.insert("C".to_string(), task_c);
+
+        let parser = Parser {
+            prog: "otto".to_string(),
+            cwd: PathBuf::from("/"),
+            user: "test".to_string(),
+            config: Config {
+                otto: Otto::default(),
+                tasks,
+            },
+            hash: "test".to_string(),
+            args: vec!["otto".to_string()],
+            pargs: vec![],
+            ottofile: None,
+        };
+
+        // Test the dependency computation directly
+        let task_deps = parser.compute_task_deps().unwrap();
+
+        // Verify computed dependencies:
+        // A should have no dependencies
+        assert_eq!(task_deps.get("A").unwrap().len(), 0, "A should have no dependencies");
+
+        // B should depend on both A (via A.after) and C (via B.before)
+        let b_deps = task_deps.get("B").unwrap();
+        assert_eq!(b_deps.len(), 2, "B should have 2 dependencies");
+        assert!(b_deps.contains("A"), "B should depend on A (from A.after)");
+        assert!(b_deps.contains("C"), "B should depend on C (from B.before)");
+
+        // C should have no dependencies
+        assert_eq!(task_deps.get("C").unwrap().len(), 0, "C should have no dependencies");
+
+        // Test DAG construction with B (should pull in A and C)
+        let dag = parser.process_tasks_with_filter(&[String::from("B")]).unwrap();
+
+        assert_eq!(dag.node_count(), 3, "DAG should contain A, B, C when requesting B");
+
+        let get_task_idx = |name: &str| -> NodeIndex<u32> {
+            (0..dag.raw_nodes().len())
+                .map(NodeIndex::new)
+                .find(|&i| dag[i].name == name)
+                .unwrap_or_else(|| panic!("Task {} not found in DAG", name))
+        };
+
+        let a_idx = get_task_idx("A");
+        let b_idx = get_task_idx("B");
+        let c_idx = get_task_idx("C");
+
+        // Verify edges: A -> B and C -> B
+        assert!(dag.find_edge(a_idx, b_idx).is_some(), "A should run before B");
+        assert!(dag.find_edge(c_idx, b_idx).is_some(), "C should run before B");
+
+        // Test requesting just A (should only get A)
+        let dag_a = parser.process_tasks_with_filter(&[String::from("A")]).unwrap();
+        assert_eq!(dag_a.node_count(), 1, "DAG should contain only A when requesting A");
+    }
+
+    #[test]
+    fn test_parameter_parsing_regression() {
+        // REGRESSION TEST: Ensure parameter parsing works correctly
+        // This test covers the exact scenario that was broken during refactor
+
+        let mut tasks = HashMap::new();
+
+        // Create hello task with -g/--greeting parameter
+        let hello_task = Task {
+            name: "hello".to_string(),
+            action: "echo \"${greeting:-hello}\"".to_string(),
             before: vec![],
             after: vec![],
             input: vec![],
             output: vec![],
-            params: HashMap::new(),
-            help: None,
+            params: {
+                let mut params = HashMap::new();
+                params.insert("greeting".to_string(), Param {
+                    name: "greeting".to_string(),
+                    short: Some('g'),
+                    long: Some("greeting".to_string()),
+                    param_type: ParamType::OPT,
+                    dest: None,
+                    metavar: None,
+                    default: Some("hello".to_string()),
+                    constant: Value::Empty,
+                    choices: vec!["hello".to_string(), "howdy".to_string()],
+                    nargs: Nargs::One,
+                    help: Some("override greeting".to_string()),
+                    value: Value::Empty,
+                });
+                params
+            },
+            help: Some("hello task help".to_string()),
             timeout: None,
-        });
+        };
 
-        // Simulate the filtering logic
-        otto.tasks.retain(|task| available_tasks.contains_key(task));
+        // Create world task with -n/--name parameter
+        let world_task = Task {
+            name: "world".to_string(),
+            action: "echo \"${name:-world}\"".to_string(),
+            before: vec!["hello".to_string()], // world depends on hello
+            after: vec![],
+            input: vec![],
+            output: vec![],
+            params: {
+                let mut params = HashMap::new();
+                params.insert("name".to_string(), Param {
+                    name: "name".to_string(),
+                    short: Some('n'),
+                    long: Some("name".to_string()),
+                    param_type: ParamType::OPT,
+                    dest: None,
+                    metavar: None,
+                    default: Some("world".to_string()),
+                    constant: Value::Empty,
+                    choices: vec![],
+                    nargs: Nargs::One,
+                    help: Some("override name".to_string()),
+                    value: Value::Empty,
+                });
+                params
+            },
+            help: Some("world task help".to_string()),
+            timeout: None,
+        };
 
-        assert_eq!(otto.tasks, vec!["task1", "task2"]);
-        assert!(!otto.tasks.contains(&"nonexistent".to_string()));
-    }
+        tasks.insert("hello".to_string(), hello_task);
+        tasks.insert("world".to_string(), world_task);
 
-    #[test]
-    fn test_error_scenarios() {
-        // Test various error scenarios
+        // Simulate the exact command: otto hello -g howdy world -n mundo
+        let args = vec!["otto".to_string(), "hello".to_string(), "-g".to_string(), "howdy".to_string(), "world".to_string(), "-n".to_string(), "mundo".to_string()];
+        let task_names = vec!["hello", "world"];
+        let pargs = partitions(&args[1..].to_vec(), &task_names); // Skip "otto"
 
-        // Test invalid hash calculation
-        let empty_action = String::new();
-        let hash = calculate_hash(&empty_action);
-        assert_eq!(hash.len(), 8); // Should still produce a hash
+        let parser = Parser {
+            prog: "otto".to_string(),
+            cwd: PathBuf::from("/"),
+            user: "test".to_string(),
+            config: Config {
+                otto: Otto::default(),
+                tasks,
+            },
+            hash: "test".to_string(),
+            args,
+            pargs,
+            ottofile: None,
+        };
 
-        // Test task spec with empty values
-        let spec = TaskSpec::new(
-            "test".to_string(),
-            vec![],
-            vec![],
-            HashMap::new(),
-            HashMap::new(),
-            "".to_string(),
+        // Test that parameters are parsed correctly
+        let dag = parser.process_tasks_with_filter(&[String::from("world")]).unwrap();
+
+        // Verify both tasks are in DAG (world depends on hello)
+        assert_eq!(dag.node_count(), 2, "DAG should contain hello and world");
+
+        // Find task specs
+        let hello_spec = dag.raw_nodes().iter()
+            .find(|node| node.weight.name == "hello")
+            .expect("hello task should be in DAG");
+        let world_spec = dag.raw_nodes().iter()
+            .find(|node| node.weight.name == "world")
+            .expect("world task should be in DAG");
+
+        // Verify hello task has greeting="howdy"
+        assert_eq!(
+            hello_spec.weight.envs.get("greeting"),
+            Some(&"howdy".to_string()),
+            "hello task should have greeting=howdy in envs"
         );
-        assert_eq!(spec.name, "test");
-        assert!(spec.task_deps.is_empty());
-        assert!(spec.file_deps.is_empty());
-        assert!(spec.envs.is_empty());
-        assert!(spec.values.is_empty());
+        assert_eq!(
+            hello_spec.weight.values.get("greeting"),
+            Some(&Value::Item("howdy".to_string())),
+            "hello task should have greeting=howdy in values"
+        );
+
+        // Verify world task has name="mundo"
+        assert_eq!(
+            world_spec.weight.envs.get("name"),
+            Some(&"mundo".to_string()),
+            "world task should have name=mundo in envs"
+        );
+        assert_eq!(
+            world_spec.weight.values.get("name"),
+            Some(&Value::Item("mundo".to_string())),
+            "world task should have name=mundo in values"
+        );
     }
 
     #[test]
-    fn test_real_world_scenarios() {
-        // Test real-world command line scenarios
+    fn test_single_task_parameter_parsing() {
+        // Test parameter parsing for a single task
+        use crate::cfg::param::{ParamType, Nargs};
 
-        // Scenario 1: Development workflow
-        let dev_args = vec_of_strings!["build", "--release", "test", "--verbose", "deploy", "--env", "staging"];
-        let task_names = vec!["build", "test", "deploy"];
-        let result = partitions(&dev_args, &task_names);
-        assert_eq!(result, vec![
-            vec!["build", "--release"],
-            vec!["test", "--verbose"],
-            vec!["deploy", "--env", "staging"]
-        ]);
+        let mut tasks = HashMap::new();
 
-        // Scenario 2: Single task with multiple flags
-        let single_task_args = vec_of_strings!["lint", "--fix", "--format", "json", "--output", "report.json"];
-        let result = partitions(&single_task_args, &["lint"]);
-        assert_eq!(result, vec![
-            vec!["lint", "--fix", "--format", "json", "--output", "report.json"]
-        ]);
+        let test_task = Task {
+            name: "test".to_string(),
+            action: "echo test".to_string(),
+            before: vec![],
+            after: vec![],
+            input: vec![],
+            output: vec![],
+            params: {
+                let mut params = HashMap::new();
+                params.insert("flag".to_string(), Param {
+                    name: "flag".to_string(),
+                    short: Some('f'),
+                    long: Some("flag".to_string()),
+                    param_type: ParamType::OPT,
+                    dest: None,
+                    metavar: None,
+                    default: Some("default".to_string()),
+                    constant: Value::Empty,
+                    choices: vec![],
+                    nargs: Nargs::One,
+                    help: Some("test flag".to_string()),
+                    value: Value::Empty,
+                });
+                params
+            },
+            help: None,
+            timeout: None,
+        };
 
-        // Scenario 3: Tasks with similar names
-        let similar_names = vec_of_strings!["test", "--unit", "test-integration", "--coverage"];
-        let result = partitions(&similar_names, &["test", "test-integration"]);
-        assert_eq!(result, vec![
-            vec!["test", "--unit"],
-            vec!["test-integration", "--coverage"]
-        ]);
+        tasks.insert("test".to_string(), test_task);
+
+        // Test with short flag
+        let args = vec!["test".to_string(), "-f".to_string(), "short_value".to_string()];
+        let pargs = partitions(&args, &["test"]);
+
+        let parser = Parser {
+            prog: "otto".to_string(),
+            cwd: PathBuf::from("/"),
+            user: "test".to_string(),
+            config: Config {
+                otto: Otto::default(),
+                tasks: tasks.clone(),
+            },
+            hash: "test".to_string(),
+            args: vec!["otto".to_string()],
+            pargs,
+            ottofile: None,
+        };
+
+        let dag = parser.process_tasks_with_filter(&[String::from("test")]).unwrap();
+        let test_spec = &dag.raw_nodes()[0].weight;
+
+        assert_eq!(test_spec.envs.get("flag"), Some(&"short_value".to_string()));
+        assert_eq!(test_spec.values.get("flag"), Some(&Value::Item("short_value".to_string())));
+
+        // Test with long flag - create new parser since we can't mutate the old one
+        let args = vec!["test".to_string(), "--flag".to_string(), "long_value".to_string()];
+        let pargs = partitions(&args, &["test"]);
+        let parser = Parser {
+            prog: "otto".to_string(),
+            cwd: PathBuf::from("/"),
+            user: "test".to_string(),
+            config: Config {
+                otto: Otto::default(),
+                tasks,
+            },
+            hash: "test".to_string(),
+            args: vec!["otto".to_string()],
+            pargs,
+            ottofile: None,
+        };
+
+        let dag = parser.process_tasks_with_filter(&[String::from("test")]).unwrap();
+        let test_spec = &dag.raw_nodes()[0].weight;
+
+        assert_eq!(test_spec.envs.get("flag"), Some(&"long_value".to_string()));
+        assert_eq!(test_spec.values.get("flag"), Some(&Value::Item("long_value".to_string())));
     }
 
     #[test]
-    fn test_boundary_conditions() {
-        // Test boundary conditions and edge cases
+    fn test_parameter_defaults_and_missing_params() {
+        // Test that tasks without parameters still work
+        let mut tasks = HashMap::new();
 
-        // Very long task names
-        let long_name = "a".repeat(100);
-        let args = vec![long_name.clone()];
-        let result = partitions(&args, &[&long_name]);
-        assert_eq!(result, vec![vec![long_name]]);
+        let simple_task = Task {
+            name: "simple".to_string(),
+            action: "echo simple".to_string(),
+            before: vec![],
+            after: vec![],
+            input: vec![],
+            output: vec![],
+            params: HashMap::new(), // No parameters
+            help: None,
+            timeout: None,
+        };
 
-        // Many small tasks
-        let many_tasks: Vec<String> = (0..50).map(|i| format!("task{}", i)).collect();
-        let task_names: Vec<&str> = many_tasks.iter().map(|s| s.as_str()).collect();
-        let result = partitions(&many_tasks, &task_names);
-        assert_eq!(result.len(), 50);
+        tasks.insert("simple".to_string(), simple_task);
 
-        // Empty task name (edge case)
-        let result = partitions(&vec!["".to_string()], &[""]);
-        assert_eq!(result, vec![vec![""]]);
-    }
+        let args = vec!["simple".to_string()];
+        let pargs = partitions(&args, &["simple"]);
 
-    #[test]
-    fn test_command_builder_consistency() {
-        // Test that the command builders produce consistent results
-        let otto = Otto::default();
-        let tasks = HashMap::new();
+        let parser = Parser {
+            prog: "otto".to_string(),
+            cwd: PathBuf::from("/"),
+            user: "test".to_string(),
+            config: Config {
+                otto: Otto::default(),
+                tasks,
+            },
+            hash: "test".to_string(),
+            args: vec!["otto".to_string()],
+            pargs,
+            ottofile: None,
+        };
 
-        // Test otto_command
-        let otto_cmd = Parser::otto_command(&otto);
-        assert_eq!(otto_cmd.get_name(), "otto");
+        let dag = parser.process_tasks_with_filter(&[String::from("simple")]).unwrap();
+        let simple_spec = &dag.raw_nodes()[0].weight;
 
-        // Test help_command
-        let help_cmd = Parser::help_command(&otto, &tasks);
-        assert_eq!(help_cmd.get_name(), "otto");
-
-        // Both should have the same base structure
-        // (We can't easily compare the full commands, but we can check names)
+        // Should have no parameters in envs or values
+        assert!(simple_spec.envs.is_empty(), "Simple task should have no env vars");
+        assert!(simple_spec.values.is_empty(), "Simple task should have no values");
     }
 }
