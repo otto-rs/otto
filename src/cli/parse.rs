@@ -769,19 +769,6 @@ mod tests {
         );
     }
 
-    fn generate_test_otto() -> Otto {
-        Otto {
-            name: "otto".to_string(),
-            home: "~/.otto".to_string(),
-            about: "A task runner".to_string(),
-            api: "http://localhost:8000".to_string(),
-            jobs: num_cpus::get(),
-            verbosity: 1,
-            tasks: vec!["build".to_string()],
-            timeout: None,
-        }
-    }
-
     #[test]
     fn test_task_dependencies() {
         let task = Task {

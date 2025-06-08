@@ -10,6 +10,94 @@ use otto::cli::parse::TaskSpec;
 use otto::executor::scheduler::{TaskScheduler, TaskStatus};
 use otto::executor::workspace::{Workspace, ExecutionContext};
 
+// Test helper functions to reduce boilerplate
+struct TestFixture {
+    _temp_dir: TempDir,  // Keep alive for cleanup
+    temp_path: std::path::PathBuf,
+    workspace: std::sync::Arc<Workspace>,
+}
+
+impl TestFixture {
+    async fn new() -> Result<Self> {
+        let temp_dir = TempDir::new()?;
+        let temp_path = temp_dir.path().to_path_buf();
+        let workspace = Workspace::new(temp_path.clone()).await?;
+        workspace.init().await?;
+
+        Ok(Self {
+            _temp_dir: temp_dir,
+            temp_path,
+            workspace: std::sync::Arc::new(workspace),
+        })
+    }
+
+    fn path(&self) -> &std::path::Path {
+        &self.temp_path
+    }
+
+    fn file_path(&self, name: &str) -> std::path::PathBuf {
+        self.temp_path.join(name)
+    }
+
+    fn write_file(&self, name: &str, content: &str) -> Result<()> {
+        std::fs::write(self.file_path(name), content)?;
+        Ok(())
+    }
+
+    fn create_dir(&self, name: &str) -> Result<()> {
+        std::fs::create_dir_all(self.file_path(name))?;
+        Ok(())
+    }
+
+    async fn create_scheduler(&self, tasks: Vec<TaskSpec>) -> Result<TaskScheduler> {
+        TaskScheduler::new(
+            tasks,
+            self.workspace.clone(),
+            ExecutionContext::new(),
+            2,
+            2,
+        ).await
+    }
+
+    fn create_task(&self, name: &str, action: &str, inputs: Vec<&str>, outputs: Vec<&str>) -> TaskSpec {
+        TaskSpec::from_task_with_cwd(
+            &Task {
+                name: name.to_string(),
+                action: action.to_string(),
+                before: vec![],
+                after: vec![],
+                input: inputs.iter().map(|s| s.to_string()).collect(),
+                output: outputs.iter().map(|s| s.to_string()).collect(),
+                params: HashMap::new(),
+                help: None,
+                timeout: None,
+            },
+            &self.temp_path
+        )
+    }
+
+    fn create_task_with_deps(&self, name: &str, action: &str, inputs: Vec<&str>, outputs: Vec<&str>, before: Vec<&str>) -> TaskSpec {
+        TaskSpec::from_task_with_cwd(
+            &Task {
+                name: name.to_string(),
+                action: action.to_string(),
+                before: before.iter().map(|s| s.to_string()).collect(),
+                after: vec![],
+                input: inputs.iter().map(|s| s.to_string()).collect(),
+                output: outputs.iter().map(|s| s.to_string()).collect(),
+                params: HashMap::new(),
+                help: None,
+                timeout: None,
+            },
+            &self.temp_path
+        )
+    }
+
+    fn sleep_ms(ms: u64) {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
+}
+
 #[tokio::test]
 async fn test_file_dependencies_end_to_end_yaml() -> Result<()> {
     // Create a temporary directory for the test
@@ -139,44 +227,33 @@ tasks:
 
 #[tokio::test]
 async fn test_file_dependencies_glob_patterns() -> Result<()> {
-    let temp_dir = TempDir::new()?;
-    let temp_path = temp_dir.path();
+    let fixture = TestFixture::new().await?;
 
-    // Create complex directory structure
-    std::fs::create_dir_all(temp_path.join("src/lib"))?;
-    std::fs::create_dir_all(temp_path.join("tests"))?;
-    std::fs::create_dir_all(temp_path.join("docs"))?;
+    // Create complex directory structure using helper
+    fixture.create_dir("src/lib")?;
+    fixture.create_dir("tests")?;
+    fixture.create_dir("docs")?;
 
-    // Create various files
-    std::fs::write(temp_path.join("src/main.rs"), "fn main() {}")?;
-    std::fs::write(temp_path.join("src/lib.rs"), "pub mod lib;")?;
-    std::fs::write(temp_path.join("src/lib/utils.rs"), "pub fn utils() {}")?;
-    std::fs::write(temp_path.join("tests/test1.rs"), "#[test] fn test1() {}")?;
-    std::fs::write(temp_path.join("tests/test2.rs"), "#[test] fn test2() {}")?;
-    std::fs::write(temp_path.join("docs/README.md"), "# Documentation")?;
-    std::fs::write(temp_path.join("Cargo.toml"), "[package]")?;
+    // Create various files using helper
+    fixture.write_file("src/main.rs", "fn main() {}")?;
+    fixture.write_file("src/lib.rs", "pub mod lib;")?;
+    fixture.write_file("src/lib/utils.rs", "pub fn utils() {}")?;
+    fixture.write_file("tests/test1.rs", "#[test] fn test1() {}")?;
+    fixture.write_file("tests/test2.rs", "#[test] fn test2() {}")?;
+    fixture.write_file("docs/README.md", "# Documentation")?;
+    fixture.write_file("Cargo.toml", "[package]")?;
 
-    let original_dir = std::env::current_dir()?;
-    std::env::set_current_dir(temp_path)?;
-
-    let task = TaskSpec::from_task_with_cwd(&Task {
-        name: "build_all".to_string(),
-        action: "echo 'Building all Rust files'".to_string(),
-        before: vec![],
-        after: vec![],
-        input: vec![
-            "src/**/*.rs".to_string(),    // Recursive glob
-            "tests/*.rs".to_string(),     // Simple glob
-            "*.toml".to_string(),         // Root-level glob
-            "docs/*.md".to_string(),      // Documentation glob
+    let task = fixture.create_task(
+        "build_all",
+        "echo 'Building all Rust files'",
+        vec![
+            "src/**/*.rs",    // Recursive glob
+            "tests/*.rs",     // Simple glob
+            "*.toml",         // Root-level glob
+            "docs/*.md",      // Documentation glob
         ],
-        output: vec!["target/debug/app".to_string()],
-        params: HashMap::new(),
-        help: None,
-        timeout: None,
-    }, temp_path);
-
-    std::env::set_current_dir(original_dir)?;
+        vec!["target/debug/app"]
+    );
 
     // Verify glob patterns were resolved
     assert!(task.file_deps.len() >= 6); // main.rs, lib.rs, utils.rs, test1.rs, test2.rs, Cargo.toml, README.md
@@ -268,45 +345,28 @@ async fn test_file_dependencies_error_handling() -> Result<()> {
 
 #[tokio::test]
 async fn test_file_dependencies_performance() -> Result<()> {
-    let temp_dir = TempDir::new()?;
-    let temp_path = temp_dir.path();
+    let fixture = TestFixture::new().await?;
 
     // Create many files to test performance
     let num_files = 1000;
     let mut input_files = Vec::new();
 
     for i in 0..num_files {
-        let file = temp_path.join(format!("input_{:04}.txt", i));
-        std::fs::write(&file, format!("content {}", i))?;
-        input_files.push(file.to_string_lossy().to_string());
+        let filename = format!("input_{:04}.txt", i);
+        fixture.write_file(&filename, &format!("content {}", i))?;
+        input_files.push(filename);
     }
 
-    let output_file = temp_path.join("combined.txt");
-
-    let task = TaskSpec::from_task_with_cwd(
-        &Task {
-            name: "perf_test".to_string(),
-            action: format!("find {} -name 'input_*.txt' | wc -l > {}", temp_path.display(), output_file.display()).to_string(),
-            before: vec![],
-            after: vec![],
-            input: input_files,
-            output: vec![output_file.to_string_lossy().to_string()],
-            params: HashMap::new(),
-            help: None,
-            timeout: None,
-        },
-        temp_path
+    let task = fixture.create_task(
+        "perf_test",
+        &format!("find {} -name 'input_*.txt' | wc -l > {}",
+                 fixture.path().display(),
+                 fixture.file_path("combined.txt").display()),
+        input_files.iter().map(|s| s.as_str()).collect(),
+        vec!["combined.txt"]
     );
 
-    let workspace = Workspace::new(temp_path.to_path_buf()).await?;
-    workspace.init().await?;
-    let scheduler = TaskScheduler::new(
-        vec![task.clone()],
-        std::sync::Arc::new(workspace),
-        ExecutionContext::new(),
-        2,
-        2,
-    ).await?;
+    let scheduler = fixture.create_scheduler(vec![task.clone()]).await?;
 
     // Measure file dependency checking performance
     let start = std::time::Instant::now();
@@ -471,38 +531,19 @@ async fn test_file_dependencies_incremental_detection() -> Result<()> {
 
 #[tokio::test]
 async fn test_file_dependencies_with_real_execution() -> Result<()> {
-    let temp_dir = TempDir::new()?;
-    let temp_path = temp_dir.path();
+    let fixture = TestFixture::new().await?;
 
     // Create input file with known content
-    let input_file = temp_path.join("source.txt");
-    let output_file = temp_path.join("result.txt");
-    std::fs::write(&input_file, "Hello, File Dependencies!")?;
+    fixture.write_file("source.txt", "Hello, File Dependencies!")?;
 
-    let task = TaskSpec::from_task_with_cwd(
-        &Task {
-            name: "copy_task".to_string(),
-            action: format!("cp {} {}", input_file.display(), output_file.display()),
-            before: vec![],
-            after: vec![],
-            input: vec!["source.txt".to_string()],
-            output: vec!["result.txt".to_string()],
-            params: HashMap::new(),
-            help: None,
-            timeout: None,
-        },
-        temp_path
+    let task = fixture.create_task(
+        "copy_task",
+        &format!("cp {} {}", fixture.file_path("source.txt").display(), fixture.file_path("result.txt").display()),
+        vec!["source.txt"],
+        vec!["result.txt"]
     );
 
-    let workspace = Workspace::new(temp_path.to_path_buf()).await?;
-    workspace.init().await?;
-    let scheduler = TaskScheduler::new(
-        vec![task.clone()],
-        std::sync::Arc::new(workspace),
-        ExecutionContext::new(),
-        2,
-        2,
-    ).await?;
+    let scheduler = fixture.create_scheduler(vec![task.clone()]).await?;
 
     // Task should need to run initially (output doesn't exist)
     assert!(scheduler.needs_rebuild(&task).await?, "Should need rebuild when output missing");
@@ -512,9 +553,9 @@ async fn test_file_dependencies_with_real_execution() -> Result<()> {
 
     // Verify task completed and output file was created
     assert_eq!(scheduler.get_task_status("copy_task").await, TaskStatus::Completed);
-    assert!(output_file.exists(), "Output file should exist after execution");
+    assert!(fixture.file_path("result.txt").exists(), "Output file should exist after execution");
 
-    let output_content = std::fs::read_to_string(&output_file)?;
+    let output_content = std::fs::read_to_string(&fixture.file_path("result.txt"))?;
     assert_eq!(output_content, "Hello, File Dependencies!", "Output should match input");
 
     // Task should NOT need to run again (outputs are up-to-date)
@@ -595,58 +636,35 @@ async fn test_file_dependencies_multiple_files() -> Result<()> {
 
 #[tokio::test]
 async fn test_file_dependencies_task_chain() -> Result<()> {
-    let temp_dir = TempDir::new()?;
-    let temp_path = temp_dir.path();
+    let fixture = TestFixture::new().await?;
 
     // Create initial input file
-    let source = temp_path.join("source.md");
-    let intermediate = temp_path.join("processed.txt");
-    let final_output = temp_path.join("final.html");
-
-    std::fs::write(&source, "# Hello\nThis is markdown.")?;
+    fixture.write_file("source.md", "# Hello\nThis is markdown.")?;
 
     // Task 1: Process markdown to text
-    let process_task = TaskSpec::from_task_with_cwd(
-        &Task {
-            name: "process".to_string(),
-            action: format!("sed 's/#//g' {} | tr -d '*' > {}", source.display(), intermediate.display()),
-            before: vec![],
-            after: vec![],
-            input: vec!["source.md".to_string()],
-            output: vec!["processed.txt".to_string()],
-            params: HashMap::new(),
-            help: None,
-            timeout: None,
-        },
-        temp_path
+    let process_task = fixture.create_task(
+        "process",
+        &format!("sed 's/#//g' {} | tr -d '*' > {}",
+                 fixture.file_path("source.md").display(),
+                 fixture.file_path("processed.txt").display()),
+        vec!["source.md"],
+        vec!["processed.txt"]
     );
 
     // Task 2: Convert text to HTML (depends on task 1)
-    let convert_task = TaskSpec::from_task_with_cwd(
-        &Task {
-            name: "convert".to_string(),
-            action: format!("echo '<html><body><pre>' > {} && cat {} >> {} && echo '</pre></body></html>' >> {}",
-                           final_output.display(), intermediate.display(), final_output.display(), final_output.display()),
-            before: vec!["process".to_string()],
-            after: vec![],
-            input: vec!["processed.txt".to_string()],
-            output: vec!["final.html".to_string()],
-            params: HashMap::new(),
-            help: None,
-            timeout: None,
-        },
-        temp_path
+    let convert_task = fixture.create_task_with_deps(
+        "convert",
+        &format!("echo '<html><body><pre>' > {} && cat {} >> {} && echo '</pre></body></html>' >> {}",
+                 fixture.file_path("final.html").display(),
+                 fixture.file_path("processed.txt").display(),
+                 fixture.file_path("final.html").display(),
+                 fixture.file_path("final.html").display()),
+        vec!["processed.txt"],
+        vec!["final.html"],
+        vec!["process"]  // Before dependency
     );
 
-    let workspace = Workspace::new(temp_path.to_path_buf()).await?;
-    workspace.init().await?;
-    let scheduler = TaskScheduler::new(
-        vec![process_task.clone(), convert_task.clone()],
-        std::sync::Arc::new(workspace),
-        ExecutionContext::new(),
-        2,
-        2,
-    ).await?;
+    let scheduler = fixture.create_scheduler(vec![process_task.clone(), convert_task.clone()]).await?;
 
     // Both tasks should need to run initially
     assert!(scheduler.needs_rebuild(&process_task).await?, "Process task should need rebuild");
@@ -660,10 +678,10 @@ async fn test_file_dependencies_task_chain() -> Result<()> {
     assert_eq!(scheduler.get_task_status("convert").await, TaskStatus::Completed);
 
     // Verify files were created with expected content
-    assert!(intermediate.exists(), "Intermediate file should exist");
-    assert!(final_output.exists(), "Final output should exist");
+    assert!(fixture.file_path("processed.txt").exists(), "Intermediate file should exist");
+    assert!(fixture.file_path("final.html").exists(), "Final output should exist");
 
-    let final_content = std::fs::read_to_string(&final_output)?;
+    let final_content = std::fs::read_to_string(&fixture.file_path("final.html"))?;
     assert!(final_content.contains("<html>"), "Final output should be HTML");
     assert!(final_content.contains("Hello"), "Final output should contain processed content");
 
@@ -733,62 +751,40 @@ async fn test_file_dependencies_task_skipping() -> Result<()> {
 
 #[tokio::test]
 async fn test_file_dependencies_modification_detection() -> Result<()> {
-    let temp_dir = TempDir::new()?;
-    let temp_path = temp_dir.path();
-
-    // Create input files with different timestamps
-    let old_file = temp_path.join("old_config.txt");
-    let new_file = temp_path.join("new_config.txt");
-    let output_file = temp_path.join("result.txt");
+    let fixture = TestFixture::new().await?;
 
     // Create files in chronological order with explicit delays
-    std::fs::write(&old_file, "old_value=1")?;
-    std::thread::sleep(std::time::Duration::from_millis(10));
+    fixture.write_file("old_config.txt", "old_value=1")?;
+    TestFixture::sleep_ms(10);
 
-    std::fs::write(&output_file, "processed output")?;
-    std::thread::sleep(std::time::Duration::from_millis(10));
+    fixture.write_file("result.txt", "processed output")?;
+    TestFixture::sleep_ms(10);
 
-    std::fs::write(&new_file, "new_value=2")?;
+    fixture.write_file("new_config.txt", "new_value=2")?;
 
     // Task with mixed old/new inputs
-    let task = TaskSpec::from_task_with_cwd(
-        &Task {
-            name: "process_configs".to_string(),
-            action: "echo 'processing'".to_string(),
-            before: vec![],
-            after: vec![],
-            input: vec!["old_config.txt".to_string(), "new_config.txt".to_string()],
-            output: vec!["result.txt".to_string()],
-            params: HashMap::new(),
-            help: None,
-            timeout: None,
-        },
-        temp_path
+    let task = fixture.create_task(
+        "process_configs",
+        "echo 'processing'",
+        vec!["old_config.txt", "new_config.txt"],
+        vec!["result.txt"]
     );
 
-    let workspace = Workspace::new(temp_path.to_path_buf()).await?;
-    workspace.init().await?;
-    let scheduler = TaskScheduler::new(
-        vec![task.clone()],
-        std::sync::Arc::new(workspace),
-        ExecutionContext::new(),
-        2,
-        2,
-    ).await?;
+    let scheduler = fixture.create_scheduler(vec![task.clone()]).await?;
 
     // Should need rebuild because new_file is newer than output
     assert!(scheduler.needs_rebuild(&task).await?, "Should need rebuild when any input is newer than output");
 
     // Update output to be newer than all inputs
-    std::thread::sleep(std::time::Duration::from_millis(10));
-    std::fs::write(&output_file, "updated output")?;
+    TestFixture::sleep_ms(10);
+    fixture.write_file("result.txt", "updated output")?;
 
     // Should NOT need rebuild now
     assert!(!scheduler.needs_rebuild(&task).await?, "Should not need rebuild when output is newer than all inputs");
 
     // Touch the old file to make it newer
-    std::thread::sleep(std::time::Duration::from_millis(10));
-    std::fs::write(&old_file, "old_value=1")?; // Same content, newer timestamp
+    TestFixture::sleep_ms(10);
+    fixture.write_file("old_config.txt", "old_value=1")?; // Same content, newer timestamp
 
     // Should need rebuild again
     assert!(scheduler.needs_rebuild(&task).await?, "Should need rebuild when any input file is touched");
