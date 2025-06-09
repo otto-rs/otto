@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::collections::HashMap;
 
 use otto::executor::{
-    TaskSpec, TaskStatus,
-    TaskScheduler, Workspace,
+    Task, TaskStatus,
+    TaskScheduler, TaskType, Workspace,
     workspace::ExecutionContext,
 };
 
@@ -17,14 +17,14 @@ async fn test_task_execution_with_output() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let work_dir = PathBuf::from(temp_dir.path());
 
-    let task_spec = TaskSpec::new(
-        "test".to_string(),
+    let task_spec = Task::new(
+        "test_task".to_string(),
         vec![],
         vec![],
         vec![],
         HashMap::new(),
         HashMap::new(),
-        "true".to_string(),
+        "echo hello".to_string(),
     );
 
     let workspace = Workspace::new(work_dir).await?;
@@ -42,34 +42,34 @@ async fn test_task_dependencies() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let work_dir = PathBuf::from(temp_dir.path());
 
-    let task1_spec = TaskSpec::new(
+    let task1_spec = Task::new(
         "task1".to_string(),
         vec![],
         vec![],
         vec![],
         HashMap::new(),
         HashMap::new(),
-        "true".to_string(),
+        "echo task1".to_string(),
     );
 
-    let task2_spec = TaskSpec::new(
+    let task2_spec = Task::new(
         "task2".to_string(),
         vec!["task1".to_string()],
         vec![],
         vec![],
         HashMap::new(),
         HashMap::new(),
-        "true".to_string(),
+        "echo task2".to_string(),
     );
 
-    let task3_spec = TaskSpec::new(
+    let task3_spec = Task::new(
         "task3".to_string(),
         vec!["task2".to_string()],
         vec![],
         vec![],
         HashMap::new(),
         HashMap::new(),
-        "true".to_string(),
+        "echo task3".to_string(),
     );
 
     let tasks = vec![task1_spec, task2_spec, task3_spec];
@@ -94,7 +94,7 @@ async fn test_task_failure() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let work_dir = PathBuf::from(temp_dir.path());
 
-    let task_spec = TaskSpec::new(
+    let task_spec = Task::new(
         "failing_task".to_string(),
         vec![],
         vec![],
@@ -120,7 +120,7 @@ async fn test_output_capture() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let work_dir = PathBuf::from(temp_dir.path());
 
-    let task_spec = TaskSpec::new(
+    let task_spec = Task::new(
         "output_test".to_string(),
         vec![],
         vec![],
@@ -146,7 +146,7 @@ async fn test_dependency_ordering() -> Result<()> {
     let work_dir = PathBuf::from(temp_dir.path());
     let output_file = work_dir.join("output.txt");
 
-    let task1_spec = TaskSpec::new(
+    let task1_spec = Task::new(
         "task1".to_string(),
         vec!["task2".to_string(), "task3".to_string()],
         vec![],
@@ -156,7 +156,7 @@ async fn test_dependency_ordering() -> Result<()> {
         format!("echo 'task1' >> {}", output_file.display()),
     );
 
-    let task2_spec = TaskSpec::new(
+    let task2_spec = Task::new(
         "task2".to_string(),
         vec!["task4".to_string()],
         vec![],
@@ -166,7 +166,7 @@ async fn test_dependency_ordering() -> Result<()> {
         format!("echo 'task2' >> {}", output_file.display()),
     );
 
-    let task3_spec = TaskSpec::new(
+    let task3_spec = Task::new(
         "task3".to_string(),
         vec!["task4".to_string()],
         vec![],
@@ -176,7 +176,7 @@ async fn test_dependency_ordering() -> Result<()> {
         format!("echo 'task3' >> {}", output_file.display()),
     );
 
-    let task4_spec = TaskSpec::new(
+    let task4_spec = Task::new(
         "task4".to_string(),
         vec![],
         vec![],
@@ -217,7 +217,7 @@ async fn test_parallel_execution() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let work_dir = PathBuf::from(temp_dir.path());
 
-    let task1_spec = TaskSpec::new(
+    let task1_spec = Task::new(
         "parallel1".to_string(),
         vec![],
         vec![],
@@ -227,7 +227,7 @@ async fn test_parallel_execution() -> Result<()> {
         "sleep 0.5 && echo 'parallel1'".to_string(),
     );
 
-    let task2_spec = TaskSpec::new(
+    let task2_spec = Task::new(
         "parallel2".to_string(),
         vec![],
         vec![],

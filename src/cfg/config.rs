@@ -2,24 +2,24 @@
 
 use serde::Deserialize;
 
-pub use crate::cfg::otto::{default_otto, Otto};
-pub use crate::cfg::task::{deserialize_task_map, Task, Tasks};
-pub use crate::cfg::param::{Param, Params, Value};
+pub use crate::cfg::otto::{default_otto, OttoSpec};
+pub use crate::cfg::param::{ParamSpec, ParamSpecs, Value};
+pub use crate::cfg::task::{deserialize_task_map, TaskSpec, TaskSpecs};
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-pub struct Config {
+pub struct ConfigSpec {
     #[serde(default = "default_otto")]
-    pub otto: Otto,
+    pub otto: OttoSpec,
 
     #[serde(default, deserialize_with = "deserialize_task_map")]
-    pub tasks: Tasks,
+    pub tasks: TaskSpecs,
 }
 
-impl Default for Config {
+impl Default for ConfigSpec {
     fn default() -> Self {
         Self {
             otto: default_otto(),
-            tasks: Tasks::new(),
+            tasks: TaskSpecs::new(),
         }
     }
 }

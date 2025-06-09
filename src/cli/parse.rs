@@ -16,7 +16,7 @@ use hex;
 use sha2::{Digest, Sha256};
 use glob;
 
-use crate::cfg::config::{Config, Otto, Param, Task, Tasks, Value};
+use crate::cfg::config::{ConfigSpec, OttoSpec, ParamSpec, TaskSpec, TaskSpecs, Value};
 use crate::cfg::env as env_eval;
 
 pub type DAG<T> = Dag<T, (), u32>;
@@ -89,7 +89,7 @@ fn path_relative_from(path: &Path, base: &Path) -> Option<PathBuf> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TaskSpec {
+pub struct Task {
     pub name: String,
     pub task_deps: Vec<String>,
     pub file_deps: Vec<String>,
@@ -100,7 +100,7 @@ pub struct TaskSpec {
     pub hash: String,
 }
 
-impl TaskSpec {
+impl Task {
     #[must_use]
     pub fn new(
         name: String,
@@ -125,7 +125,7 @@ impl TaskSpec {
     }
 
     #[must_use]
-    pub fn from_task(task: &Task) -> Self {
+    pub fn from_task(task: &TaskSpec) -> Self {
         let _name = task.name.clone();
         let _task_deps = task.before.clone();
 
@@ -136,12 +136,12 @@ impl TaskSpec {
     }
 
     #[must_use]
-    pub fn from_task_with_cwd(task: &Task, cwd: &std::path::Path) -> Self {
+    pub fn from_task_with_cwd(task: &TaskSpec, cwd: &std::path::Path) -> Self {
         Self::from_task_with_cwd_and_global_envs(task, cwd, &HashMap::new())
     }
 
     #[must_use]
-    pub fn from_task_with_cwd_and_global_envs(task: &Task, cwd: &std::path::Path, global_envs: &HashMap<String, String>) -> Self {
+    pub fn from_task_with_cwd_and_global_envs(task: &TaskSpec, cwd: &std::path::Path, global_envs: &HashMap<String, String>) -> Self {
         let name = task.name.clone();
         let task_deps = task.before.clone();
 
@@ -237,7 +237,7 @@ pub struct Parser {
     prog: String,
     cwd: PathBuf,
     user: String,
-    config: Config,
+    config: ConfigSpec,
     hash: String,
     args: Vec<String>,
     pargs: Vec<Vec<String>>,
@@ -281,7 +281,7 @@ impl Parser {
         let user = env::var("USER").unwrap_or_else(|_| "testuser".to_string());
 
         // Initial empty config - we'll load it during parsing
-        let config = Config::default();
+        let config = ConfigSpec::default();
         let hash = DEFAULT_HASH.to_string();
         let ottofile = None;
         let pargs = vec![];
@@ -344,19 +344,19 @@ impl Parser {
         Ok(Some(path))
     }
 
-    fn load_config_from_path(ottofile_path: Option<PathBuf>) -> Result<(Config, String, Option<PathBuf>)> {
+    fn load_config_from_path(ottofile_path: Option<PathBuf>) -> Result<(ConfigSpec, String, Option<PathBuf>)> {
         if let Some(ottofile) = ottofile_path {
             let content = fs::read_to_string(&ottofile)?;
             let hash = calculate_hash(&content);
-            let config: Config = serde_yaml::from_str(&content)?;
+            let config: ConfigSpec = serde_yaml::from_str(&content)?;
             Ok((config, hash, Some(ottofile)))
         } else {
-            Ok((Config::default(), DEFAULT_HASH.to_owned(), None))
+            Ok((ConfigSpec::default(), DEFAULT_HASH.to_owned(), None))
         }
     }
 
     /// Create the top-level Otto command with only global options (no subcommands)
-    fn otto_command(otto: &Otto) -> Command {
+    fn otto_command(otto: &OttoSpec) -> Command {
         Command::new(&otto.name)
             .bin_name(&otto.name)
             .about(&otto.about)
@@ -422,7 +422,7 @@ impl Parser {
     }
 
     /// Create the help command with all tasks as subcommands
-    fn help_command(otto: &Otto, tasks: &Tasks) -> Command {
+    fn help_command(otto: &OttoSpec, tasks: &TaskSpecs) -> Command {
         let mut command = Self::otto_command(otto);
         for task in tasks.values() {
             command = command.subcommand(Self::task_to_command(task));
@@ -430,7 +430,7 @@ impl Parser {
         command
     }
 
-    fn task_to_command(task: &Task) -> Command {
+    fn task_to_command(task: &TaskSpec) -> Command {
         let mut command = Command::new(&task.name).bin_name(&task.name);
         if let Some(task_help) = &task.help {
             command = command.about(task_help);
@@ -441,7 +441,7 @@ impl Parser {
         command
     }
 
-    fn param_to_arg(param: &Param) -> Arg {
+    fn param_to_arg(param: &ParamSpec) -> Arg {
         let mut arg = Arg::new(&param.name);
         if let Some(short) = param.short {
             arg = arg.short(short);
@@ -458,7 +458,7 @@ impl Parser {
         arg
     }
 
-    pub fn parse(&mut self) -> Result<(Otto, DAG<TaskSpec>, String, Option<PathBuf>)> {
+    pub fn parse(&mut self) -> Result<(OttoSpec, DAG<Task>, String, Option<PathBuf>)> {
         // Check for top-level help first, before any parsing
         if self.args.iter().any(|arg| arg == "--help" || arg == "-h") {
             // Check if help comes after a task name
@@ -511,7 +511,7 @@ impl Parser {
         }
 
         // Stage 1: Parse global options with default config
-        let default_otto = Otto::default();
+        let default_otto = OttoSpec::default();
         let otto_cmd = Self::otto_command(&default_otto);
 
         // Try to parse with allow_external_subcommands to capture remaining args
@@ -617,7 +617,7 @@ impl Parser {
         Ok((otto, tasks, self.hash.clone(), self.ottofile.clone()))
     }
 
-    fn process_otto_options(&self, matches: ArgMatches) -> Result<Otto> {
+    fn process_otto_options(&self, matches: ArgMatches) -> Result<OttoSpec> {
         let mut otto = self.config.otto.clone();
 
         if let Some(api) = matches.get_one::<String>("api") {
@@ -639,7 +639,7 @@ impl Parser {
         Ok(otto)
     }
 
-    fn process_tasks_with_filter(&self, requested_tasks: &[String]) -> Result<DAG<TaskSpec>> {
+    fn process_tasks_with_filter(&self, requested_tasks: &[String]) -> Result<DAG<Task>> {
         // Step 0: Evaluate global environment variables once
         let global_envs = if self.config.otto.envs.is_empty() {
             HashMap::new()
@@ -661,7 +661,7 @@ impl Parser {
         }
 
         // Step 3: Build DAG from needed tasks
-        let mut dag: DAG<TaskSpec> = DAG::new();
+        let mut dag: DAG<Task> = DAG::new();
         let mut indices: HashMap<String, NodeIndex<u32>> = HashMap::new();
 
         // Add all needed tasks to DAG first
@@ -669,7 +669,7 @@ impl Parser {
             let task = self.config.tasks.get(task_name)
                 .ok_or_else(|| eyre!("Task '{}' not found", task_name))?;
 
-            let mut spec = TaskSpec::from_task_with_cwd_and_global_envs(task, &self.cwd, &global_envs);
+            let mut spec = Task::from_task_with_cwd_and_global_envs(task, &self.cwd, &global_envs);
 
             // Find the partition for this task's arguments
             if let Some(task_args) = self.pargs.iter().find(|args| !args.is_empty() && args[0] == *task_name) {
@@ -799,7 +799,7 @@ mod tests {
 
     #[test]
     fn test_task_dependencies() {
-        let task = Task {
+        let task = TaskSpec {
             name: "A".to_string(),  // Changed from "main" to "A" for consistency
             action: "echo A".to_string(),
             before: vec!["dep1".to_string(), "before1".to_string()],
@@ -812,13 +812,13 @@ mod tests {
             timeout: Some(10),
         };
 
-        // Test that TaskSpec::from_task only includes before tasks as task_deps
-        let spec = TaskSpec::from_task(&task);
+        // Test that Task::from_task only includes before tasks as task_deps
+        let spec = Task::from_task(&task);
         let expected_task_deps: HashSet<String> = vec!["dep1".to_string(), "before1".to_string()]
             .into_iter()
             .collect();
         let actual_task_deps: HashSet<String> = spec.task_deps.into_iter().collect();
-        assert_eq!(actual_task_deps, expected_task_deps, "TaskSpec should only include before tasks as task_deps");
+        assert_eq!(actual_task_deps, expected_task_deps, "Task should only include before tasks as task_deps");
 
         // Test DAG construction with before and after dependency types
         let mut tasks = HashMap::new();
@@ -826,7 +826,7 @@ mod tests {
 
         // Add the dependency tasks
         for name in ["dep1", "before1", "after1"] {
-            let dep_task = Task {
+            let dep_task = TaskSpec {
                 name: name.to_string(),
                 action: format!("echo {}", name),
                 before: vec![],
@@ -848,8 +848,8 @@ mod tests {
             prog: "otto".to_string(),
             cwd: PathBuf::from("/"),
             user: "test".to_string(),
-            config: Config {
-                otto: Otto::default(),
+            config: ConfigSpec {
+                otto: OttoSpec::default(),
                 tasks: tasks.clone(),
             },
             hash: "test".to_string(),
@@ -906,6 +906,14 @@ mod tests {
 
         // Check that A is a dependency of after1 (A runs before after1)
         assert!(dag_with_after.find_edge(main_idx_after, after1_idx).is_some(), "A should be a dependency of after1");
+
+        // Verify edges: A -> B and C -> B
+        assert!(dag.find_edge(dep1_idx, main_idx).is_some(), "A should run before B");
+        assert!(dag.find_edge(before1_idx, main_idx).is_some(), "C should run before B");
+
+        // Test requesting just A (should get A and its dependencies)
+        let dag_a = parser.process_tasks_with_filter(&[String::from("A")]).unwrap();
+        assert_eq!(dag_a.node_count(), 3, "DAG should contain A and its dependencies when requesting A");
     }
 
     #[test]
@@ -1163,7 +1171,7 @@ mod tests {
 
     #[test]
     fn test_task_spec_creation() {
-        let task = Task {
+        let task = TaskSpec {
             name: "test_task".to_string(),
             action: "echo test".to_string(),
             before: vec!["dep1".to_string(), "before1".to_string()],
@@ -1176,7 +1184,7 @@ mod tests {
             timeout: Some(30),
         };
 
-        let spec = TaskSpec::from_task(&task);
+        let spec = Task::from_task(&task);
 
         // Should include before tasks as task_deps
         assert_eq!(spec.task_deps, vec!["dep1", "before1"]);
@@ -1224,7 +1232,7 @@ mod tests {
         let mut tasks = HashMap::new();
 
         // Task A has after: [B] - meaning A runs before B, so B depends on A
-        let task_a = Task {
+        let task_a = TaskSpec {
             name: "A".to_string(),
             action: "echo A".to_string(),
             before: vec![],
@@ -1234,11 +1242,11 @@ mod tests {
             envs: HashMap::new(),
             params: HashMap::new(),
             help: None,
-            timeout: None,
+            timeout: Some(10),
         };
 
         // Task B has before: [C] - meaning C runs before B, so B depends on C
-        let task_b = Task {
+        let task_b = TaskSpec {
             name: "B".to_string(),
             action: "echo B".to_string(),
             before: vec!["C".to_string()],
@@ -1248,11 +1256,11 @@ mod tests {
             envs: HashMap::new(),
             params: HashMap::new(),
             help: None,
-            timeout: None,
+            timeout: Some(10),
         };
 
         // Task C is simple
-        let task_c = Task {
+        let task_c = TaskSpec {
             name: "C".to_string(),
             action: "echo C".to_string(),
             before: vec![],
@@ -1262,7 +1270,7 @@ mod tests {
             envs: HashMap::new(),
             params: HashMap::new(),
             help: None,
-            timeout: None,
+            timeout: Some(10),
         };
 
         tasks.insert("A".to_string(), task_a);
@@ -1275,8 +1283,8 @@ mod tests {
             prog: "otto".to_string(),
             cwd: PathBuf::from("/"),
             user: "test".to_string(),
-            config: Config {
-                otto: Otto::default(),
+            config: ConfigSpec {
+                otto: OttoSpec::default(),
                 tasks: tasks.clone(),
             },
             hash: "test".to_string(),
@@ -1321,9 +1329,9 @@ mod tests {
         assert!(dag.find_edge(a_idx, b_idx).is_some(), "A should run before B");
         assert!(dag.find_edge(c_idx, b_idx).is_some(), "C should run before B");
 
-        // Test requesting just A (should only get A)
+        // Test requesting just A (should get only A since A has no dependencies)
         let dag_a = parser.process_tasks_with_filter(&[String::from("A")]).unwrap();
-        assert_eq!(dag_a.node_count(), 1, "DAG should contain only A when requesting A");
+        assert_eq!(dag_a.node_count(), 1, "DAG should contain only A when requesting A (A has no dependencies)");
     }
 
     #[test]
@@ -1334,7 +1342,7 @@ mod tests {
         let mut tasks = HashMap::new();
 
         // Create hello task with -g/--greeting parameter
-        let hello_task = Task {
+        let hello_task = TaskSpec {
             name: "hello".to_string(),
             action: "echo \"${greeting:-hello}\"".to_string(),
             before: vec![],
@@ -1344,7 +1352,7 @@ mod tests {
             envs: HashMap::new(),
             params: {
                 let mut params = HashMap::new();
-                params.insert("greeting".to_string(), Param {
+                params.insert("greeting".to_string(), ParamSpec {
                     name: "greeting".to_string(),
                     short: Some('g'),
                     long: Some("greeting".to_string()),
@@ -1365,7 +1373,7 @@ mod tests {
         };
 
         // Create world task with -n/--name parameter
-        let world_task = Task {
+        let world_task = TaskSpec {
             name: "world".to_string(),
             action: "echo \"${name:-world}\"".to_string(),
             before: vec!["hello".to_string()], // world depends on hello
@@ -1375,7 +1383,7 @@ mod tests {
             envs: HashMap::new(),
             params: {
                 let mut params = HashMap::new();
-                params.insert("name".to_string(), Param {
+                params.insert("name".to_string(), ParamSpec {
                     name: "name".to_string(),
                     short: Some('n'),
                     long: Some("name".to_string()),
@@ -1407,8 +1415,8 @@ mod tests {
             prog: "otto".to_string(),
             cwd: PathBuf::from("/"),
             user: "test".to_string(),
-            config: Config {
-                otto: Otto::default(),
+            config: ConfigSpec {
+                otto: OttoSpec::default(),
                 tasks: tasks.clone(),
             },
             hash: "test".to_string(),
@@ -1463,7 +1471,7 @@ mod tests {
 
         let mut tasks = HashMap::new();
 
-        let test_task = Task {
+        let test_task = TaskSpec {
             name: "test".to_string(),
             action: "echo test".to_string(),
             before: vec![],
@@ -1473,7 +1481,7 @@ mod tests {
             envs: HashMap::new(),
             params: {
                 let mut params = HashMap::new();
-                params.insert("flag".to_string(), Param {
+                params.insert("flag".to_string(), ParamSpec {
                     name: "flag".to_string(),
                     short: Some('f'),
                     long: Some("flag".to_string()),
@@ -1503,8 +1511,8 @@ mod tests {
             prog: "otto".to_string(),
             cwd: PathBuf::from("/"),
             user: "test".to_string(),
-            config: Config {
-                otto: Otto::default(),
+            config: ConfigSpec {
+                otto: OttoSpec::default(),
                 tasks: tasks.clone(),
             },
             hash: "test".to_string(),
@@ -1526,8 +1534,8 @@ mod tests {
             prog: "otto".to_string(),
             cwd: PathBuf::from("/"),
             user: "test".to_string(),
-            config: Config {
-                otto: Otto::default(),
+            config: ConfigSpec {
+                otto: OttoSpec::default(),
                 tasks: tasks.clone(),
             },
             hash: "test".to_string(),
@@ -1550,7 +1558,7 @@ mod tests {
 
         let mut tasks = HashMap::new();
 
-        let test_task = Task {
+        let test_task = TaskSpec {
             name: "test".to_string(),
             action: "echo test".to_string(),
             before: vec![],
@@ -1560,7 +1568,7 @@ mod tests {
             envs: HashMap::new(),
             params: {
                 let mut params = HashMap::new();
-                params.insert("required".to_string(), Param {
+                params.insert("required".to_string(), ParamSpec {
                     name: "required".to_string(),
                     short: Some('r'),
                     long: Some("required".to_string()),
@@ -1574,7 +1582,7 @@ mod tests {
                     help: Some("required parameter".to_string()),
                     value: Value::Empty,
                 });
-                params.insert("optional".to_string(), Param {
+                params.insert("optional".to_string(), ParamSpec {
                     name: "optional".to_string(),
                     short: Some('o'),
                     long: Some("optional".to_string()),
@@ -1604,8 +1612,8 @@ mod tests {
             prog: "otto".to_string(),
             cwd: PathBuf::from("/"),
             user: "test".to_string(),
-            config: Config {
-                otto: Otto::default(),
+            config: ConfigSpec {
+                otto: OttoSpec::default(),
                 tasks: tasks.clone(),
             },
             hash: "test".to_string(),
@@ -1643,7 +1651,7 @@ mod tests {
         let original_dir = std::env::current_dir()?;
         std::env::set_current_dir(temp_path)?;
 
-        let task = Task {
+        let task = TaskSpec {
             name: "build".to_string(),
             action: "gcc -o app src.c".to_string(),
             before: vec![],
@@ -1656,7 +1664,7 @@ mod tests {
             timeout: None,
         };
 
-        let spec = TaskSpec::from_task(&task);
+        let spec = Task::from_task(&task);
 
         // Restore original directory
         std::env::set_current_dir(original_dir)?;
@@ -1678,7 +1686,7 @@ mod tests {
     #[test]
     fn test_file_dependencies_empty() {
         // Test task with no file dependencies
-        let task = Task {
+        let task = TaskSpec {
             name: "simple".to_string(),
             action: "echo hello".to_string(),
             before: vec![],
@@ -1691,7 +1699,7 @@ mod tests {
             timeout: None,
         };
 
-        let spec = TaskSpec::from_task(&task);
+        let spec = Task::from_task(&task);
 
         assert_eq!(spec.file_deps.len(), 0);
         assert_eq!(spec.output_deps.len(), 0);
@@ -1716,7 +1724,7 @@ mod tests {
         std::env::set_current_dir(temp_path)?;
 
         // Test task with both file and task dependencies
-        let task = Task {
+        let task = TaskSpec {
             name: "deploy".to_string(),
             action: "deploy.sh app config.yml".to_string(),
             before: vec!["build".to_string(), "test".to_string()],
@@ -1729,7 +1737,7 @@ mod tests {
             timeout: None,
         };
 
-        let spec = TaskSpec::from_task(&task);
+        let spec = Task::from_task(&task);
 
         // Restore original directory
         std::env::set_current_dir(original_dir)?;
@@ -1805,11 +1813,11 @@ tasks:
     help: "Run tests"
 "#;
 
-            let config: Config = serde_yaml::from_str(yaml_content)?;
+            let config: ConfigSpec = serde_yaml::from_str(yaml_content)?;
 
             // Test compile task file dependencies
             let compile_task = config.tasks.get("compile").unwrap();
-            let compile_spec = TaskSpec::from_task_with_cwd(compile_task, temp_path);
+            let compile_spec = Task::from_task_with_cwd(compile_task, temp_path);
 
             assert_eq!(compile_spec.name, "compile");
             assert!(compile_spec.file_deps.len() >= 4, "Expected at least 4 files, got {}: {:?}", compile_spec.file_deps.len(), compile_spec.file_deps); // main.c, utils.c, app.h, utils.h
@@ -1821,7 +1829,7 @@ tasks:
 
             // Test test task with both task and file dependencies
             let test_task = config.tasks.get("test").unwrap();
-            let test_spec = TaskSpec::from_task_with_cwd(test_task, temp_path);
+            let test_spec = Task::from_task_with_cwd(test_task, temp_path);
 
             assert_eq!(test_spec.name, "test");
             assert_eq!(test_spec.task_deps, vec!["compile"]);
@@ -1862,7 +1870,7 @@ tasks:
             std::fs::write(temp_path.join("file-with-dashes.log"), "log content")?;
             std::fs::write(temp_path.join("file_with_underscores.cfg"), "config")?;
 
-            let task = Task {
+            let task = TaskSpec {
                 name: "special_chars".to_string(),
                 action: "process_files.sh".to_string(),
                 before: vec![],
@@ -1879,7 +1887,7 @@ tasks:
                 timeout: None,
             };
 
-            let spec = TaskSpec::from_task_with_cwd(&task, temp_path);
+            let spec = Task::from_task_with_cwd(&task, temp_path);
 
             // Should handle special characters properly
             assert_eq!(spec.file_deps.len(), 3);

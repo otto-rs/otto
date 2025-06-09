@@ -3,10 +3,11 @@ use std::time::Duration;
 use tempfile::TempDir;
 use tokio::time::timeout;
 use eyre::Result;
+use std::path::Path;
 
-use otto::cfg::config::Config;
-use otto::cfg::task::Task;
-use otto::cli::parse::TaskSpec;
+use otto::cfg::config::ConfigSpec;
+use otto::cfg::task::TaskSpec;
+use otto::cli::parse::Task;
 use otto::executor::scheduler::{TaskScheduler, TaskStatus};
 use otto::executor::workspace::{Workspace, ExecutionContext};
 
@@ -49,7 +50,7 @@ impl TestFixture {
         Ok(())
     }
 
-    async fn create_scheduler(&self, tasks: Vec<TaskSpec>) -> Result<TaskScheduler> {
+    async fn create_scheduler(&self, tasks: Vec<Task>) -> Result<TaskScheduler> {
         TaskScheduler::new(
             tasks,
             self.workspace.clone(),
@@ -59,9 +60,9 @@ impl TestFixture {
         ).await
     }
 
-    fn create_task(&self, name: &str, action: &str, inputs: Vec<&str>, outputs: Vec<&str>) -> TaskSpec {
-        TaskSpec::from_task_with_cwd(
-            &Task {
+    fn create_task(&self, name: &str, action: &str, inputs: Vec<&str>, outputs: Vec<&str>) -> Task {
+        Task::from_task_with_cwd(
+            &TaskSpec {
                 name: name.to_string(),
                 action: action.to_string(),
                 before: vec![],
@@ -77,9 +78,9 @@ impl TestFixture {
         )
     }
 
-    fn create_task_with_deps(&self, name: &str, action: &str, inputs: Vec<&str>, outputs: Vec<&str>, before: Vec<&str>) -> TaskSpec {
-        TaskSpec::from_task_with_cwd(
-            &Task {
+    fn create_task_with_deps(&self, name: &str, action: &str, inputs: Vec<&str>, outputs: Vec<&str>, before: Vec<&str>) -> Task {
+        Task::from_task_with_cwd(
+            &TaskSpec {
                 name: name.to_string(),
                 action: action.to_string(),
                 before: before.iter().map(|s| s.to_string()).collect(),
@@ -184,12 +185,12 @@ tasks:
     help: "Package application and test results"
 "#;
 
-    let config: Config = serde_yaml::from_str(yaml_content)?;
+    let config: ConfigSpec = serde_yaml::from_str(yaml_content)?;
 
     // Convert tasks to TaskSpecs
     let mut task_specs = Vec::new();
     for (_, task) in &config.tasks {
-        let spec = TaskSpec::from_task_with_cwd(task, temp_path);
+        let spec = Task::from_task_with_cwd(task, temp_path);
         task_specs.push(spec);
     }
 
@@ -279,8 +280,8 @@ async fn test_file_dependencies_error_handling() -> Result<()> {
     let missing_input = temp_path.join("nonexistent.txt");
     let output_file = temp_path.join("output.txt");
 
-    let task = TaskSpec::from_task_with_cwd(
-        &Task {
+    let task = Task::from_task_with_cwd(
+        &TaskSpec {
             name: "fail_task".to_string(),
             action: "echo 'This will run because input is missing'".to_string(),
             before: vec![],
@@ -323,8 +324,8 @@ async fn test_file_dependencies_error_handling() -> Result<()> {
     }
 
     let readonly_output = readonly_dir.join("output.txt");
-    let task_readonly = TaskSpec::from_task_with_cwd(
-        &Task {
+    let task_readonly = Task::from_task_with_cwd(
+        &TaskSpec {
             name: "readonly_task".to_string(),
             action: format!("echo 'test' > {}", readonly_output.display()).to_string(),
             before: vec![],
@@ -399,8 +400,8 @@ async fn test_mixed_task_and_file_dependencies() -> Result<()> {
     std::fs::write(&config_file, r#"{"version": "1.0", "format": "json"}"#)?;
     std::fs::write(&data_file, "id,name,value\n1,test,100\n2,example,200\n")?;
 
-    let preprocess_task = TaskSpec::from_task_with_cwd(
-        &Task {
+    let preprocess_task = Task::from_task_with_cwd(
+        &TaskSpec {
             name: "preprocess".to_string(),
             action: format!(r#"echo '{{"status": "processed", "config": ' > {}; cat {} >> {}; echo '}}' >> {}"#,
                             processed_file.display(), config_file.display(), processed_file.display(), processed_file.display()).to_string(),
@@ -419,8 +420,8 @@ async fn test_mixed_task_and_file_dependencies() -> Result<()> {
         temp_path
     );
 
-    let analyze_task = TaskSpec::from_task_with_cwd(
-        &Task {
+    let analyze_task = Task::from_task_with_cwd(
+        &TaskSpec {
             name: "analyze".to_string(),
             action: format!("echo '<html><body>Analysis complete: ' > {}; cat {} >> {}; echo '</body></html>' >> {}",
                             report_file.display(), processed_file.display(), report_file.display(), report_file.display()).to_string(),
@@ -489,8 +490,8 @@ async fn test_file_dependencies_incremental_detection() -> Result<()> {
     // Create output file
     let output = temp_path.join("main.o");
 
-    let task = TaskSpec::from_task_with_cwd(
-        &Task {
+    let task = Task::from_task_with_cwd(
+        &TaskSpec {
             name: "compile".to_string(),
             action: "gcc -c main.c -o main.o".to_string(),
             before: vec![],
@@ -587,8 +588,8 @@ async fn test_file_dependencies_multiple_files() -> Result<()> {
     std::fs::write(&input2, "Line 2")?;
     std::fs::write(&input3, "Line 3")?;
 
-    let task = TaskSpec::from_task_with_cwd(
-        &Task {
+    let task = Task::from_task_with_cwd(
+        &TaskSpec {
             name: "combine".to_string(),
             action: format!(
                 "cat {} {} {} > {} && echo 'Files: 3' > {}",
@@ -717,8 +718,8 @@ async fn test_file_dependencies_task_skipping() -> Result<()> {
     // Create output file that's newer than input
     std::fs::write(&output_file, r#"{"setting": "value"}"#)?;
 
-    let task = TaskSpec::from_task_with_cwd(
-        &Task {
+    let task = Task::from_task_with_cwd(
+        &TaskSpec {
             name: "generate".to_string(),
             action: "echo 'This should not run!' && exit 1".to_string(), // Will fail if executed
             before: vec![],
@@ -772,11 +773,20 @@ async fn test_file_dependencies_modification_detection() -> Result<()> {
     fixture.write_file("new_config.txt", "new_value=2")?;
 
     // Task with mixed old/new inputs
-    let task = fixture.create_task(
-        "process_configs",
-        "echo 'processing'",
-        vec!["old_config.txt", "new_config.txt"],
-        vec!["result.txt"]
+    let task = Task::from_task_with_cwd(
+        &TaskSpec {
+            name: "process_configs".to_string(),
+            action: "echo 'processing'".to_string(),
+            before: vec![],
+            after: vec![],
+            input: vec!["old_config.txt".to_string(), "new_config.txt".to_string()],
+            output: vec!["result.txt".to_string()],
+            envs: HashMap::new(),
+            params: HashMap::new(),
+            help: None,
+            timeout: None,
+        },
+        &fixture.temp_path
     );
 
     let scheduler = fixture.create_scheduler(vec![task.clone()]).await?;

@@ -33,8 +33,8 @@ fn default_verbosity() -> u8 {
 }
 
 #[must_use]
-pub fn default_otto() -> Otto {
-    Otto {
+pub fn default_otto() -> OttoSpec {
+    OttoSpec {
         name: default_name(),
         about: default_about(),
         api: default_api(),
@@ -48,7 +48,7 @@ pub fn default_otto() -> Otto {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-pub struct Otto {
+pub struct OttoSpec {
     #[serde(default = "default_name")]
     pub name: String,
 
@@ -77,7 +77,7 @@ pub struct Otto {
     pub envs: HashMap<String, String>,
 }
 
-impl Default for Otto {
+impl Default for OttoSpec {
     fn default() -> Self {
         Self {
             name: default_name(),

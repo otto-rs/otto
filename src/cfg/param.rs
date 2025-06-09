@@ -7,10 +7,10 @@ use std::collections::HashMap;
 use std::fmt;
 use std::vec::Vec;
 
-pub type Params = HashMap<String, Param>;
+pub type ParamSpecs = HashMap<String, ParamSpec>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-pub struct Param {
+pub struct ParamSpec {
     #[serde(skip_deserializing)]
     pub name: String,
 
@@ -212,14 +212,14 @@ fn divine(title: &str) -> (String, Option<char>, Option<String>) {
     (name, short, long)
 }
 
-pub fn deserialize_param_map<'de, D>(deserializer: D) -> Result<Params, D::Error>
+pub fn deserialize_param_map<'de, D>(deserializer: D) -> Result<ParamSpecs, D::Error>
 where
     D: Deserializer<'de>,
 {
     struct ParamMap;
 
     impl<'de> Visitor<'de> for ParamMap {
-        type Value = Params;
+        type Value = ParamSpecs;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
             formatter.write_str("a map of name to Param")
@@ -229,8 +229,8 @@ where
         where
             M: MapAccess<'de>,
         {
-            let mut params = Params::new();
-            while let Some((title, mut param)) = map.next_entry::<String, Param>()? {
+            let mut params = ParamSpecs::new();
+            while let Some((title, mut param)) = map.next_entry::<String, ParamSpec>()? {
                 (param.name, param.short, param.long) = divine(&title);
                 if param.long.is_some() || param.short.is_some() {
                     if let Some(ref value) = param.default {

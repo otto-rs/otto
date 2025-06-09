@@ -16,7 +16,7 @@ use tokio::{
 };
 use tracing::{error, info, debug};
 
-use crate::cli::parse::TaskSpec;
+use crate::cli::parse::Task;
 use super::{
     workspace::{Workspace, ExecutionContext},
     output::{TaskStreams, OutputType},
@@ -61,13 +61,13 @@ pub struct TaskScheduler {
     /// Execution context for metadata
     execution_context: ExecutionContext,
     /// Tasks to execute
-    tasks: Vec<TaskSpec>,
+    tasks: Vec<Task>,
 }
 
 impl TaskScheduler {
     /// Create a new task scheduler
     pub async fn new(
-        tasks: Vec<TaskSpec>,
+        tasks: Vec<Task>,
         workspace: Arc<Workspace>,
         execution_context: ExecutionContext,
         io_limit: usize,
@@ -86,7 +86,7 @@ impl TaskScheduler {
     }
 
     /// Classify task based on its properties
-    fn classify_task(spec: &TaskSpec) -> TaskType {
+    fn classify_task(spec: &Task) -> TaskType {
         let cmd = spec.action.to_lowercase();
 
         // Network operations
@@ -258,7 +258,7 @@ impl TaskScheduler {
     /// Execute a single task
     async fn execute_task(
         &self,
-        task: TaskSpec,
+        task: Task,
         tx: mpsc::Sender<Result<String>>,
     ) -> Result<JoinHandle<Result<()>>> {
         let task_type = Self::classify_task(&task);
@@ -418,7 +418,7 @@ impl TaskScheduler {
     }
 
     /// Check if a task needs to be rebuilt based on file dependencies
-    pub async fn needs_rebuild(&self, task: &TaskSpec) -> Result<bool> {
+    pub async fn needs_rebuild(&self, task: &Task) -> Result<bool> {
         // If no file dependencies, always run (traditional task-only mode)
         if task.file_deps.is_empty() {
             debug!("Task {} has no file dependencies, will run", task.name);
@@ -519,7 +519,7 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
 
-        let task = TaskSpec::new(
+        let task = Task::new(
             "test".to_string(),
             vec![],
             vec![],
@@ -546,7 +546,7 @@ mod tests {
         let work_dir = PathBuf::from(temp_dir.path());
 
         let tasks = vec![
-            TaskSpec::new(
+            Task::new(
                 "task1".to_string(),
                 vec!["task2".to_string()],
                 vec![],
@@ -555,7 +555,7 @@ mod tests {
                 HashMap::new(),
                 "echo task1".to_string(),
             ),
-            TaskSpec::new(
+            Task::new(
                 "task2".to_string(),
                 vec![],
                 vec![],
@@ -586,7 +586,7 @@ mod tests {
         let work_dir = PathBuf::from(temp_dir.path());
 
         let tasks = vec![
-            TaskSpec::new(
+            Task::new(
                 "task1".to_string(),
                 vec![],
                 vec![],
@@ -595,7 +595,7 @@ mod tests {
                 HashMap::new(),
                 "exit 1".to_string(),
             ),
-            TaskSpec::new(
+            Task::new(
                 "task2".to_string(),
                 vec!["task1".to_string()],
                 vec![],
@@ -627,7 +627,7 @@ mod tests {
         tokio::fs::write(&input_file, "test content").await?;
 
         // Create task with file dependencies
-        let task = TaskSpec::new(
+        let task = Task::new(
             "copy_task".to_string(),
             vec![],
             vec![input_file.to_string_lossy().to_string()],
@@ -698,7 +698,7 @@ mod tests {
         let output_file = work_dir.join("output.txt");
 
         // Create task with nonexistent input file
-        let task = TaskSpec::new(
+        let task = Task::new(
             "test_nonexistent".to_string(),
             vec![],
             vec![nonexistent_file.to_string_lossy().to_string()],
@@ -737,7 +737,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         tokio::fs::write(&input3, "content3").await?;
 
-        let task = TaskSpec::new(
+        let task = Task::new(
             "multi_files".to_string(),
             vec![],
             vec![
@@ -795,7 +795,7 @@ mod tests {
 
         tokio::fs::write(&input_file, "initial content").await?;
 
-        let task1 = TaskSpec::new(
+        let task1 = Task::new(
             "step1".to_string(),
             vec![],
             vec![input_file.to_string_lossy().to_string()],
@@ -805,7 +805,7 @@ mod tests {
             format!("cp {} {}", input_file.display(), intermediate_file.display()),
         );
 
-        let task2 = TaskSpec::new(
+        let task2 = Task::new(
             "step2".to_string(),
             vec!["step1".to_string()], // Task dependency
             vec![intermediate_file.to_string_lossy().to_string()], // File dependency
@@ -855,7 +855,7 @@ mod tests {
         // Create output file with same timestamp (within same millisecond)
         tokio::fs::write(&output_file, "output").await?;
 
-        let task = TaskSpec::new(
+        let task = Task::new(
             "timestamp_test".to_string(),
             vec![],
             vec![input_file.to_string_lossy().to_string()],
@@ -883,7 +883,7 @@ mod tests {
         let work_dir = PathBuf::from(temp_dir.path());
 
         // Task with no file dependencies
-        let task = TaskSpec::new(
+        let task = Task::new(
             "no_file_deps".to_string(),
             vec![],
             vec![], // No input files
@@ -917,7 +917,7 @@ mod tests {
 
         let output_file = work_dir.join("output.txt");
 
-        let task = TaskSpec::new(
+        let task = Task::new(
             "dir_input".to_string(),
             vec![],
             vec![src_dir.to_string_lossy().to_string()], // Directory as input
@@ -953,7 +953,7 @@ mod tests {
 
         let output_file = work_dir.join("combined.txt");
 
-        let task = TaskSpec::new(
+        let task = Task::new(
             "many_inputs".to_string(),
             vec![],
             input_files,
@@ -990,7 +990,7 @@ mod tests {
         tokio::fs::write(&file_b, "content b").await?;
 
         // Task that uses its output as input (circular dependency)
-        let task = TaskSpec::new(
+        let task = Task::new(
             "circular".to_string(),
             vec![],
             vec![file_a.to_string_lossy().to_string()],
@@ -1023,7 +1023,7 @@ mod tests {
         // Create input file with known content
         tokio::fs::write(&input_file, "Hello, World!").await?;
 
-        let task = TaskSpec::new(
+        let task = Task::new(
             "real_execution".to_string(),
             vec![],
             vec![input_file.to_string_lossy().to_string()],

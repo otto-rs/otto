@@ -8,5 +8,5 @@ pub use scheduler::{TaskScheduler, TaskStatus, TaskType};
 pub use visualizer::OutputVisualizer;
 pub use workspace::Workspace;
 
-// Re-export TaskSpec from cli::parse for compatibility
-pub use crate::cli::parse::TaskSpec;
+// Re-export Task from cli::parse for compatibility
+pub use crate::cli::parse::Task;

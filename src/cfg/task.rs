@@ -7,12 +7,12 @@ use std::collections::HashMap;
 use std::fmt;
 use std::vec::Vec;
 
-use crate::cfg::param::{deserialize_param_map, Params};
+use crate::cfg::param::{deserialize_param_map, ParamSpecs};
 
-pub type Tasks = HashMap<String, Task>;
+pub type TaskSpecs = HashMap<String, TaskSpec>;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
-pub struct Task {
+pub struct TaskSpec {
     #[serde(skip_deserializing)]
     pub name: String,
 
@@ -35,7 +35,7 @@ pub struct Task {
     pub envs: HashMap<String, String>,
 
     #[serde(default, deserialize_with = "deserialize_param_map")]
-    pub params: Params,
+    pub params: ParamSpecs,
 
     #[serde(default, deserialize_with = "deserialize_script")]
     pub action: String,
@@ -75,7 +75,7 @@ where
     Ok(result.trim_start().trim_end().to_string())
 }
 
-impl Task {
+impl TaskSpec {
     #[must_use]
     pub fn new(
         name: String,
@@ -85,7 +85,7 @@ impl Task {
         input: Vec<String>,
         output: Vec<String>,
         envs: HashMap<String, String>,
-        params: Params,
+        params: ParamSpecs,
         action: String,
         timeout: Option<u64>,
     ) -> Self {
@@ -117,14 +117,14 @@ fn test_namify() {
     assert_eq!(namify("--name"), "name".to_string());
 }
 
-pub fn deserialize_task_map<'de, D>(deserializer: D) -> Result<Tasks, D::Error>
+pub fn deserialize_task_map<'de, D>(deserializer: D) -> Result<TaskSpecs, D::Error>
 where
     D: Deserializer<'de>,
 {
     struct TaskMap;
 
     impl<'de> Visitor<'de> for TaskMap {
-        type Value = Tasks;
+        type Value = TaskSpecs;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
             formatter.write_str("a map of name to Task")
@@ -134,8 +134,8 @@ where
         where
             M: MapAccess<'de>,
         {
-            let mut tasks = Tasks::new();
-            while let Some((name, mut task)) = map.next_entry::<String, Task>()? {
+            let mut tasks = TaskSpecs::new();
+            while let Some((name, mut task)) = map.next_entry::<String, TaskSpec>()? {
                 task.name = namify(&name);
                 tasks.insert(name.clone(), task);
             }
