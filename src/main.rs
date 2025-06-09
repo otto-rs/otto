@@ -6,15 +6,20 @@ use std::sync::Arc;
 
 use otto::{
     cli::parse::Parser,
-    executor::{TaskScheduler, Workspace},
+    executor::{TaskScheduler, Workspace, graph::{DagVisualizer, GraphOptions, GraphFormat}},
 };
 
 #[tokio::main]
 async fn main() -> Result<(), Report> {
     let args: Vec<String> = env::args().collect();
     let mut parser = Parser::new(args.clone())?;
-
     let (otto, dag, _hash, ottofile_path) = parser.parse()?;
+
+    // Check if graph visualization was requested
+    if let Some(graph_result) = handle_graph_if_requested(&dag)? {
+        println!("{}", graph_result);
+        return Ok(());
+    }
 
     // Use ottofile directory for workspace hash calculation, fallback to current dir if not found
     let workspace_root = if let Some(ottofile) = ottofile_path {
@@ -53,4 +58,104 @@ async fn main() -> Result<(), Report> {
     scheduler.execute_all().await?;
 
     Ok(())
+}
+
+fn handle_graph_if_requested(dag: &otto::cli::parse::DAG<otto::cli::parse::Task>) -> Result<Option<String>, Report> {
+    // Check if any task in the DAG is named "graph"
+    let mut graph_task = None;
+    let mut other_tasks = Vec::new();
+
+    for node in dag.raw_nodes() {
+        if node.weight.name == "graph" {
+            graph_task = Some(&node.weight);
+        } else {
+            other_tasks.push(&node.weight);
+        }
+    }
+
+    if let Some(graph_task) = graph_task {
+        // Parse graph parameters from the graph task's parameter string
+        let graph_options = parse_graph_parameters(graph_task)?;
+
+        // Create a new DAG with only the tasks to visualize
+        let viz_dag = if other_tasks.is_empty() {
+            // If no other tasks specified, visualize all tasks except graph
+            create_dag_without_graph_task(dag)?
+        } else {
+            // Create DAG with only the specified tasks and their dependencies
+            create_dag_for_tasks_with_dependencies(dag, &other_tasks)?
+        };
+
+        let visualizer = DagVisualizer::new(graph_options);
+        let result = visualizer.visualize(&viz_dag)?;
+        return Ok(Some(result));
+    }
+
+    Ok(None)
+}
+
+fn parse_graph_parameters(task: &otto::cli::parse::Task) -> Result<GraphOptions, Report> {
+    let mut options = GraphOptions::default();
+
+    // Extract format from task values
+    if let Some(format_value) = task.values.get("format") {
+        if let otto::cfg::config::Value::Item(format_str) = format_value {
+            options.format = match format_str.as_str() {
+                "svg" => GraphFormat::Svg,
+                "png" => GraphFormat::Png,
+                "pdf" => GraphFormat::Pdf,
+                "dot" => GraphFormat::Dot,
+                "ascii" => GraphFormat::Ascii,
+                _ => GraphFormat::Svg, // default
+            };
+        }
+    }
+
+    // Extract output path
+    if let Some(output_value) = task.values.get("output") {
+        if let otto::cfg::config::Value::Item(output_str) = output_value {
+            options.output_path = Some(std::path::PathBuf::from(output_str));
+        }
+    }
+
+    // Extract no-files flag
+    if let Some(no_files_value) = task.values.get("no-files") {
+        if let otto::cfg::config::Value::Item(no_files_str) = no_files_value {
+            options.show_file_deps = no_files_str != "true";
+        }
+    }
+
+    Ok(options)
+}
+
+fn create_dag_without_graph_task(original_dag: &otto::cli::parse::DAG<otto::cli::parse::Task>) -> Result<otto::cli::parse::DAG<otto::cli::parse::Task>, Report> {
+    use otto::cli::parse::DAG;
+
+    let mut new_dag = DAG::new();
+
+    // Add all nodes except graph
+    for node in original_dag.raw_nodes() {
+        if node.weight.name != "graph" {
+            new_dag.add_node(node.weight.clone());
+        }
+    }
+
+    Ok(new_dag)
+}
+
+fn create_dag_for_tasks_with_dependencies(original_dag: &otto::cli::parse::DAG<otto::cli::parse::Task>, tasks: &[&otto::cli::parse::Task]) -> Result<otto::cli::parse::DAG<otto::cli::parse::Task>, Report> {
+    use otto::cli::parse::DAG;
+
+    let mut new_dag = DAG::new();
+
+    // Add specified tasks and their dependencies
+    let task_names: std::collections::HashSet<String> = tasks.iter().map(|t| t.name.clone()).collect();
+
+    for node in original_dag.raw_nodes() {
+        if task_names.contains(&node.weight.name) {
+            new_dag.add_node(node.weight.clone());
+        }
+    }
+
+    Ok(new_dag)
 }

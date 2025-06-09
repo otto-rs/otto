@@ -12,6 +12,9 @@ Cargo.lock
 # Added by cargo
 /target
 
+*.png
+*.svg
+
 # Example generated files - ignore common output files from Otto examples
 examples/*/some-file
 examples/*/*.o

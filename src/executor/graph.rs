@@ -1,0 +1,539 @@
+use std::collections::HashMap;
+use std::path::Path;
+use std::process::Command;
+use eyre::{eyre, Result};
+
+use crate::cli::parse::{Task, DAG};
+
+/// Graph visualization options
+#[derive(Debug, Clone)]
+pub struct GraphOptions {
+    /// Include task details in nodes
+    pub show_details: bool,
+    /// Show file dependencies
+    pub show_file_deps: bool,
+    /// Output format preference
+    pub format: GraphFormat,
+    /// Node styling
+    pub style: NodeStyle,
+    /// Output file path (optional)
+    pub output_path: Option<std::path::PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+pub enum GraphFormat {
+    /// Generate SVG image (requires graphviz)
+    Svg,
+    /// Generate PNG image (requires graphviz)
+    Png,
+    /// Generate PDF (requires graphviz)
+    Pdf,
+    /// Raw DOT format
+    Dot,
+    /// ASCII art for terminal
+    Ascii,
+    /// Auto-detect based on file extension
+    Auto,
+}
+
+#[derive(Debug, Clone)]
+pub enum NodeStyle {
+    Simple,
+    Detailed,
+    Compact,
+}
+
+impl Default for GraphOptions {
+    fn default() -> Self {
+        Self {
+            show_details: true,
+            show_file_deps: true,
+            format: GraphFormat::Svg,
+            style: NodeStyle::Detailed,
+            output_path: None,
+        }
+    }
+}
+
+/// DAG visualizer for Otto tasks
+pub struct DagVisualizer {
+    options: GraphOptions,
+}
+
+impl DagVisualizer {
+    /// Create a new DAG visualizer
+    pub fn new(options: GraphOptions) -> Self {
+        Self { options }
+    }
+
+    /// Create with default options
+    pub fn with_defaults() -> Self {
+        Self::new(GraphOptions::default())
+    }
+
+    /// Visualize the DAG and save to file or display
+    pub fn visualize(&self, dag: &DAG<Task>) -> Result<String> {
+        match self.options.format {
+            GraphFormat::Ascii => self.generate_ascii(dag),
+            GraphFormat::Dot => self.generate_dot(dag),
+            GraphFormat::Svg | GraphFormat::Png | GraphFormat::Pdf | GraphFormat::Auto => {
+                self.generate_image(dag)
+            }
+        }
+    }
+
+    /// Generate and save image using Graphviz
+    pub fn generate_image(&self, dag: &DAG<Task>) -> Result<String> {
+        // First generate DOT content
+        let dot_content = self.generate_dot(dag)?;
+
+        // Determine output format and path
+        let (format, output_path) = self.determine_output_format()?;
+
+        // Check if graphviz is available
+        if !self.is_graphviz_available() {
+            return Err(eyre!(
+                "Graphviz not found. Please install graphviz to generate images.\n\
+                On Ubuntu/Debian: sudo apt install graphviz\n\
+                On macOS: brew install graphviz\n\
+                On Windows: Download from https://graphviz.org/download/\n\
+                \n\
+                Falling back to ASCII output:\n{}",
+                self.generate_ascii(dag)?
+            ));
+        }
+
+        // Create temporary DOT file
+        let temp_dir = tempfile::tempdir()?;
+        let dot_file = temp_dir.path().join("otto_graph.dot");
+        std::fs::write(&dot_file, &dot_content)?;
+
+        // Run graphviz to generate image
+        let output = Command::new("dot")
+            .arg(&format!("-T{}", format))
+            .arg(&dot_file)
+            .arg("-o")
+            .arg(&output_path)
+            .output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(eyre!("Graphviz failed: {}", stderr));
+        }
+
+        Ok(format!(
+            "Graph visualization saved to: {}\n\
+            Format: {}\n\
+            Open with your preferred image viewer or browser.",
+            output_path.display(),
+            format.to_uppercase()
+        ))
+    }
+
+    /// Generate DOT format representation of the DAG
+    pub fn generate_dot(&self, dag: &DAG<Task>) -> Result<String> {
+        let mut dot = String::new();
+
+        // Start digraph
+        dot.push_str("digraph otto_dag {\n");
+        dot.push_str("  label=\"Otto Task DAG\";\n");
+        dot.push_str("  labelloc=\"t\";\n");
+        dot.push_str("  fontsize=\"16\";\n");
+        dot.push_str("  fontname=\"Helvetica\";\n");
+        dot.push_str("  rankdir=\"TB\";\n");
+        dot.push_str("  bgcolor=\"white\";\n");
+        dot.push_str("  \n");
+
+        // Default node attributes
+        dot.push_str("  node [\n");
+        dot.push_str("    shape=\"box\",\n");
+        dot.push_str("    style=\"rounded,filled\",\n");
+        dot.push_str("    fontname=\"Helvetica\",\n");
+        dot.push_str("    fontsize=\"12\"\n");
+        dot.push_str("  ];\n");
+        dot.push_str("  \n");
+
+        // Default edge attributes
+        dot.push_str("  edge [\n");
+        dot.push_str("    fontname=\"Helvetica\",\n");
+        dot.push_str("    fontsize=\"10\"\n");
+        dot.push_str("  ];\n");
+        dot.push_str("  \n");
+
+        // Create a mapping from task names to node IDs
+        let mut task_to_id = HashMap::new();
+        let mut file_nodes = std::collections::HashSet::new();
+
+        // Add task nodes
+        for (idx, node) in dag.raw_nodes().iter().enumerate() {
+            let task = &node.weight;
+            let node_id = format!("task_{}", idx);
+            task_to_id.insert(task.name.clone(), node_id.clone());
+
+            let label = self.create_node_label(task);
+            let escaped_label = self.escape_dot_string(&label);
+
+            // Determine node color based on task characteristics
+            let color = if !task.file_deps.is_empty() || !task.output_deps.is_empty() {
+                "lightblue"
+            } else {
+                "lightgray"
+            };
+
+            dot.push_str(&format!(
+                "  {} [label=\"{}\", fillcolor=\"{}\"];\n",
+                node_id, escaped_label, color
+            ));
+        }
+
+        dot.push_str("  \n");
+
+        // Add task dependency edges
+        for node in dag.raw_nodes() {
+            let task = &node.weight;
+            if let Some(target_id) = task_to_id.get(&task.name) {
+                for dep_name in &task.task_deps {
+                    if let Some(source_id) = task_to_id.get(dep_name) {
+                        dot.push_str(&format!(
+                            "  {} -> {} [label=\"depends\", color=\"black\"];\n",
+                            source_id, target_id
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Add file dependencies if enabled
+        if self.options.show_file_deps {
+            self.add_file_dependencies_to_dot(&mut dot, dag, &task_to_id, &mut file_nodes)?;
+        }
+
+        dot.push_str("}\n");
+
+        Ok(dot)
+    }
+
+    /// Generate ASCII art representation of the DAG
+    pub fn generate_ascii(&self, dag: &DAG<Task>) -> Result<String> {
+        let mut output = String::new();
+
+        output.push_str("┌─────────────────────────────────────┐\n");
+        output.push_str("│           Otto Task DAG             │\n");
+        output.push_str("└─────────────────────────────────────┘\n\n");
+
+        // Find root tasks (no dependencies)
+        let root_tasks: Vec<_> = dag.raw_nodes()
+            .iter()
+            .filter(|node| node.weight.task_deps.is_empty())
+            .collect();
+
+        if root_tasks.is_empty() {
+            output.push_str("No root tasks found (possible circular dependencies)\n");
+            return Ok(output);
+        }
+
+        for (i, root) in root_tasks.iter().enumerate() {
+            let is_last_root = i == root_tasks.len() - 1;
+            self.render_ascii_subtree(
+                &mut output,
+                &root.weight,
+                dag,
+                0,
+                &mut std::collections::HashSet::new(),
+                is_last_root
+            )?;
+        }
+
+        // Add legend
+        output.push_str("\n┌─────────────────────────────────────┐\n");
+        output.push_str("│ Legend:                             │\n");
+        output.push_str("│ ├─ Task name [inputs:N] [outputs:M] │\n");
+        output.push_str("│ └─ Dependencies flow top to bottom  │\n");
+        output.push_str("└─────────────────────────────────────┘\n");
+
+        Ok(output)
+    }
+
+    /// Create a formatted label for a task node
+    fn create_node_label(&self, task: &Task) -> String {
+        match self.options.style {
+            NodeStyle::Simple => task.name.clone(),
+            NodeStyle::Compact => {
+                format!("{}\n[{}]", task.name, &task.hash[..6])
+            },
+            NodeStyle::Detailed => {
+                let mut label = task.name.clone();
+
+                if self.options.show_details {
+                    if !task.file_deps.is_empty() {
+                        label.push_str(&format!("\nInputs: {}", task.file_deps.len()));
+                    }
+                    if !task.output_deps.is_empty() {
+                        label.push_str(&format!("\nOutputs: {}", task.output_deps.len()));
+                    }
+                    if !task.envs.is_empty() {
+                        label.push_str(&format!("\nEnvs: {}", task.envs.len()));
+                    }
+                }
+
+                label.push_str(&format!("\n[{}]", &task.hash[..6]));
+                label
+            }
+        }
+    }
+
+    /// Escape strings for DOT format
+    fn escape_dot_string(&self, s: &str) -> String {
+        s.replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")
+            .replace('\t', "\\t")
+            .replace('$', "\\$")  // Escape dollar signs to prevent variable expansion
+            .replace('{', "\\{")  // Escape braces
+            .replace('}', "\\}")
+    }
+
+    /// Add file dependencies to DOT output
+    fn add_file_dependencies_to_dot(
+        &self,
+        dot: &mut String,
+        dag: &DAG<Task>,
+        task_to_id: &HashMap<String, String>,
+        file_nodes: &mut std::collections::HashSet<String>
+    ) -> Result<()> {
+        dot.push_str("  \n  // File dependencies\n");
+
+        for node in dag.raw_nodes() {
+            let task = &node.weight;
+            if let Some(task_id) = task_to_id.get(&task.name) {
+
+                // Add input file nodes
+                for file_dep in &task.file_deps {
+                    let file_id = format!("file_{}",
+                        file_dep.replace(['/', '.', '*', '-', '$', '{', '}'], "_"));
+
+                    if !file_nodes.contains(&file_id) {
+                        let escaped_label = self.escape_dot_string(file_dep);
+                        dot.push_str(&format!(
+                            "  {} [label=\"{}\", shape=\"ellipse\", fillcolor=\"lightgreen\"];\n",
+                            file_id, escaped_label
+                        ));
+                        file_nodes.insert(file_id.clone());
+                    }
+
+                    dot.push_str(&format!(
+                        "  {} -> {} [label=\"input\", color=\"green\", style=\"dashed\"];\n",
+                        file_id, task_id
+                    ));
+                }
+
+                // Add output file nodes
+                for output_dep in &task.output_deps {
+                    let file_id = format!("output_{}",
+                        output_dep.replace(['/', '.', '*', '-', '$', '{', '}'], "_"));
+
+                    if !file_nodes.contains(&file_id) {
+                        let escaped_label = self.escape_dot_string(output_dep);
+                        dot.push_str(&format!(
+                            "  {} [label=\"{}\", shape=\"ellipse\", fillcolor=\"lightyellow\"];\n",
+                            file_id, escaped_label
+                        ));
+                        file_nodes.insert(file_id.clone());
+                    }
+
+                    dot.push_str(&format!(
+                        "  {} -> {} [label=\"output\", color=\"orange\", style=\"dashed\"];\n",
+                        task_id, file_id
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Render ASCII subtree recursively
+    fn render_ascii_subtree(
+        &self,
+        output: &mut String,
+        task: &Task,
+        dag: &DAG<Task>,
+        depth: usize,
+        visited: &mut std::collections::HashSet<String>,
+        is_last: bool
+    ) -> Result<()> {
+        let indent = "  ".repeat(depth);
+        let connector = if is_last { "└─" } else { "├─" };
+
+        if visited.contains(&task.name) {
+            output.push_str(&format!("{}{} {} (circular ref)\n", indent, connector, task.name));
+            return Ok(());
+        }
+
+        visited.insert(task.name.clone());
+
+        // Show task info
+        output.push_str(&format!("{}{} {}", indent, connector, task.name));
+        if !task.file_deps.is_empty() {
+            output.push_str(&format!(" [inputs:{}]", task.file_deps.len()));
+        }
+        if !task.output_deps.is_empty() {
+            output.push_str(&format!(" [outputs:{}]", task.output_deps.len()));
+        }
+        output.push('\n');
+
+        // Find tasks that depend on this one
+        let dependents: Vec<_> = dag.raw_nodes()
+            .iter()
+            .filter(|node| node.weight.task_deps.contains(&task.name))
+            .collect();
+
+        for (i, dependent) in dependents.iter().enumerate() {
+            let is_last_dependent = i == dependents.len() - 1;
+            self.render_ascii_subtree(
+                output,
+                &dependent.weight,
+                dag,
+                depth + 1,
+                visited,
+                is_last_dependent
+            )?;
+        }
+
+        visited.remove(&task.name);
+        Ok(())
+    }
+
+    /// Check if Graphviz is available
+    fn is_graphviz_available(&self) -> bool {
+        Command::new("dot")
+            .arg("-V")
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+
+    /// Determine output format and path
+    fn determine_output_format(&self) -> Result<(String, std::path::PathBuf)> {
+        let (format, extension) = match &self.options.format {
+            GraphFormat::Svg => ("svg", "svg"),
+            GraphFormat::Png => ("png", "png"),
+            GraphFormat::Pdf => ("pdf", "pdf"),
+            GraphFormat::Auto => {
+                if let Some(ref path) = self.options.output_path {
+                    match path.extension().and_then(|s| s.to_str()) {
+                        Some("svg") => ("svg", "svg"),
+                        Some("png") => ("png", "png"),
+                        Some("pdf") => ("pdf", "pdf"),
+                        _ => ("svg", "svg"), // default
+                    }
+                } else {
+                    ("svg", "svg") // default
+                }
+            },
+            _ => return Err(eyre!("Invalid format for image generation")),
+        };
+
+        let output_path = if let Some(ref path) = self.options.output_path {
+            path.clone()
+        } else {
+            std::env::current_dir()?.join(format!("otto_graph.{}", extension))
+        };
+
+        Ok((format.to_string(), output_path))
+    }
+
+    /// Write DOT output to a file
+    pub fn write_dot_file(&self, dag: &DAG<Task>, path: &Path) -> Result<()> {
+        let dot_content = self.generate_dot(dag)?;
+        std::fs::write(path, dot_content)?;
+        Ok(())
+    }
+
+    /// Write ASCII output to a file
+    pub fn write_ascii_file(&self, dag: &DAG<Task>, path: &Path) -> Result<()> {
+        let ascii_content = self.generate_ascii(dag)?;
+        std::fs::write(path, ascii_content)?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn create_test_task(name: &str, deps: Vec<&str>) -> Task {
+        Task::new(
+            name.to_string(),
+            deps.into_iter().map(String::from).collect(),
+            vec![],
+            vec![],
+            HashMap::new(),
+            HashMap::new(),
+            format!("echo 'Running {}'", name),
+        )
+    }
+
+    #[test]
+    fn test_dot_generation_simple() -> Result<()> {
+        let mut dag = DAG::new();
+
+        let task1 = create_test_task("build", vec![]);
+        let task2 = create_test_task("test", vec!["build"]);
+
+        dag.add_node(task1);
+        dag.add_node(task2);
+
+        let visualizer = DagVisualizer::with_defaults();
+        let dot = visualizer.generate_dot(&dag)?;
+
+        assert!(dot.contains("digraph otto_dag"));
+        assert!(dot.contains("task_0"));
+        assert!(dot.contains("task_1"));
+        assert!(dot.contains("Otto Task DAG"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_ascii_generation() -> Result<()> {
+        let mut dag = DAG::new();
+
+        let task1 = create_test_task("setup", vec![]);
+        let task2 = create_test_task("build", vec!["setup"]);
+        let task3 = create_test_task("test", vec!["build"]);
+
+        dag.add_node(task1);
+        dag.add_node(task2);
+        dag.add_node(task3);
+
+        let visualizer = DagVisualizer::with_defaults();
+        let ascii = visualizer.generate_ascii(&dag)?;
+
+        assert!(ascii.contains("Otto Task DAG"));
+        assert!(ascii.contains("setup"));
+        assert!(ascii.contains("build"));
+        assert!(ascii.contains("test"));
+        assert!(ascii.contains("Legend"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_graphviz_detection() {
+        let visualizer = DagVisualizer::with_defaults();
+        // This test will pass regardless of whether graphviz is installed
+        let _has_graphviz = visualizer.is_graphviz_available();
+    }
+
+    #[test]
+    fn test_dot_string_escaping() {
+        let visualizer = DagVisualizer::with_defaults();
+        assert_eq!(visualizer.escape_dot_string("hello"), "hello");
+        assert_eq!(visualizer.escape_dot_string("hello\nworld"), "hello\\nworld");
+        assert_eq!(visualizer.escape_dot_string("say \"hello\""), "say \\\"hello\\\"");
+        assert_eq!(visualizer.escape_dot_string("path\\to\\file"), "path\\\\to\\\\file");
+    }
+}

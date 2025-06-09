@@ -1,7 +1,8 @@
-pub mod output;
 pub mod scheduler;
-pub mod visualizer;
 pub mod workspace;
+pub mod output;
+pub mod visualizer;
+pub mod graph;
 
 pub use output::TaskStreams;
 pub use scheduler::{TaskScheduler, TaskStatus, TaskType};

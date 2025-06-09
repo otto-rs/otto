@@ -424,7 +424,19 @@ impl Parser {
     /// Create the help command with all tasks as subcommands
     fn help_command(otto_spec: &OttoSpec, tasks: &TaskSpecs) -> Command {
         let mut command = Self::otto_command(otto_spec);
-        for task_spec in tasks.values() {
+
+        // Sort tasks with built-in meta-tasks first, then alphabetically
+        let mut task_list: Vec<_> = tasks.values().collect();
+        task_list.sort_by(|a, b| {
+            // Put built-in tasks (like graph) first
+            match (a.name.as_str(), b.name.as_str()) {
+                ("graph", _) => std::cmp::Ordering::Less,
+                (_, "graph") => std::cmp::Ordering::Greater,
+                _ => a.name.cmp(&b.name),
+            }
+        });
+
+        for task_spec in task_list {
             command = command.subcommand(Self::task_to_command(task_spec));
         }
         command
@@ -478,9 +490,11 @@ impl Parser {
                     let (config_spec, _hash, _ottofile) = Self::load_config_from_path(ottofile_path)?;
 
                     task_name = self.args[i - 1].clone();
-                    if config_spec.tasks.contains_key(&task_name) {
+                    // Check for both configured tasks and built-in meta-tasks
+                    if config_spec.tasks.contains_key(&task_name) || task_name == "graph" {
                         help_after_task = true;
                         self.config_spec = config_spec;
+                        self.inject_graph_meta_task();
                         break;
                     }
                 }
@@ -504,7 +518,21 @@ impl Parser {
                 let ottofile_path = Self::divine_ottofile(ottofile_value)?;
                 let (config_spec, _hash, _ottofile) = Self::load_config_from_path(ottofile_path)?;
 
-                let mut help_cmd = Self::help_command(&config_spec.otto, &config_spec.tasks);
+                let temp_config = config_spec;
+                // Inject graph meta-task for help display
+                let mut temp_parser = Parser {
+                    prog: "otto".to_string(),
+                    cwd: PathBuf::from("/"),
+                    user: "temp".to_string(),
+                    config_spec: temp_config,
+                    hash: String::new(),
+                    args: vec![],
+                    pargs: vec![],
+                    ottofile: None,
+                };
+                temp_parser.inject_graph_meta_task();
+
+                let mut help_cmd = Self::help_command(&temp_parser.config_spec.otto, &temp_parser.config_spec.tasks);
                 help_cmd.print_help()?;
                 std::process::exit(0);
             }
@@ -527,6 +555,10 @@ impl Parser {
 
         // Update our internal state
         self.config_spec = config_spec;
+
+        // Inject the graph meta-task into the configuration
+        self.inject_graph_meta_task();
+
         self.hash = hash;
         self.ottofile = ottofile;
 
@@ -536,7 +568,9 @@ impl Parser {
         let mut skip_next = false;
         let mut in_task_args = false;
 
-        let task_names: Vec<&str> = self.config_spec.tasks.keys().map(String::as_str).collect();
+        // Include both configured tasks AND built-in meta-tasks like "graph"
+        let mut task_names: Vec<&str> = self.config_spec.tasks.keys().map(String::as_str).collect();
+        task_names.push("graph"); // Always include graph as a built-in task name
 
         for (_i, arg) in self.args.iter().enumerate().skip(1) { // Skip program name
             if skip_next {
@@ -769,6 +803,92 @@ impl Parser {
         }
 
         Ok(())
+    }
+
+    /// Inject the graph meta-task into the configuration
+    fn inject_graph_meta_task(&mut self) {
+        use crate::cfg::config::{TaskSpec, ParamSpec};
+        use crate::cfg::param::{ParamType, Value, Nargs};
+        use std::collections::HashMap;
+
+        // Don't inject if graph task already exists
+        if self.config_spec.tasks.contains_key("graph") {
+            return;
+        }
+
+        // Create parameters for the graph task
+        let mut params = HashMap::new();
+
+        // Add -f/--format parameter
+        params.insert("format".to_string(), ParamSpec {
+            name: "format".to_string(),
+            short: Some('f'),
+            long: Some("format".to_string()),
+            param_type: ParamType::OPT,
+            dest: None,
+            metavar: None,
+            default: Some("svg".to_string()),
+            constant: Value::Empty,
+            choices: vec![
+                "svg".to_string(),
+                "png".to_string(),
+                "pdf".to_string(),
+                "dot".to_string(),
+                "ascii".to_string()
+            ],
+            nargs: Nargs::One,
+            help: Some("Output format: svg, png, pdf, dot, ascii [default: svg]".to_string()),
+            value: Value::Empty,
+        });
+
+        // Add --output parameter
+        params.insert("output".to_string(), ParamSpec {
+            name: "output".to_string(),
+            short: None,
+            long: Some("output".to_string()),
+            param_type: ParamType::OPT,
+            dest: None,
+            metavar: Some("PATH".to_string()),
+            default: None,
+            constant: Value::Empty,
+            choices: vec![],
+            nargs: Nargs::One,
+            help: Some("Output file path (auto-detected from extension if not specified)".to_string()),
+            value: Value::Empty,
+        });
+
+        // Add --no-files flag
+        params.insert("no-files".to_string(), ParamSpec {
+            name: "no-files".to_string(),
+            short: None,
+            long: Some("no-files".to_string()),
+            param_type: ParamType::FLG,
+            dest: None,
+            metavar: None,
+            default: Some("false".to_string()),
+            constant: Value::Empty,
+            choices: vec![],
+            nargs: Nargs::Zero,
+            help: Some("Don't show file dependencies in the graph".to_string()),
+            value: Value::Empty,
+        });
+
+        // Create the graph task spec
+        let graph_task = TaskSpec {
+            name: "graph".to_string(),
+            help: Some("[built-in] Visualize the task dependency graph".to_string()),
+            after: vec![],
+            before: vec![],
+            input: vec![],
+            output: vec![],
+            envs: HashMap::new(),
+            params,
+            action: "# Graph meta-task - parameters processed by Otto".to_string(),
+            timeout: None,
+        };
+
+        // Insert the graph task into the configuration
+        self.config_spec.tasks.insert("graph".to_string(), graph_task);
     }
 }
 
