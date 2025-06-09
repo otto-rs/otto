@@ -1,6 +1,7 @@
 //#![allow(unused_imports, unused_variables, dead_code)]
 
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::vec::Vec;
 
 fn default_name() -> String {
@@ -42,6 +43,7 @@ pub fn default_otto() -> Otto {
         tasks: default_tasks(),
         verbosity: default_verbosity(),
         timeout: None,
+        envs: HashMap::new(),
     }
 }
 
@@ -70,6 +72,9 @@ pub struct Otto {
 
     #[serde(default)]
     pub timeout: Option<u64>,
+
+    #[serde(default)]
+    pub envs: HashMap<String, String>,
 }
 
 impl Default for Otto {
@@ -83,6 +88,7 @@ impl Default for Otto {
             tasks: default_tasks(),
             verbosity: default_verbosity(),
             timeout: None,
+            envs: HashMap::new(),
         }
     }
 }

@@ -1,0 +1,2 @@
+Demo source file for Otto environment variables example.
+This file demonstrates input file dependencies. 

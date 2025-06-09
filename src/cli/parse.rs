@@ -17,6 +17,7 @@ use sha2::{Digest, Sha256};
 use glob;
 
 use crate::cfg::config::{Config, Otto, Param, Task, Tasks, Value};
+use crate::cfg::env as env_eval;
 
 pub type DAG<T> = Dag<T, (), u32>;
 
@@ -125,28 +126,22 @@ impl TaskSpec {
 
     #[must_use]
     pub fn from_task(task: &Task) -> Self {
-        let name = task.name.clone();
-        let task_deps = task.before.clone();
+        let _name = task.name.clone();
+        let _task_deps = task.before.clone();
 
         // Get current working directory for glob resolution
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
-        // Resolve file globs from input to canonical paths
-        let file_deps = Self::resolve_file_globs(&task.input, &cwd);
-
-        // Resolve output globs to canonical paths
-        let output_deps = Self::resolve_file_globs(&task.output, &cwd);
-
-        // Note: We do NOT add after tasks here since they depend on us, not vice versa
-        // The after dependencies will be handled during DAG construction
-        let envs = HashMap::new();
-        let values = HashMap::new();
-        let action = task.action.trim().to_string();  // Trim whitespace from script content
-        Self::new(name, task_deps, file_deps, output_deps, envs, values, action)
+        Self::from_task_with_cwd_and_global_envs(task, &cwd, &HashMap::new())
     }
 
     #[must_use]
     pub fn from_task_with_cwd(task: &Task, cwd: &std::path::Path) -> Self {
+        Self::from_task_with_cwd_and_global_envs(task, cwd, &HashMap::new())
+    }
+
+    #[must_use]
+    pub fn from_task_with_cwd_and_global_envs(task: &Task, cwd: &std::path::Path, global_envs: &HashMap<String, String>) -> Self {
         let name = task.name.clone();
         let task_deps = task.before.clone();
 
@@ -156,12 +151,34 @@ impl TaskSpec {
         // Resolve output globs to canonical paths using explicit cwd
         let output_deps = Self::resolve_file_globs(&task.output, cwd);
 
+        // Evaluate environment variables with two-level merging: global then task-level
+        let evaluated_envs = Self::evaluate_merged_envs(global_envs, &task.envs, cwd)
+            .unwrap_or_else(|e| {
+                eprintln!("Warning: Failed to evaluate environment variables for task '{}': {}", name, e);
+                HashMap::new()
+            });
+
         // Note: We do NOT add after tasks here since they depend on us, not vice versa
         // The after dependencies will be handled during DAG construction
-        let envs = HashMap::new();
         let values = HashMap::new();
         let action = task.action.trim().to_string();  // Trim whitespace from script content
-        Self::new(name, task_deps, file_deps, output_deps, envs, values, action)
+        Self::new(name, task_deps, file_deps, output_deps, evaluated_envs, values, action)
+    }
+
+    /// Evaluate and merge environment variables from global and task-level sources
+    fn evaluate_merged_envs(global_envs: &HashMap<String, String>, task_envs: &HashMap<String, String>, working_dir: &std::path::Path) -> Result<HashMap<String, String>> {
+        // Step 1: Create merged environment for task evaluation (global + task)
+        let mut merged_envs = global_envs.clone();
+        merged_envs.extend(task_envs.iter().map(|(k, v)| (k.clone(), v.clone())));
+
+        // Step 2: Evaluate the merged environment (task envs can reference global envs)
+        let evaluated_merged = if merged_envs.is_empty() {
+            HashMap::new()
+        } else {
+            env_eval::evaluate_envs(&merged_envs, Some(working_dir))?
+        };
+
+        Ok(evaluated_merged)
     }
 
     /// Resolve file glob patterns to canonical file paths
@@ -623,6 +640,17 @@ impl Parser {
     }
 
     fn process_tasks_with_filter(&self, requested_tasks: &[String]) -> Result<DAG<TaskSpec>> {
+        // Step 0: Evaluate global environment variables once
+        let global_envs = if self.config.otto.envs.is_empty() {
+            HashMap::new()
+        } else {
+            env_eval::evaluate_envs(&self.config.otto.envs, Some(&self.cwd))
+                .unwrap_or_else(|e| {
+                    eprintln!("Warning: Failed to evaluate global environment variables: {}", e);
+                    HashMap::new()
+                })
+        };
+
         // Step 1: Compute all task dependencies using simple linear algorithm
         let task_deps = self.compute_task_deps()?;
 
@@ -641,7 +669,7 @@ impl Parser {
             let task = self.config.tasks.get(task_name)
                 .ok_or_else(|| eyre!("Task '{}' not found", task_name))?;
 
-            let mut spec = TaskSpec::from_task(task);
+            let mut spec = TaskSpec::from_task_with_cwd_and_global_envs(task, &self.cwd, &global_envs);
 
             // Find the partition for this task's arguments
             if let Some(task_args) = self.pargs.iter().find(|args| !args.is_empty() && args[0] == *task_name) {
@@ -778,6 +806,7 @@ mod tests {
             after: vec!["after1".to_string()],
             input: vec![],
             output: vec![],
+            envs: HashMap::new(),
             params: HashMap::new(),
             help: None,
             timeout: Some(10),
@@ -804,6 +833,7 @@ mod tests {
                 after: vec![],
                 input: vec![],
                 output: vec![],
+                envs: HashMap::new(),
                 params: HashMap::new(),
                 help: None,
                 timeout: Some(10),
@@ -1140,6 +1170,7 @@ mod tests {
             after: vec!["after1".to_string()],
             input: vec![],
             output: vec![],
+            envs: HashMap::new(),
             params: HashMap::new(),
             help: Some("Test task".to_string()),
             timeout: Some(30),
@@ -1200,6 +1231,7 @@ mod tests {
             after: vec!["B".to_string()],
             input: vec![],
             output: vec![],
+            envs: HashMap::new(),
             params: HashMap::new(),
             help: None,
             timeout: None,
@@ -1213,6 +1245,7 @@ mod tests {
             after: vec![],
             input: vec![],
             output: vec![],
+            envs: HashMap::new(),
             params: HashMap::new(),
             help: None,
             timeout: None,
@@ -1226,6 +1259,7 @@ mod tests {
             after: vec![],
             input: vec![],
             output: vec![],
+            envs: HashMap::new(),
             params: HashMap::new(),
             help: None,
             timeout: None,
@@ -1307,6 +1341,7 @@ mod tests {
             after: vec![],
             input: vec![],
             output: vec![],
+            envs: HashMap::new(),
             params: {
                 let mut params = HashMap::new();
                 params.insert("greeting".to_string(), Param {
@@ -1337,6 +1372,7 @@ mod tests {
             after: vec![],
             input: vec![],
             output: vec![],
+            envs: HashMap::new(),
             params: {
                 let mut params = HashMap::new();
                 params.insert("name".to_string(), Param {
@@ -1434,6 +1470,7 @@ mod tests {
             after: vec![],
             input: vec![],
             output: vec![],
+            envs: HashMap::new(),
             params: {
                 let mut params = HashMap::new();
                 params.insert("flag".to_string(), Param {
@@ -1520,6 +1557,7 @@ mod tests {
             after: vec![],
             input: vec![],
             output: vec![],
+            envs: HashMap::new(),
             params: {
                 let mut params = HashMap::new();
                 params.insert("required".to_string(), Param {
@@ -1612,6 +1650,7 @@ mod tests {
             after: vec![],
             input: vec!["src.c".to_string(), "config.h".to_string()],
             output: vec!["app".to_string()],
+            envs: HashMap::new(),
             params: HashMap::new(),
             help: None,
             timeout: None,
@@ -1646,6 +1685,7 @@ mod tests {
             after: vec![],
             input: vec![],
             output: vec![],
+            envs: HashMap::new(),
             params: HashMap::new(),
             help: None,
             timeout: None,
@@ -1683,6 +1723,7 @@ mod tests {
             after: vec!["cleanup".to_string()],
             input: vec!["app".to_string(), "config.yml".to_string()],
             output: vec!["deployment.log".to_string()],
+            envs: HashMap::new(),
             params: HashMap::new(),
             help: None,
             timeout: None,
@@ -1832,6 +1873,7 @@ tasks:
                     "file_with_underscores.cfg".to_string(),
                 ],
                 output: vec!["output with spaces.txt".to_string()],
+                envs: HashMap::new(),
                 params: HashMap::new(),
                 help: None,
                 timeout: None,

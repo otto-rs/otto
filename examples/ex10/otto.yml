@@ -1,0 +1,121 @@
+otto:
+  name: "Environment Variables Demo"
+  api: 1
+  jobs: 2
+  about: "Demonstrates Otto's environment variable capabilities"
+  envs:
+    # Global environment variables available to all tasks
+    PROJECT_NAME: "my-awesome-app"
+    VERSION: $(git describe --tags --always --dirty)
+    BUILD_TIME: $(date +%Y%m%d-%H%M%S)
+    USER_HOME: ${HOME}
+    BUILD_DIR: "build"
+    DIST_DIR: "dist"
+    FULL_VERSION: "${PROJECT_NAME}-${VERSION}"
+    PACKAGE_NAME: "${FULL_VERSION}-${BUILD_TIME}.tar.gz"
+
+tasks:
+  info:
+    help: "Show environment information"
+    action: |
+      echo "=== Environment Variables Demo ==="
+      echo "Project: $PROJECT_NAME"
+      echo "Version: $VERSION"
+      echo "Full Version: $FULL_VERSION"
+      echo "Build Time: $BUILD_TIME"
+      echo "User Home: $USER_HOME"
+      echo "Build Dir: $BUILD_DIR"
+      echo "Dist Dir: $DIST_DIR"
+      echo "Current User: $USER"
+      echo "Working Directory: $PWD"
+
+  setup:
+    help: "Setup build directories"
+    envs:
+      # Task-specific environment variables
+      SETUP_MSG: "Setting up ${PROJECT_NAME} v${VERSION}"
+    action: |
+      echo "$SETUP_MSG"
+      mkdir -p "$BUILD_DIR" "$DIST_DIR"
+      echo "Directories created: $BUILD_DIR, $DIST_DIR"
+
+  build:
+    help: "Build the application"
+    before: ["setup"]
+    envs:
+      # Task envs can reference global envs
+      BUILD_OUTPUT: "${BUILD_DIR}/${PROJECT_NAME}"
+      COMPILER_FLAGS: "-O2 -DVERSION=\"${VERSION}\""
+    input:
+      - "src/*.txt"  # Demo input files
+    output:
+      - "${BUILD_DIR}/${PROJECT_NAME}"
+    action: |
+      echo "Building $PROJECT_NAME with flags: $COMPILER_FLAGS"
+      echo "Output will be: $BUILD_OUTPUT"
+      # Simulate build process
+      echo "#!/bin/bash" > "$BUILD_OUTPUT"
+      echo "echo 'Hello from $FULL_VERSION built at $BUILD_TIME'" >> "$BUILD_OUTPUT"
+      chmod +x "$BUILD_OUTPUT"
+      echo "Build complete: $BUILD_OUTPUT"
+
+  test:
+    help: "Test the application"
+    before: ["build"]
+    envs:
+      TEST_ENV: "testing"
+      TEST_OUTPUT: "${BUILD_DIR}/test-results.log"
+    action: |
+      echo "Testing in $TEST_ENV environment"
+      echo "Running: ${BUILD_DIR}/${PROJECT_NAME}"
+      "${BUILD_DIR}/${PROJECT_NAME}" > "$TEST_OUTPUT"
+      echo "Test results saved to: $TEST_OUTPUT"
+      cat "$TEST_OUTPUT"
+
+  package:
+    help: "Package the application"
+    before: ["test"]
+    envs:
+      PACKAGE_PATH: "${DIST_DIR}/${PACKAGE_NAME}"
+    input:
+      - "${BUILD_DIR}/${PROJECT_NAME}"
+      - "${BUILD_DIR}/test-results.log"
+    output:
+      - "${DIST_DIR}/${PACKAGE_NAME}"
+    action: |
+      echo "Creating package: $PACKAGE_NAME"
+      tar -czf "$PACKAGE_PATH" -C "$BUILD_DIR" .
+      echo "Package created: $PACKAGE_PATH"
+      echo "Package contents:"
+      tar -tzf "$PACKAGE_PATH"
+
+  deploy:
+    help: "Deploy the package"
+    before: ["package"]
+    envs:
+      DEPLOY_TARGET: "${USER_HOME}/deployed-apps"
+      DEPLOY_PATH: "${DEPLOY_TARGET}/${PACKAGE_NAME}"
+    action: |
+      echo "Deploying to: $DEPLOY_TARGET"
+      mkdir -p "$DEPLOY_TARGET"
+      cp "${DIST_DIR}/${PACKAGE_NAME}" "$DEPLOY_PATH"
+      echo "Deployed: $DEPLOY_PATH"
+      echo "Available versions in deploy target:"
+      ls -la "$DEPLOY_TARGET"
+
+  clean:
+    help: "Clean build artifacts"
+    envs:
+      CLEAN_DIRS: "${BUILD_DIR} ${DIST_DIR}"
+    action: |
+      echo "Cleaning directories: $CLEAN_DIRS"
+      rm -rf $CLEAN_DIRS
+      echo "Clean complete"
+
+  demo:
+    help: "Run complete demo workflow"
+    before: ["deploy"]
+    action: |
+      echo "=== Demo Complete ==="
+      echo "Built and deployed: $FULL_VERSION"
+      echo "Package available at: ${USER_HOME}/deployed-apps" 
