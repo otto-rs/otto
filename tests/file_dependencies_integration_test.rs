@@ -3,7 +3,6 @@ use std::time::Duration;
 use tempfile::TempDir;
 use tokio::time::timeout;
 use eyre::Result;
-use std::path::Path;
 
 use otto::cfg::config::ConfigSpec;
 use otto::cfg::task::TaskSpec;
@@ -185,12 +184,12 @@ tasks:
     help: "Package application and test results"
 "#;
 
-    let config: ConfigSpec = serde_yaml::from_str(yaml_content)?;
+    let config_spec: ConfigSpec = serde_yaml::from_str(yaml_content)?;
 
     // Convert tasks to TaskSpecs
     let mut task_specs = Vec::new();
-    for (_, task) in &config.tasks {
-        let spec = Task::from_task_with_cwd(task, temp_path);
+    for (_, task_spec) in &config_spec.tasks {
+        let spec = Task::from_task_with_cwd(task_spec, temp_path);
         task_specs.push(spec);
     }
 

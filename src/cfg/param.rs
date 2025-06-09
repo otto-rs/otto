@@ -230,18 +230,22 @@ where
             M: MapAccess<'de>,
         {
             let mut params = ParamSpecs::new();
-            while let Some((title, mut param)) = map.next_entry::<String, ParamSpec>()? {
-                (param.name, param.short, param.long) = divine(&title);
-                if param.long.is_some() || param.short.is_some() {
-                    if let Some(ref value) = param.default {
+            while let Some((title, mut param_spec)) = map.next_entry::<String, ParamSpec>()? {
+                let (name, short, long) = divine(&title);
+                param_spec.name = name.clone();
+                param_spec.short = short;
+                param_spec.long = long;
+
+                if param_spec.long.is_some() || param_spec.short.is_some() {
+                    if let Some(ref value) = param_spec.default {
                         if value == "true" || value == "false" {
-                            param.param_type = ParamType::FLG;
+                            param_spec.param_type = ParamType::FLG;
                         }
                     }
                 } else {
-                    param.param_type = ParamType::POS;
+                    param_spec.param_type = ParamType::POS;
                 }
-                params.insert(title.clone(), param);
+                params.insert(name, param_spec);
             }
             Ok(params)
         }

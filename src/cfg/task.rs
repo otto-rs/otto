@@ -135,9 +135,9 @@ where
             M: MapAccess<'de>,
         {
             let mut tasks = TaskSpecs::new();
-            while let Some((name, mut task)) = map.next_entry::<String, TaskSpec>()? {
-                task.name = namify(&name);
-                tasks.insert(name.clone(), task);
+            while let Some((name, mut task_spec)) = map.next_entry::<String, TaskSpec>()? {
+                task_spec.name = namify(&name);
+                tasks.insert(name.clone(), task_spec);
             }
             Ok(tasks)
         }

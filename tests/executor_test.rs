@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use otto::executor::{
     Task, TaskStatus,
-    TaskScheduler, TaskType, Workspace,
+    TaskScheduler, Workspace,
     workspace::ExecutionContext,
 };
 
