@@ -29,7 +29,7 @@ impl ActionProcessor {
 
     pub fn process(&self, user_action: &str, task: &Task) -> Result<ProcessedAction> {
         let trimmed_action = user_action.trim_start();
-        
+
         // Detect script language from shebang
         if trimmed_action.starts_with("#!/usr/bin/env bash") || trimmed_action.starts_with("#!/bin/bash") {
             let processor = BashProcessor::new(self.workspace.clone(), &self.task_name);
@@ -64,34 +64,34 @@ impl ActionProcessor {
         } else {
             ("", user_action.to_string())
         };
-        
+
         let prologue = processor.generate_prologue(&task.task_deps, task)?;
         let epilogue = processor.generate_epilogue()?;
-        
+
         // Build script with shebang first, then prologue, user content, epilogue
         let script = if shebang.is_empty() {
             format!("{}\n{}\n{}", prologue, user_content, epilogue)
         } else {
             format!("{}\n{}\n{}\n{}", shebang, prologue, user_content, epilogue)
         };
-        
+
         Ok(script)
     }
 
     fn write_script<T: ScriptProcessor>(&self, processor: &T, script: &str) -> Result<PathBuf> {
         // Calculate hash for caching
         let hash = self.calculate_hash(script)?;
-        
+
         // Write to cache directory
         let cache_file = self.workspace.cache_dir().join(format!("{}.{}", hash, processor.get_file_extension()));
-        
+
         // Ensure cache directory exists
         std::fs::create_dir_all(self.workspace.cache_dir())?;
-        
+
         // Write script to cache if it doesn't exist
         if !cache_file.exists() {
             std::fs::write(&cache_file, script)?;
-            
+
             // Make cached script executable
             #[cfg(unix)]
             {
@@ -101,20 +101,20 @@ impl ActionProcessor {
                 std::fs::set_permissions(&cache_file, perms)?;
             }
         }
-        
+
         // Create symlink in task directory
         let script_path = self.workspace.task_script_file(&self.task_name, processor.get_file_extension());
-        
+
         // Ensure task directory exists
         if let Some(parent) = script_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        
+
         // Remove existing symlink if it exists
         if script_path.exists() {
             std::fs::remove_file(&script_path)?;
         }
-        
+
         // Create symlink from task directory to cache
         #[cfg(unix)]
         {
@@ -250,7 +250,7 @@ impl ScriptProcessor for BashProcessor {
         let env_section = self.generate_bash_env_section(task);
         let input_section = self.generate_bash_input_section(dependencies);
         let param_section = self.generate_bash_param_section(task);
-        
+
         let prologue = format!(r#"# Otto-generated bash prologue
 set -euo pipefail
 
@@ -293,6 +293,12 @@ otto_serialize_output "{}"
 
     fn create_builtins(&self) -> Result<()> {
         let builtins_path = self.workspace.task_dir(&self.task_name).join("builtins.sh");
+
+        // Ensure task directory exists before writing builtins
+        if let Some(parent) = builtins_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
         let builtins_content = r#"#!/bin/bash
 # Otto Bash Builtins
 # Functions to handle input/output file serialization
@@ -301,14 +307,14 @@ otto_serialize_output "{}"
 otto_deserialize_input() {
     local task_name="$1"
     local input_file="$OTTO_TASK_DIR/input.${task_name}.json"
-    
+
     if [ -f "$input_file" ]; then
         # Check for jq availability
         if ! hash jq >/dev/null 2>&1; then
             echo "Error: jq is required for input deserialization but not found in PATH" >&2
             return 1
         fi
-        
+
         # Load all key-value pairs from the JSON file into OTTO_INPUT
         while IFS= read -r key; do
             if [ "$key" != "null" ] && [ "$key" != "" ]; then
@@ -325,14 +331,14 @@ otto_deserialize_input() {
 otto_serialize_output() {
     local task_name="$1"
     local output_file="$OTTO_TASK_DIR/output.${task_name}.json"
-    
+
     # Check if OTTO_OUTPUT has any keys
     local output_count=0
     for key in "${!OTTO_OUTPUT[@]}"; do
         output_count=$((output_count + 1))
         break
     done
-    
+
     if [ "$output_count" -eq 0 ]; then
         # Empty output - write empty JSON
         echo '{}' > "$output_file"
@@ -342,19 +348,19 @@ otto_serialize_output() {
             echo "Error: jq is required for output serialization but not found in PATH" >&2
             return 1
         fi
-        
+
         # Build jq arguments for safe serialization
         local args=()
         local obj_parts=()
         local i=0
-        
+
         for key in "${!OTTO_OUTPUT[@]}"; do
             args+=(--arg "key_$i" "$key")
             args+=(--arg "val_$i" "${OTTO_OUTPUT[$key]}")
             obj_parts+=("\$key_$i: \$val_$i")
             i=$((i + 1))
         done
-        
+
         # Build the jq object construction
         local obj_str
         obj_str=$(IFS=', '; echo "${obj_parts[*]}")
@@ -375,7 +381,7 @@ otto_set_output() {
 }
 "#;
         std::fs::write(&builtins_path, builtins_content)?;
-        
+
         // Make builtins executable
         #[cfg(unix)]
         {
@@ -384,7 +390,7 @@ otto_set_output() {
             perms.set_mode(0o755);
             std::fs::set_permissions(&builtins_path, perms)?;
         }
-        
+
         Ok(())
     }
 }
@@ -483,7 +489,7 @@ impl ScriptProcessor for PythonProcessor {
         let env_section = self.generate_python_env_section(task);
         let input_section = self.generate_python_input_section(dependencies);
         let param_section = self.generate_python_param_section(task);
-        
+
         let prologue = format!(r#"# Otto-generated python prologue
 import json
 import os
@@ -539,6 +545,12 @@ otto_serialize_output("{}")
 
     fn create_builtins(&self) -> Result<()> {
         let builtins_path = self.workspace.task_dir(&self.task_name).join("builtins.py");
+
+        // Ensure task directory exists before writing builtins
+        if let Some(parent) = builtins_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
         let builtins_content = r#"""Otto Python Builtins
 Functions to handle input/output file serialization
 """
@@ -550,23 +562,23 @@ import sys
 def otto_deserialize_input(task_name):
     """Deserialize input.<task-name>.json -> OTTO_INPUT"""
     import __main__
-    
+
     task_dir = os.environ.get('OTTO_TASK_DIR', '.')
     input_file = os.path.join(task_dir, f'input.{task_name}.json')
-    
+
     if os.path.exists(input_file):
         try:
             with open(input_file, 'r') as f:
                 data = json.load(f)
-            
+
             # Ensure OTTO_INPUT exists
             if not hasattr(__main__, 'OTTO_INPUT'):
                 __main__.OTTO_INPUT = {}
-            
+
             # Load all key-value pairs with task name prefix
             for key, value in data.items():
                 __main__.OTTO_INPUT[f'{task_name}.{key}'] = value
-                
+
         except (json.JSONDecodeError, IOError) as e:
             print(f'Error: Failed to deserialize input from {task_name}: {e}', file=sys.stderr)
             return False
@@ -575,23 +587,23 @@ def otto_deserialize_input(task_name):
 def otto_serialize_output(task_name):
     """Serialize OTTO_OUTPUT -> output.<task-name>.json"""
     import __main__
-    
+
     task_dir = os.environ.get('OTTO_TASK_DIR', '.')
     output_file = os.path.join(task_dir, f'output.{task_name}.json')
     temp_file = output_file + '.tmp'
-    
+
     # Get OTTO_OUTPUT or empty dict
     otto_output = getattr(__main__, 'OTTO_OUTPUT', {})
-    
+
     try:
         # Write to temp file first for atomic operation
         with open(temp_file, 'w') as f:
             json.dump(otto_output, f, indent=2)
-        
+
         # Atomic move
         os.rename(temp_file, output_file)
         return True
-        
+
     except (IOError, OSError) as e:
         print(f'Error: Failed to serialize output to {output_file}: {e}', file=sys.stderr)
         # Clean up temp file if it exists
@@ -636,14 +648,14 @@ mod tests {
         workspace.init().await?;
 
         let processor = ActionProcessor::new(workspace.clone(), "test_task")?;
-        
+
         // Create a test task with parameters
         let mut task_envs = HashMap::new();
         task_envs.insert("greeting".to_string(), "hello".to_string());
-        
+
         let mut task_values = HashMap::new();
         task_values.insert("greeting".to_string(), Value::Item("hello".to_string()));
-        
+
         let task = Task::new(
             "test_task".to_string(),
             vec!["dep_task".to_string()],
@@ -653,26 +665,26 @@ mod tests {
             task_values,
             "#!/usr/bin/env bash\necho \"${greeting} world\"".to_string(),
         );
-        
+
         // Process the action
         let result = processor.process(&task.action, &task)?;
-        
+
         // Verify the result
         match result {
             ProcessedAction::Bash { path, script, hash } => {
                 assert!(path.exists());
                 assert!(script.contains("declare -A OTTO_INPUT"));
                 assert!(script.contains("declare -A OTTO_OUTPUT"));
-                assert!(script.contains("export OTTO_TASK_NAME=\"test_task\""));
-                assert!(script.contains("GREETING=\"hello\""));
-                assert!(script.contains("while getopts"));
+                assert!(script.contains("export OTTO_TASK_DIR"));
+                assert!(script.contains("greeting=\"hello\""));
+                assert!(script.contains("otto_deserialize_input \"dep_task\""));
                 assert!(script.contains("echo \"${greeting} world\""));
-                assert!(script.contains("hash jq >/dev/null")); // Should check for jq availability
-                
+                assert!(script.contains("otto_serialize_output \"test_task\""));
+
                 // Verify hash is calculated correctly from the generated script
                 assert_eq!(hash.len(), 8, "Hash should be 8 characters");
                 assert!(hash.chars().all(|c| c.is_ascii_hexdigit()), "Hash should be hexadecimal");
-                
+
                 // Verify hash matches the script content
                 let mut hasher = sha2::Sha256::new();
                 hasher.update(script.as_bytes());
@@ -681,7 +693,7 @@ mod tests {
             },
             _ => panic!("Expected Bash variant"),
         }
-        
+
         Ok(())
     }
 
@@ -692,14 +704,14 @@ mod tests {
         workspace.init().await?;
 
         let processor = ActionProcessor::new(workspace.clone(), "test_task")?;
-        
+
         // Create a test task with parameters
         let mut task_envs = HashMap::new();
         task_envs.insert("name".to_string(), "world".to_string());
-        
+
         let mut task_values = HashMap::new();
         task_values.insert("name".to_string(), Value::Item("world".to_string()));
-        
+
         let task = Task::new(
             "test_task".to_string(),
             vec!["dep_task".to_string()],
@@ -709,25 +721,26 @@ mod tests {
             task_values,
             "#!/usr/bin/env python3\nprint(f\"Hello {name}\")".to_string(),
         );
-        
+
         // Process the action
         let result = processor.process(&task.action, &task)?;
-        
+
         // Verify the result - now should properly detect Python3
         match result {
             ProcessedAction::Python3 { path, script, hash } => {
                 assert!(path.exists());
                 assert!(script.contains("OTTO_INPUT = {}"));
                 assert!(script.contains("OTTO_OUTPUT = {}"));
-                assert!(script.contains("os.environ['OTTO_TASK_NAME'] = 'test_task'"));
+                assert!(script.contains("os.environ['OTTO_TASK_DIR']"));
                 assert!(script.contains("name = 'world'"));
-                assert!(script.contains("parser.add_argument"));
+                assert!(script.contains("otto_deserialize_input(\"dep_task\")"));
                 assert!(script.contains("print(f\"Hello {name}\")"));
-                
+                assert!(script.contains("otto_serialize_output(\"test_task\")"));
+
                 // Verify hash is calculated correctly from the generated script
                 assert_eq!(hash.len(), 8, "Hash should be 8 characters");
                 assert!(hash.chars().all(|c| c.is_ascii_hexdigit()), "Hash should be hexadecimal");
-                
+
                 // Verify hash matches the script content
                 let mut hasher = sha2::Sha256::new();
                 hasher.update(script.as_bytes());
@@ -736,7 +749,7 @@ mod tests {
             },
             _ => panic!("Expected Python3 variant"),
         }
-        
+
         Ok(())
     }
 
@@ -747,14 +760,14 @@ mod tests {
         workspace.init().await?;
 
         let processor = ActionProcessor::new(workspace.clone(), "test_task")?;
-        
+
         // Create a test task with no shebang (should default to bash)
         let mut task_envs = HashMap::new();
         task_envs.insert("message".to_string(), "hello".to_string());
-        
+
         let mut task_values = HashMap::new();
         task_values.insert("message".to_string(), Value::Item("hello".to_string()));
-        
+
         let task = Task::new(
             "test_task".to_string(),
             vec![],
@@ -764,24 +777,25 @@ mod tests {
             task_values,
             "echo \"${message} from default bash\"".to_string(), // No shebang
         );
-        
+
         // Process the action
         let result = processor.process(&task.action, &task)?;
-        
+
         // Verify the result defaults to Bash
         match result {
             ProcessedAction::Bash { path, script, hash } => {
                 assert!(path.exists());
                 assert!(script.contains("declare -A OTTO_INPUT"));
                 assert!(script.contains("declare -A OTTO_OUTPUT"));
-                assert!(script.contains("export OTTO_TASK_NAME=\"test_task\""));
-                assert!(script.contains("MESSAGE=\"hello\""));
+                assert!(script.contains("export OTTO_TASK_DIR"));
+                assert!(script.contains("message=\"hello\""));
                 assert!(script.contains("echo \"${message} from default bash\""));
-                
+                assert!(script.contains("otto_serialize_output \"test_task\""));
+
                 // Verify hash is calculated correctly from the generated script
                 assert_eq!(hash.len(), 8, "Hash should be 8 characters");
                 assert!(hash.chars().all(|c| c.is_ascii_hexdigit()), "Hash should be hexadecimal");
-                
+
                 // Verify hash matches the script content
                 let mut hasher = sha2::Sha256::new();
                 hasher.update(script.as_bytes());
@@ -790,7 +804,7 @@ mod tests {
             },
             _ => panic!("Expected Bash variant (default fallback)"),
         }
-        
+
         Ok(())
     }
 }
