@@ -79,23 +79,52 @@ impl ActionProcessor {
     }
 
     fn write_script<T: ScriptProcessor>(&self, processor: &T, script: &str) -> Result<PathBuf> {
+        // Calculate hash for caching
+        let hash = self.calculate_hash(script)?;
+        
+        // Write to cache directory
+        let cache_file = self.workspace.cache_dir().join(format!("{}.{}", hash, processor.get_file_extension()));
+        
+        // Ensure cache directory exists
+        std::fs::create_dir_all(self.workspace.cache_dir())?;
+        
+        // Write script to cache if it doesn't exist
+        if !cache_file.exists() {
+            std::fs::write(&cache_file, script)?;
+            
+            // Make cached script executable
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = std::fs::metadata(&cache_file)?.permissions();
+                perms.set_mode(0o755);
+                std::fs::set_permissions(&cache_file, perms)?;
+            }
+        }
+        
+        // Create symlink in task directory
         let script_path = self.workspace.task_script_file(&self.task_name, processor.get_file_extension());
-
-        // Ensure parent directory exists
+        
+        // Ensure task directory exists
         if let Some(parent) = script_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-
-        // Write script to file
-        std::fs::write(&script_path, script)?;
-
-        // Make script executable
+        
+        // Remove existing symlink if it exists
+        if script_path.exists() {
+            std::fs::remove_file(&script_path)?;
+        }
+        
+        // Create symlink from task directory to cache
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(&script_path)?.permissions();
-            perms.set_mode(0o755);
-            std::fs::set_permissions(&script_path, perms)?;
+            use std::os::unix::fs;
+            fs::symlink(&cache_file, &script_path)?;
+        }
+        #[cfg(not(unix))]
+        {
+            // Fallback: copy file on non-Unix systems
+            std::fs::copy(&cache_file, &script_path)?;
         }
 
         Ok(script_path)
@@ -271,7 +300,7 @@ otto_serialize_output "{}"
 # Function to deserialize input.<task-name>.json -> OTTO_INPUT
 otto_deserialize_input() {
     local task_name="$1"
-    local input_file="$OTTO_TASK_DIR/inputs/${task_name}.input.json"
+    local input_file="$OTTO_TASK_DIR/input.${task_name}.json"
     
     if [ -f "$input_file" ]; then
         # Check for jq availability
@@ -295,11 +324,7 @@ otto_deserialize_input() {
 # Function to serialize OTTO_OUTPUT -> output.<task-name>.json
 otto_serialize_output() {
     local task_name="$1"
-    local output_dir="$OTTO_TASK_DIR/outputs"
-    local output_file="$output_dir/${task_name}.output.json"
-    
-    # Create outputs directory if it doesn't exist
-    mkdir -p "$output_dir"
+    local output_file="$OTTO_TASK_DIR/output.${task_name}.json"
     
     # Check if OTTO_OUTPUT has any keys
     local output_count=0
@@ -527,7 +552,7 @@ def otto_deserialize_input(task_name):
     import __main__
     
     task_dir = os.environ.get('OTTO_TASK_DIR', '.')
-    input_file = os.path.join(task_dir, 'inputs', f'{task_name}.input.json')
+    input_file = os.path.join(task_dir, f'input.{task_name}.json')
     
     if os.path.exists(input_file):
         try:
@@ -552,12 +577,8 @@ def otto_serialize_output(task_name):
     import __main__
     
     task_dir = os.environ.get('OTTO_TASK_DIR', '.')
-    output_dir = os.path.join(task_dir, 'outputs')
-    output_file = os.path.join(output_dir, f'{task_name}.output.json')
+    output_file = os.path.join(task_dir, f'output.{task_name}.json')
     temp_file = output_file + '.tmp'
-    
-    # Create outputs directory if it doesn't exist
-    os.makedirs(output_dir, exist_ok=True)
     
     # Get OTTO_OUTPUT or empty dict
     otto_output = getattr(__main__, 'OTTO_OUTPUT', {})

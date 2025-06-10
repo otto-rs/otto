@@ -1,5 +1,109 @@
 ---
-description:
-globs:
+description: 
+globs: 
 alwaysApply: false
 ---
+# Otto Development Patterns and Guidelines
+
+This guide covers the development patterns, testing strategies, and code organization principles used in Otto.
+
+## Code Organization Principles
+
+### Module Structure
+- **Configuration** ([src/cfg/](mdc:src/cfg)): Type-safe YAML parsing with serde
+- **CLI** ([src/cli/](mdc:src/cli)): Complex argument parsing with clap
+- **Execution** ([src/executor/](mdc:src/executor)): Async task scheduling and execution
+- **Utilities** ([src/utils.rs](mdc:src/utils.rs)): Shared helper functions
+
+### Key Design Patterns
+
+#### Error Handling
+- Uses `eyre` crate for structured error reporting
+- Consistent `Result<T>` return types throughout
+- Error context propagation with `.map_err()` and `eyre!()` macros
+
+#### Async/Await
+- Modern Rust async patterns throughout the executor
+- Tokio runtime for concurrent execution
+- Structured concurrency with semaphores and channels
+
+#### Type Safety
+- Extensive use of serde for configuration deserialization
+- Strong typing for task specifications and parameters
+- Builder patterns for complex data structures
+
+## Testing Strategy
+
+### Unit Tests
+- Embedded tests in source files (e.g., [src/executor/scheduler.rs](mdc:src/executor/scheduler.rs))
+- Focus on individual component functionality
+- Mock objects and fixtures for isolation
+
+### Integration Tests
+- **File Dependencies**: [tests/file_dependencies_integration_test.rs](mdc:tests/file_dependencies_integration_test.rs) (29KB of comprehensive tests)
+- **Executor**: [tests/executor_test.rs](mdc:tests/executor_test.rs) (6KB of execution tests)
+- End-to-end workflows with real file systems
+
+### Test Utilities
+- **TestFixture** pattern for test setup/teardown
+- Temporary directory management with `tempfile` crate
+- Helper methods for common test scenarios
+
+## Naming Conventions
+
+### Variable Naming Pattern
+Otto follows a specific naming pattern where intermediate variables for custom types get suffixes reflecting their type:
+- `task_spec` for `TaskSpec` instances
+- `config_spec` for `ConfigSpec` instances  
+- `otto_spec` for `OttoSpec` instances
+- `param_spec` for `ParamSpec` instances
+
+This pattern improves code readability and distinguishes custom domain types from external library types.
+
+### File Organization
+- Configuration types end with `Spec` (e.g., `TaskSpec`, `ConfigSpec`)
+- Runtime types are plain names (e.g., `Task`, `Scheduler`)
+- Test files use descriptive names with `_test.rs` suffix
+
+## Development Workflow
+
+### Building and Testing
+```bash
+cargo build                    # Build project
+cargo test                     # Run all tests
+cargo test --lib              # Unit tests only
+cargo test --test <name>       # Specific integration test
+```
+
+### Example Testing
+```bash
+cargo run -- -o examples/ex1 --help           # Show help for example
+cargo run -- -o examples/ex1 punch            # Run simple task
+cargo run -- -o examples/ex1 hello -g howdy   # Task with parameters
+```
+
+### Code Quality
+- Uses `rustfmt` for consistent formatting ([.rustfmt.toml](mdc:.rustfmt.toml))
+- Comprehensive documentation with doc comments
+- Warning-free builds (unused variables prefixed with `_`)
+
+## Architecture Guidelines
+
+### Separation of Concerns
+1. **Config parsing** is isolated in `cfg` module
+2. **CLI handling** is separate from business logic  
+3. **Execution engine** operates on parsed data structures
+4. **Workspace management** is abstracted from execution
+
+### Async Best Practices
+- Use structured concurrency with proper cleanup
+- Prefer channels over shared state
+- Timeout handling for all async operations
+- Graceful error propagation in async contexts
+
+### File Handling
+- Always use canonical paths for consistency
+- Handle missing files gracefully
+- Support glob patterns throughout
+- Proper error handling for filesystem operations
+

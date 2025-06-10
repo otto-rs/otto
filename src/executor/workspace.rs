@@ -290,12 +290,12 @@ impl Workspace {
 
     /// Get task output file path
     pub fn task_output_file(&self, task_name: &str) -> PathBuf {
-        self.task_output_dir(task_name).join(format!("{}.output.json", task_name))
+        self.task(task_name).join(format!("output.{}.json", task_name))
     }
 
     /// Get task input file path for a specific dependency
     pub fn task_input_file(&self, task_name: &str, dep_name: &str) -> PathBuf {
-        self.task_input_dir(task_name).join(format!("{}.input.json", dep_name))
+        self.task(task_name).join(format!("input.{}.json", dep_name))
     }
 
     /// Get task script file path with extension
@@ -321,6 +321,11 @@ impl Workspace {
     /// Get path for python builtin functions  
     pub fn python_builtins(&self) -> PathBuf {
         self.project.join("builtins.py")
+    }
+
+    /// Get the cache directory for this workspace
+    pub fn cache_dir(&self) -> &PathBuf {
+        &self.cache
     }
 }
 

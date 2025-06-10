@@ -314,11 +314,6 @@ impl TaskScheduler {
                 
                 // Only create symlink if dependency output exists
                 if dep_output_file.exists() {
-                    // Ensure the inputs directory exists
-                    if let Some(parent) = current_input_file.parent() {
-                        tokio::fs::create_dir_all(parent).await?;
-                    }
-                    
                     // Remove existing symlink/file if it exists
                     if current_input_file.exists() {
                         tokio::fs::remove_file(&current_input_file).await.ok();
