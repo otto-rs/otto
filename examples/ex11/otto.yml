@@ -1,0 +1,70 @@
+otto:
+  name: "Data Flow Demo"
+  api: 1
+  jobs: 2
+  about: "Demonstrates task data flow and environment variables"
+  envs:
+    # Global environment variables
+    APP_NAME: "timestamp-demo"
+    LOG_LEVEL: "INFO"
+
+tasks:
+  generate:
+    help: "Generate a timestamp and output it"
+    envs:
+      # Task-specific environment variables
+      GENERATOR_MODE: "production"
+      OUTPUT_FORMAT: "digits"
+    action: |
+      # Generate timestamp (all digits format: YYYYMMDDHHMMSS)
+      timestamp=$(date +%Y%m%d%H%M%S)
+      
+      echo "[$APP_NAME] Generating timestamp in $GENERATOR_MODE mode"
+      echo "Timestamp created: $timestamp"
+      echo "Format: $OUTPUT_FORMAT"
+      echo "Log level: $LOG_LEVEL"
+      
+      # Set the timestamp in Otto output for the next task
+      otto_set_output "timestamp" "$timestamp"
+      otto_set_output "format" "$OUTPUT_FORMAT"
+      otto_set_output "app" "$APP_NAME"
+
+  consume:
+    help: "Consume the timestamp from the generate task"
+    before: ["generate"]
+    envs:
+      # Different task-specific environment variables
+      CONSUMER_MODE: "validate"
+      TIMEZONE: "UTC"
+    action: |
+      # Get the timestamp from the previous task
+      received_timestamp=$(otto_get_input "generate.timestamp")
+      received_format=$(otto_get_input "generate.format")
+      received_app=$(otto_get_input "generate.app")
+      
+      echo "[$received_app] Consuming timestamp in $CONSUMER_MODE mode"
+      echo "Received timestamp: $received_timestamp"
+      echo "Received format: $received_format"
+      echo "Processing in timezone: $TIMEZONE"
+      echo "Log level: $LOG_LEVEL"
+      
+      # Parse the timestamp for validation
+      if [[ ${#received_timestamp} -eq 14 ]]; then
+        year=${received_timestamp:0:4}
+        month=${received_timestamp:4:2}
+        day=${received_timestamp:6:2}
+        hour=${received_timestamp:8:2}
+        minute=${received_timestamp:10:2}
+        second=${received_timestamp:12:2}
+        
+        echo "Parsed timestamp: $year-$month-$day $hour:$minute:$second $TIMEZONE"
+        echo "Validation: PASSED"
+        
+        # Output validation results
+        otto_set_output "validation_status" "PASSED"
+        otto_set_output "parsed_date" "$year-$month-$day"
+        otto_set_output "parsed_time" "$hour:$minute:$second"
+      else
+        echo "Validation: FAILED - Invalid timestamp format"
+        otto_set_output "validation_status" "FAILED"
+      fi 

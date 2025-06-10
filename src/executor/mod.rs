@@ -1,9 +1,11 @@
+pub mod action;
 pub mod scheduler;
 pub mod workspace;
 pub mod output;
 pub mod visualizer;
 pub mod graph;
 
+pub use action::{ActionProcessor, ProcessedAction, ScriptProcessor, BashProcessor, PythonProcessor};
 pub use output::TaskStreams;
 pub use scheduler::{TaskScheduler, TaskStatus, TaskType};
 pub use visualizer::OutputVisualizer;

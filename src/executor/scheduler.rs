@@ -2,7 +2,6 @@ use std::{
     collections::HashMap,
     sync::Arc,
     time::Duration,
-    os::unix::fs::PermissionsExt,
     path::Path,
 };
 
@@ -20,6 +19,7 @@ use crate::cli::parse::Task;
 use super::{
     workspace::{Workspace, ExecutionContext},
     output::{TaskStreams, OutputType},
+    action::{ActionProcessor, ProcessedAction},
 };
 
 /// Status of a task during execution
@@ -273,8 +273,6 @@ impl TaskScheduler {
         let task_statuses = self.task_statuses.clone();
         let task_deps = task.task_deps.clone();
         let workspace = self.workspace.clone();
-        let script_content = task.action.clone();
-        let script_hash = task.hash.clone();
         let envs = task.envs.clone();
         let tasks_dir = self.workspace.run().join("tasks");
         let execution_context = self.execution_context.clone();
@@ -306,20 +304,52 @@ impl TaskScheduler {
 
             info!("Starting task {}", task_name);
 
-            // Create task directory
+            // Create task directory only (no subdirectories)
             tokio::fs::create_dir_all(&task_dir).await?;
 
-            // Create script file
-            let script_path = task_dir.join(format!("{}.sh", script_hash));
-            tokio::fs::write(&script_path, &script_content).await?;
+            // Setup dependency input files (symlink outputs from dependencies)
+            for dep_name in &task_deps {
+                let dep_output_file = workspace.task_output_file(dep_name);
+                let current_input_file = workspace.task_input_file(&task_name, dep_name);
+                
+                // Only create symlink if dependency output exists
+                if dep_output_file.exists() {
+                    // Ensure the inputs directory exists
+                    if let Some(parent) = current_input_file.parent() {
+                        tokio::fs::create_dir_all(parent).await?;
+                    }
+                    
+                    // Remove existing symlink/file if it exists
+                    if current_input_file.exists() {
+                        tokio::fs::remove_file(&current_input_file).await.ok();
+                    }
+                    
+                    // Create symlink from dependency output to current task input
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs;
+                        fs::symlink(&dep_output_file, &current_input_file)?;
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        // Fallback: copy file on non-Unix systems
+                        tokio::fs::copy(&dep_output_file, &current_input_file).await?;
+                    }
+                }
+            }
 
-            // Make script executable
-            let mut perms = tokio::fs::metadata(&script_path).await?.permissions();
-            perms.set_mode(0o755);
-            tokio::fs::set_permissions(&script_path, perms).await?;
+            // Process the user's action script with Otto enhancements
+            let action_processor = ActionProcessor::new(workspace.clone(), &task_name)?;
+            let processed_action = action_processor.process(&task.action, &task)?;
+
+            // Extract script path and determine interpreter
+            let (script_path, interpreter) = match processed_action {
+                ProcessedAction::Bash { path, .. } => (path, "bash"),
+                ProcessedAction::Python3 { path, .. } => (path, "python3"),
+            };
 
             // Setup command environment
-            let mut cmd = Command::new("bash");
+            let mut cmd = Command::new(interpreter);
             cmd.arg(&script_path)
                .current_dir(workspace.root())
                .env_clear()

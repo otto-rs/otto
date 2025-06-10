@@ -270,6 +270,58 @@ impl Workspace {
 
         Ok(())
     }
+
+    // === NEW METHODS FOR ACTION PROCESSING ===
+
+    /// Get task directory path (alias for existing task() method)
+    pub fn task_dir(&self, task_name: &str) -> PathBuf {
+        self.task(task_name)
+    }
+
+    /// Get task input directory path
+    pub fn task_input_dir(&self, task_name: &str) -> PathBuf {
+        self.task(task_name).join("inputs")
+    }
+
+    /// Get task output directory path
+    pub fn task_output_dir(&self, task_name: &str) -> PathBuf {
+        self.task(task_name).join("outputs")
+    }
+
+    /// Get task output file path
+    pub fn task_output_file(&self, task_name: &str) -> PathBuf {
+        self.task_output_dir(task_name).join(format!("{}.output.json", task_name))
+    }
+
+    /// Get task input file path for a specific dependency
+    pub fn task_input_file(&self, task_name: &str, dep_name: &str) -> PathBuf {
+        self.task_input_dir(task_name).join(format!("{}.input.json", dep_name))
+    }
+
+    /// Get task script file path with extension
+    pub fn task_script_file(&self, task_name: &str, extension: &str) -> PathBuf {
+        self.task(task_name).join(format!("script.{}", extension))
+    }
+
+    /// Get the current run directory
+    pub fn current_run_dir(&self) -> &PathBuf {
+        &self.run
+    }
+
+    /// Get the project root directory (alias for root())
+    pub fn project_root(&self) -> &PathBuf {
+        &self.root
+    }
+
+    /// Get path for bash builtin functions
+    pub fn bash_builtins(&self) -> PathBuf {
+        self.project.join("builtins.sh")
+    }
+
+    /// Get path for python builtin functions  
+    pub fn python_builtins(&self) -> PathBuf {
+        self.project.join("builtins.py")
+    }
 }
 
 #[cfg(test)]
