@@ -4,35 +4,45 @@ use std::env;
 use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::path::PathBuf;
 
-use thiserror::Error;
+use eyre::{eyre, Result, Report};
 
-#[derive(Error, Debug)]
-pub enum OttofileError {
-    #[error("env var error: {0}")]
-    HomeUndefined(#[from] env::VarError),
-    #[error("canonicalize error")]
-    CanoncalizeError(#[from] std::io::Error),
-    #[error("divinie error; unable to find ottofile from path=[{0}]")]
-    DivineError(PathBuf),
-    #[error("relative path error")]
-    RelativePathError,
-    #[error("current exe filename error")]
-    CurrentExeFilenameError,
-    #[error("unknown error")]
-    Unknown,
+// Since these error types aren't used elsewhere in the codebase,
+// we can simplify this to just use eyre::Report directly.
+// If specific error types are needed later, they can be added back.
+
+pub type OttoResult<T> = Result<T, Report>;
+
+// Helper functions for creating specific Otto errors
+pub fn home_undefined_error(source: env::VarError) -> Report {
+    eyre!("env var error: {}", source)
 }
 
-#[derive(Error, Debug)]
-pub enum OttoParseError {
-    #[error("config error")]
-    ConfigError(#[from] crate::cfg::error::ConfigError),
-    #[error("Clap parse error")]
-    ClapError(#[from] clap::Error),
-    #[error("unknown error")]
-    Unknown,
+pub fn canonicalize_error(source: std::io::Error) -> Report {
+    eyre!("canonicalize error: {}", source)
 }
 
-#[derive(Error, Debug)]
+pub fn divine_error(path: PathBuf) -> Report {
+    eyre!("divine error; unable to find ottofile from path=[{}]", path.display())
+}
+
+pub fn relative_path_error() -> Report {
+    eyre!("relative path error")
+}
+
+pub fn current_exe_filename_error() -> Report {
+    eyre!("current exe filename error")
+}
+
+pub fn config_error(source: Report) -> Report {
+    eyre!("config error: {}", source)
+}
+
+pub fn clap_error(source: clap::Error) -> Report {
+    eyre!("Clap parse error: {}", source)
+}
+
+// Keep SilentError as a unit struct since it has special Display behavior
+#[derive(Debug)]
 pub struct SilentError;
 
 impl Display for SilentError {
@@ -40,3 +50,5 @@ impl Display for SilentError {
         Ok(())
     }
 }
+
+impl std::error::Error for SilentError {}

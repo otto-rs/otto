@@ -4,42 +4,27 @@ use std::fmt;
 use std::io;
 
 use std::fmt::{Debug, Display, Formatter};
-use thiserror::Error;
+use eyre::{eyre, Result, Report};
 
-#[derive(Debug, Error)]
-pub enum ConfigError {
-    #[error("config load error: {0}")]
-    ConfigLoadError(#[from] std::io::Error),
-    #[error("serde yaml error: {0}")]
-    SerdeYamlError(#[from] serde_yaml::Error),
-    /*
-    #[error("flag lookup error; flag={0} not found")]
-    FlagLookupError(String),
-    #[error("name lookup error; name={0} not found")]
-    NameLookupError(String),
-    */
+// Since ConfigError types aren't used elsewhere in the codebase,
+// we can simplify this to just use eyre::Report directly.
+// If specific error types are needed later, they can be added back.
+
+pub type ConfigResult<T> = Result<T, Report>;
+
+// Helper functions for creating specific config errors
+pub fn config_load_error(source: std::io::Error) -> Report {
+    eyre!("config load error: {}", source)
+}
+
+pub fn serde_yaml_error(source: serde_yaml::Error) -> Report {
+    eyre!("serde yaml error: {}", source)
 }
 
 /*
-impl Error for ConfigError {
-    fn description(&self) -> &str {
-        match *self {
-            ConfigError::FlagLookupError(ref flag) => "flag lookup error",
-            ConfigError::NameLookupError(ref name) => "name lookup error",
-        }
-    }
-}
-
-impl fmt::Display for ConfigError {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            ConfigError::FlagLookupError(ref flag) => {
-                write!(formatter, "flag lookup error; flag={} not found", flag)
-            }
-            ConfigError::NameLookupError(ref name) => {
-                write!(formatter, "name lookup error; name={} not found", name)
-            }
-        }
-    }
-}
+// These error variants were commented out and unused
+#[error("flag lookup error; flag={0} not found")]
+FlagLookupError(String),
+#[error("name lookup error; name={0} not found")]
+NameLookupError(String),
 */
