@@ -39,54 +39,7 @@ fn calculate_hash(action: &String) -> String {
     hex::encode(&result)[..8].to_string()
 }
 
-// This routine is adapted from the *old* Path's `path_relative_from`
-// function, which works differently from the new `relative_from` function.
-// In particular, this handles the case on unix where both paths are
-// absolute but with only the root as the common directory.
-// url: https://stackoverflow.com/a/39343127
-#[allow(clippy::similar_names)]
-fn path_relative_from(path: &Path, base: &Path) -> Option<PathBuf> {
-    use std::path::Component;
 
-    if path.is_absolute() == base.is_absolute() {
-        let mut ita = path.components();
-        let mut itb = base.components();
-        let mut comps: Vec<Component> = vec![];
-        loop {
-            match (ita.next(), itb.next()) {
-                (None, None) => break,
-                (Some(a), None) => {
-                    comps.push(a);
-                    comps.extend(ita.by_ref());
-                    break;
-                }
-                (None, _) => comps.push(Component::ParentDir),
-                (Some(a), Some(b)) if comps.is_empty() && a == b => (),
-                (Some(a), Some(b)) if b == Component::CurDir => comps.push(a),
-                (Some(_), Some(b)) if b == Component::ParentDir => return None,
-                (Some(a), Some(_)) => {
-                    comps.push(Component::ParentDir);
-                    for _ in itb {
-                        comps.push(Component::ParentDir);
-                    }
-                    comps.push(a);
-                    comps.extend(ita.by_ref());
-                    break;
-                }
-            }
-        }
-        let val: PathBuf = comps.iter().map(|c| c.as_os_str()).collect();
-        if val == Path::new("") {
-            Some(PathBuf::from(path))
-        } else {
-            Some(comps.iter().map(|c| c.as_os_str()).collect())
-        }
-    } else if path.is_absolute() {
-        Some(PathBuf::from(path))
-    } else {
-        None
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Task {
@@ -319,13 +272,11 @@ impl Parser {
     }
 
     fn find_ottofile(path: &Path) -> Result<Option<PathBuf>> {
-        let cwd = env::current_dir()?;
         for ottofile in OTTOFILES {
             let ottofile_path = path.join(ottofile);
             if ottofile_path.exists() {
-                let p =
-                    path_relative_from(&ottofile_path, &cwd).ok_or_else(|| eyre!("could not find relative path"))?;
-                return Ok(Some(p));
+                // Return the absolute path directly instead of converting to relative
+                return Ok(Some(ottofile_path));
             }
         }
         let Some(parent) = path.parent() else { return Ok(None)};

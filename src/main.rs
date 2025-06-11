@@ -25,9 +25,10 @@ async fn main() -> Result<(), Report> {
     let workspace_root = if let Some(ottofile) = ottofile_path {
         // Use the directory containing the ottofile, not the ottofile itself
         ottofile.parent()
-            .ok_or_else(|| eyre::eyre!("Could not determine parent directory of ottofile"))?
+            .unwrap_or_else(|| ottofile.as_path())
             .to_path_buf()
     } else {
+        // No ottofile found, use current directory
         env::current_dir()?
     };
 

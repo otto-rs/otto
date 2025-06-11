@@ -5,22 +5,23 @@ use colored::{Color, Colorize};
 
 /// All 15 possible color combinations (bracket_color, text_color) where bracket ≠ text
 /// This gives us 15 unique visual patterns before cycling
+/// Ordered to ensure good bracket color distribution for the first several tasks
 const COLOR_COMBINATIONS: [(Color, Color); 15] = [
-    (Color::BrightRed, Color::BrightGreen),
-    (Color::BrightRed, Color::BrightBlue),
-    (Color::BrightRed, Color::BrightYellow),
-    (Color::BrightRed, Color::BrightCyan),
-    (Color::BrightRed, Color::BrightMagenta),
-    (Color::BrightGreen, Color::BrightBlue),
-    (Color::BrightGreen, Color::BrightYellow),
-    (Color::BrightGreen, Color::BrightCyan),
-    (Color::BrightGreen, Color::BrightMagenta),
-    (Color::BrightBlue, Color::BrightYellow),
-    (Color::BrightBlue, Color::BrightCyan),
-    (Color::BrightBlue, Color::BrightMagenta),
-    (Color::BrightYellow, Color::BrightCyan),
-    (Color::BrightYellow, Color::BrightMagenta),
-    (Color::BrightCyan, Color::BrightMagenta),
+    (Color::BrightRed, Color::BrightGreen),      // 0 - Red brackets
+    (Color::BrightBlue, Color::BrightYellow),    // 1 - Blue brackets
+    (Color::BrightGreen, Color::BrightBlue),     // 2 - Green brackets
+    (Color::BrightYellow, Color::BrightCyan),    // 3 - Yellow brackets
+    (Color::BrightCyan, Color::BrightMagenta),   // 4 - Cyan brackets
+    (Color::BrightRed, Color::BrightBlue),       // 5 - Red brackets
+    (Color::BrightBlue, Color::BrightCyan),      // 6 - Blue brackets
+    (Color::BrightGreen, Color::BrightYellow),   // 7 - Green brackets
+    (Color::BrightYellow, Color::BrightMagenta), // 8 - Yellow brackets
+    (Color::BrightRed, Color::BrightYellow),     // 9 - Red brackets
+    (Color::BrightBlue, Color::BrightMagenta),   // 10 - Blue brackets
+    (Color::BrightGreen, Color::BrightCyan),     // 11 - Green brackets
+    (Color::BrightRed, Color::BrightCyan),       // 12 - Red brackets
+    (Color::BrightGreen, Color::BrightMagenta),  // 13 - Green brackets
+    (Color::BrightRed, Color::BrightMagenta),    // 14 - Red brackets
 ];
 
 /// Global task ordering context for consistent color assignment
@@ -162,6 +163,10 @@ mod tests {
         let colored_prefix = colorize_task_prefix(task_name);
         
         assert!(colored_name.contains("test_task"));
-        assert!(colored_prefix.contains("[test_task]"));
+        // The colored prefix contains ANSI escape codes, so we need to check for the task name
+        // and the brackets separately, or check that it contains the task name
+        assert!(colored_prefix.contains("test_task"));
+        assert!(colored_prefix.contains("["));
+        assert!(colored_prefix.contains("]"));
     }
 } 

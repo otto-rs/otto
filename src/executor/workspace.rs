@@ -80,7 +80,11 @@ impl Workspace {
         // Get project name from last component (unused but kept for future use)
         let _name = root.file_name()
             .and_then(|n| n.to_str())
-            .ok_or_else(|| eyre!("Invalid project root path"))?;
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                // Fallback for cases where file_name() returns None (like root directories)
+                "otto_project".to_string()
+            });
 
         // Calculate project path hash - use only first 8 chars
         let mut hasher = Sha256::new();
