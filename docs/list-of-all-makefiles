@@ -40,6 +40,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/pyspark-intelligence-jobs/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -82,6 +83,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/ingestion-jobs/Makefile ---
 .DEFAULT_GOAL: build
 
@@ -113,6 +115,7 @@ clean:
 	rm -rf .venv/
 	rm -rf dist/
 	rm -rf *.egg-info
+
 --- /home/saidler/slam/tatari-tv/python-tatari-service-lib/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -157,6 +160,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/pyspark-insights-jobs/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -211,6 +215,7 @@ update-expected:
 update-expected-experimental:
 	poetry run python -c 'assert input("Have you verified the correctness of the test results? [y/n] ") == "y"'
 	PR_UPDATE_EXPECTED=true poetry run pytest -n0 tests/unit/performance_report/test_performance_report_streaming_experimental_etl.py -k 'test_performance_report_streaming_experimental_etl_all' -qqq --no-header --no-summary
+
 --- /home/saidler/slam/tatari-tv/python-tatari-kafka-client/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -255,6 +260,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-app-cookiecutter/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -280,6 +286,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-app-cookiecutter/{{ cookiecutter.app_name.replace("_", "-") }}/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -322,6 +329,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/ml-impression-level-performance/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -373,6 +381,7 @@ clean:
 .PHONY: mlflow
 mlflow:
 	.venv/bin/mlflow server --backend-store-uri sqlite:///mlflow.db --default-artifact-root ./mlruns --host 0.0.0.0 --port 5001
+
 --- /home/saidler/slam/tatari-tv/python-tatari-probabilistic-modeling/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -417,6 +426,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/tatari-offline-reporting-api/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -459,6 +469,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/ml-rtg-recommended-spend/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -505,6 +516,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-media-planning-service-proto/Makefile ---
 .DEFAULT_GOAL := proto
 
@@ -562,6 +574,7 @@ clean:
 	rm -f $(PROTOS_GEN)
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/tatari-shopify-app/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -601,6 +614,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-event-categorization/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -645,6 +659,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/pyspark-data-science-jobs/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -689,6 +704,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/lowess/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -733,6 +749,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-data-utils/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -777,6 +794,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/media-planning-service/Makefile ---
 GIT_DESCRIBE	:= $(shell git describe --always --abbrev=7)
 PYPI_USERNAME	?= $(shell cat ~/.config/pip/pip.conf | grep extra-index-url | awk -F '[//|@]' '{print $$3}' | awk -F '[:]' '{print $$1}')
@@ -865,6 +883,7 @@ docker-compose-clean:
 
 psql:
 	docker exec -it media-planning-service-db-1 psql -U tatari media_planning_service
+
 --- /home/saidler/slam/tatari-tv/python-tatari-migrations/Makefile ---
 .DEFAULT_GOAL: build
 
@@ -905,6 +924,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/performance-report/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -949,6 +969,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-deltalake/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -997,6 +1018,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-spark-bi-tools/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -1039,6 +1061,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/databricks-prometheus-exporter/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -1081,6 +1104,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-beeswax-client/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -1125,6 +1149,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/shopify-app/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -1155,6 +1180,7 @@ lint: dev
 .PHONY: clean
 clean:
 	rm -rf build/ dist/ node_modules/ .cache/
+
 --- /home/saidler/slam/tatari-tv/gitops-infra/goldilocks/Makefile ---
 # Makefile
 CHART_REPO_NAME   := fairwinds-stable
@@ -1167,6 +1193,7 @@ OVERLAYS          := prod staging test ops apps
 .DEFAULT_GOAL     := default
 
 include ../Makefile.in
+
 --- /home/saidler/slam/tatari-tv/gitops-infra/gha-rss-controller/Makefile ---
 # Makefile
 CHART_REPO_NAME   := arc
@@ -1179,6 +1206,7 @@ OVERLAYS          := dev staging test prod ops
 .DEFAULT_GOAL     := default
 
 include ../Makefile.in
+
 --- /home/saidler/slam/tatari-tv/gitops-infra/istio-ztunnel/Makefile ---
 # Makefile
 CHART_REPO_NAME   := istio
@@ -1191,6 +1219,7 @@ OVERLAYS          := prod staging dev test ops apps
 .DEFAULT_GOAL     := default
 
 include ../Makefile.in
+
 --- /home/saidler/slam/tatari-tv/gitops-infra/istio-base/Makefile ---
 # Makefile
 CHART_REPO_NAME   := istio
@@ -1203,6 +1232,7 @@ OVERLAYS          := prod staging dev test ops apps
 .DEFAULT_GOAL     := default
 
 include ../Makefile.in
+
 --- /home/saidler/slam/tatari-tv/gitops-infra/loki/Makefile ---
 # Makefile
 CHART_REPO_NAME   := grafana
@@ -1236,6 +1266,7 @@ post-template:
 	@sed -i 's|namespace=[~]*\\\"$$namespace\\\"[, ]*||g' ${BASE_DIR}/configmap-*.yaml
 	@cd ${BASE_DIR}; kustomize edit add resource configmap-1.yaml
 	@cd ${BASE_DIR}; kustomize edit add resource configmap-2.yaml
+
 --- /home/saidler/slam/tatari-tv/gitops-infra/istio-cni/Makefile ---
 # Makefile
 CHART_REPO_NAME   := istio
@@ -1248,6 +1279,7 @@ OVERLAYS          := prod staging dev test ops apps
 .DEFAULT_GOAL     := default
 
 include ../Makefile.in
+
 --- /home/saidler/slam/tatari-tv/gitops-infra/gha-runners/Makefile ---
 # Makefile
 CHART_REPO_NAME   := gha-runner-scale-set
@@ -1260,6 +1292,7 @@ OVERLAYS          := dev staging test prod ops
 .DEFAULT_GOAL     := default
 
 include ../Makefile.in
+
 --- /home/saidler/slam/tatari-tv/gitops-infra/image-swapper/Makefile ---
 # Makefile
 CHART_REPO_NAME   := estahn
@@ -1272,6 +1305,7 @@ OVERLAYS          := prod staging dev test ops apps
 .DEFAULT_GOAL     := default
 
 include ../Makefile.in
+
 --- /home/saidler/slam/tatari-tv/gitops-infra/reloader/Makefile ---
 # Makefile
 CHART_REPO_NAME   := stakater
@@ -1284,6 +1318,7 @@ OVERLAYS          := prod staging dev test ops apps
 .DEFAULT_GOAL     := default
 
 include ../Makefile.in
+
 --- /home/saidler/slam/tatari-tv/gitops-infra/promtail/Makefile ---
 # Makefile
 CHART_REPO_NAME   := grafana
@@ -1296,6 +1331,7 @@ OVERLAYS          := prod staging dev test ops apps
 .DEFAULT_GOAL     := default
 
 include ../Makefile.in
+
 --- /home/saidler/slam/tatari-tv/gitops-infra/prometheus/Makefile ---
 # Makefile
 CHART_REPO_NAME   := prometheus
@@ -1308,6 +1344,7 @@ OVERLAYS          := prod staging dev test ops apps
 .DEFAULT_GOAL     := default
 
 include ../Makefile.in
+
 --- /home/saidler/slam/tatari-tv/gitops-infra/httpbin/Makefile ---
 # Makefile
 CHART_REPO_NAME   := mautheusfm
@@ -1324,6 +1361,7 @@ include ../Makefile.in
 post-template:
 	# Remove test-connection
 	@cd ${MANIFEST_DIR}; kustomize edit remove resource ${CHART_NAME}/templates/tests/test-connection.yaml
+
 --- /home/saidler/slam/tatari-tv/gitops-infra/istio-istiod/Makefile ---
 # Makefile
 CHART_REPO_NAME   := istio
@@ -1336,6 +1374,7 @@ OVERLAYS          := prod staging dev test ops apps
 .DEFAULT_GOAL     := default
 
 include ../Makefile.in
+
 --- /home/saidler/slam/tatari-tv/python-tatari-apm/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -1380,6 +1419,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-features/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -1424,6 +1464,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/data-operations/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -1466,6 +1507,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/tatari-clickhouse-migrations/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -1508,6 +1550,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/alertmanager-webhook-logger/Makefile ---
 .DEFAULT_GOAL := build
 
@@ -1559,6 +1602,7 @@ lint: fmt
 clean:
 	rm -rf dist/
 	rm -rf .coverage
+
 --- /home/saidler/slam/tatari-tv/python-tvp-client/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -1603,6 +1647,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/pyspark-embedding-factory-jobs/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -1645,6 +1690,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/pyspark-jobs-cookiecutter/pyspark-{{ cookiecutter.app_name.replace("_", "-") }}-jobs/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -1687,6 +1733,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/pyspark-jobs-cookiecutter/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -1712,6 +1759,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-model-metrics/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -1756,6 +1804,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/pyspark-calculation-jobs/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -1798,6 +1847,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/hiring-homework/solutions/interns_2020/pascal/makefile ---
 NAME = "Main"
 
@@ -1815,6 +1865,7 @@ clean:
 	-@rm out/src/*.class
 	-@rm out/*.jar
 	-@rm *.class
+
 --- /home/saidler/slam/tatari-tv/hiring-homework/solutions/hiring_2019/robert_jakubov/Makefile ---
 ## Build container
 build:
@@ -1822,7 +1873,8 @@ build:
 
  ## Run container locally
 run:
-	@bash -x scripts/run.sh--- /home/saidler/slam/tatari-tv/hiring-homework/solutions/hiring_2022/nick_maccarthy/nick-maccarthy-exercise/Makefile ---
+	@bash -x scripts/run.sh
+--- /home/saidler/slam/tatari-tv/hiring-homework/solutions/hiring_2022/nick_maccarthy/nick-maccarthy-exercise/Makefile ---
 
 build:
 	docker build -t tatari-nmac .
@@ -1831,7 +1883,8 @@ run:
 	docker run -it tatari-nmac
 
 run-all:
-	make build && make run--- /home/saidler/slam/tatari-tv/hiring-homework/solutions/hiring_2021/jason_harley/Makefile ---
+	make build && make run
+--- /home/saidler/slam/tatari-tv/hiring-homework/solutions/hiring_2021/jason_harley/Makefile ---
 .PHONY: up clean test
 
 all: up
@@ -1845,6 +1898,7 @@ clean:
 test:
 	vagrant up
 	vagrant destroy -f
+
 --- /home/saidler/slam/tatari-tv/hiring-homework/solutions/hiring_2021/matt_behrens/Makefile ---
 .PHONY: fetch test
 
@@ -1865,6 +1919,7 @@ test:
 clean:
 	rm *.gz
 	rm -rf sqlite/
+
 --- /home/saidler/slam/tatari-tv/hiring-homework/solutions/hiring_2021/dan_mahoney/Makefile ---
 PROJECT         := github.com/dmswe/ttha
 GOCMD           := go
@@ -1924,6 +1979,7 @@ dep: ## Install deps
 fmt:
 	@echo "==> Fixing source code with gofmt..."
 	gofmt -s -w ./main.go ./meta.go ./cmd
+
 --- /home/saidler/slam/tatari-tv/hiring-homework/solutions/hiring_2020/jason_harley/Makefile ---
 .PHONY: up clean test
 
@@ -1938,10 +1994,11 @@ clean:
 test:
 	vagrant up
 	vagrant destroy -f
+
 --- /home/saidler/slam/tatari-tv/hiring-homework/solutions/hiring_2020/prasanna_shevade/Makefile ---
 PROJECT = cpv
 
-test: 
+test:
 	go test -v
 
 build: test
@@ -1949,13 +2006,15 @@ build: test
 
 run: build
 	./${PROJECT}
+
 --- /home/saidler/slam/tatari-tv/hiring-homework/solutions/hiring_2020/vince_nicoara/Makefile ---
 run:
 	python main.py
 build:
 	pip install colorama
 test:
-	python tests.py--- /home/saidler/slam/tatari-tv/python-tatari-data-common/Makefile ---
+	python tests.py
+--- /home/saidler/slam/tatari-tv/python-tatari-data-common/Makefile ---
 .DEFAULT_GOAL := dev
 
 .PHONY: all
@@ -1999,6 +2058,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/tatari-great-expectations/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -2043,6 +2103,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/creative-analysis-service/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -2085,6 +2146,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-pyspark-data-models/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -2129,6 +2191,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-tv-time/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -2173,6 +2236,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-lambda-utils/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -2217,6 +2281,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/airflow-dags/Makefile ---
 .DEFAULT_GOAL: build
 
@@ -2277,6 +2342,7 @@ clean:
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
 	docker compose down --volumes
+
 --- /home/saidler/slam/tatari-tv/python-tatari-pyspark-calculations/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -2321,6 +2387,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-s3-archiver/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -2365,6 +2432,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/solutions-toolbox/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -2407,6 +2475,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/ephemeral-db/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -2449,6 +2518,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/ml-cookiecutter/ml-{{ cookiecutter.app_name.replace("_", "-") }}/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -2495,6 +2565,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/ml-cookiecutter/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -2520,6 +2591,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-task-queue-proto/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -2572,6 +2644,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-pyspark-tools/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -2616,6 +2689,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/pingpong/makefile ---
 VERSION := $(shell node -e 'console.log(require("./package.json").version)')
 SED := $(shell [ "$$(uname)" = "Darwin" ] && echo "sed -i.bak" || echo "sed -i" )
@@ -2758,6 +2832,7 @@ export: all
 		pbcopy < $$file; \
 		read -p "Copied to clipboard for $$file [Enter to continue]"; \
 	done
+
 --- /home/saidler/slam/tatari-tv/python-tatari-reach-frequency-prediction/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -2802,6 +2877,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-data-catalog/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -2846,6 +2922,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/philo/Makefile ---
 # If the first argument is "container-test"...
 ifeq (container-test,$(firstword $(MAKECMDGOALS)))
@@ -2989,6 +3066,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/philo/projects/admin/Makefile ---
 .PHONY: dev-load-data
 dev-load-data:
@@ -3005,6 +3083,7 @@ dev-load-data:
 		--volume $(PWD)/../../script:/app/script:Z \
 		devserver --host postgres --user postgres --dbname philo_admin_local restore
 	docker compose up --build
+
 --- /home/saidler/slam/tatari-tv/philo/projects/api-server/Makefile ---
 .PHONY: dev
 dev:
@@ -3029,6 +3108,7 @@ dev-load-data:
 		--volume $(PWD)/../../script:/app/script:Z \
 		devserver --host postgres --user postgres --dbname philo_api_server_local restore
 	docker compose up --build
+
 --- /home/saidler/slam/tatari-tv/python-tatari-dev-llm-lab/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -3073,6 +3153,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/pyspark-data-export-jobs/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -3115,6 +3196,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-mailgun-client/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -3159,6 +3241,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/auth-svc/Makefile ---
 # define vars
 CERTS_DIR	?= ./certs/tatari
@@ -3217,6 +3300,7 @@ keygen:
 
 	@echo "Private keys stored in $(CERTS_DIR)/private/$(CLIENT_ID).pem"
 	@echo "Public keys stored in $(CERTS_DIR)/public/$(CLIENT_ID).pem"
+
 --- /home/saidler/slam/tatari-tv/data-analysis/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -3259,6 +3343,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-auth-client/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -3303,6 +3388,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-airflow-provider/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -3347,6 +3433,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-ml-utils/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -3391,6 +3478,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-llm-tools/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -3435,6 +3523,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-environments/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -3479,6 +3568,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-csv-to-rds-importer/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -3523,6 +3613,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-task-queue/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -3570,6 +3661,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-grey-shared/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -3614,6 +3706,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-data-contracts/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -3658,6 +3751,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/ml-creative-optimization/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -3718,6 +3812,7 @@ train:
 predict:
 	curl -s http://localhost:5001 > /dev/null || (echo '--<! mlflow server not running !>--' && exit 1)
 	sh -c "poetry run python -m script/run_creative_optimization_$(model)_predict.py"
+
 --- /home/saidler/slam/tatari-tv/python-tatari-metrics/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -3762,6 +3857,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/ml-linear-clearance/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -3808,6 +3904,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-api-client/Makefile ---
 .DEFAULT_GOAL:= dev
 
@@ -3853,6 +3950,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/helm-charts/datahub/Makefile ---
 # Makefile
 CHART_REPO_NAME   := datahub
@@ -3873,6 +3971,7 @@ post-template:
 	@cd ${MANIFEST_DIR}; kustomize edit remove resource ${CHART_NAME}/charts/datahub-frontend/templates/secrets.yaml
 	@cd ${MANIFEST_DIR}; kustomize edit remove resource ${CHART_NAME}/templates/datahub-encryption-secrets.yml
 	@cd ${MANIFEST_DIR}; kustomize edit remove resource ${CHART_NAME}/templates/datahub-auth-secrets.yml
+
 --- /home/saidler/slam/tatari-tv/helm-charts/datahub-prerequisites/Makefile ---
 # Makefile
 CHART_REPO_NAME   := datahub
@@ -3890,6 +3989,7 @@ include ../Makefile.in
 kustomize:
 
 post-template:
+
 --- /home/saidler/slam/tatari-tv/tatari-admission-webhook/Makefile ---
 # Image URL to use all building/pushing image targets
 IMG ?= admission-webhook:latest
@@ -3938,6 +4038,7 @@ install-cert-manager:
 .PHONY: logs
 logs:
 	kubectl logs -n tatari-admission-webhook -l app=tatari-admission-webhook -f
+
 --- /home/saidler/slam/tatari-tv/python-tatari-explainability/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -3986,6 +4087,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tataribot/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -4030,6 +4132,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-settings/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -4074,6 +4177,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/persona-svc/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -4116,6 +4220,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-network-rotation-summaries/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -4158,6 +4263,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/security-operations/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -4200,6 +4306,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-altinity-cloud/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -4247,6 +4354,7 @@ clean:
 .PHONY: k8s
 k8s:
 	sh ./hack/init.sh
+
 --- /home/saidler/slam/tatari-tv/some-testserver/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -4289,6 +4397,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-pyspark/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -4333,6 +4442,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/security-infra/wiz-kubernetes-connector/Makefile ---
 # Makefile
 CHART_REPO_NAME   := wiz-sec
@@ -4345,6 +4455,7 @@ OVERLAYS          := prod staging dev test ops apps
 .DEFAULT_GOAL     := default
 
 include ../Makefile.in
+
 --- /home/saidler/slam/tatari-tv/security-infra/wiz-sensor/Makefile ---
 # Makefile
 CHART_REPO_NAME   := wiz-sec
@@ -4357,6 +4468,7 @@ OVERLAYS          := prod staging dev test ops apps
 .DEFAULT_GOAL     := default
 
 include ../Makefile.in
+
 --- /home/saidler/slam/tatari-tv/tatari-data-clean-room/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -4425,6 +4537,7 @@ deploy-info: ## Create deploy.info File.
 	@echo "creating deploy.info file..."
 	$(shell jq -n --arg author "$(GIT_AUTHOR)" --arg commit "$(GIT_COMMIT_DATETIME)" --arg describe "$(GIT_DESCRIBE)" --arg version "$(GIT_VERSION)" \
 		'{"author": $$author, "commit_datetime": $$commit, "git_describe": $$describe, "status": "OK", "version": $$version}' > deploy.info)
+
 --- /home/saidler/slam/tatari-tv/python-tatari-db/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -4473,6 +4586,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-ga-util/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -4517,6 +4631,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/some-webserver/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -4559,6 +4674,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/cloudwatch-logs-retention-manager/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -4601,6 +4717,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-streaming-clearance-prediction/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -4645,6 +4762,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-check-resources-proto/Makefile ---
 .DEFAULT_GOAL := build
 
@@ -4700,6 +4818,7 @@ clean:
 	rm -f $(PROTOS_GEN)
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/local-clickhouse-cluster/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -4774,6 +4893,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/pre-commit-hooks/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -4808,6 +4928,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-taskqueue-cookiecutter/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -4839,6 +4960,7 @@ clean:
 update-base:
 	git fetch base
 	git merge --no-ff base/main --allow-unrelated-histories
+
 --- /home/saidler/slam/tatari-tv/python-taskqueue-cookiecutter/{{ cookiecutter.app_name.replace("_", "-") }}/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -4881,6 +5003,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/quickbooks-adapter/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -4947,6 +5070,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -exec rm -rf {} +
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/fail-whale/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -4986,6 +5110,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-analysis-data-utils/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -5030,6 +5155,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/github-required-workflows/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -5055,6 +5181,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-package-cookiecutter/python-{{ cookiecutter.package_name.replace("_", "-") }}/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -5103,6 +5230,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-package-cookiecutter/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -5128,6 +5256,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/partner-provisioning-service/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -5185,6 +5314,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/farnsworth/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -5250,6 +5380,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/ml-streaming-performance/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -5323,6 +5454,7 @@ train:
 predict:
 	curl -s http://localhost:5001 > /dev/null || (echo '--<! mlflow server not running !>--' && exit 1)
 	sh -c "poetry run python -m script.run_streaming_performance_$(model)_predict"
+
 --- /home/saidler/slam/tatari-tv/python-tatari-pyspark-performance-report/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -5372,6 +5504,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/data-sources/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -5414,6 +5547,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/private-helm-charts/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -5439,6 +5573,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/philo-ai/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -5481,6 +5616,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-ip-enrichment/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -5525,6 +5661,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-experian-utils/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -5568,6 +5705,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-data-simulations/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -5612,6 +5750,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/ml-notebook-example/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -5658,6 +5797,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/deployments/Makefile ---
 GIT_DESCRIBE	:= $(shell git describe --always --abbrev=7)
 PYPI_USERNAME	?= $(shell cat ~/.config/pip/pip.conf | grep extra-index-url | awk -F '[//|@]' '{print $$3}' | awk -F '[:]' '{print $$1}')
@@ -5714,6 +5854,7 @@ docker-compose-clean:
 	@echo "Deleting deployments volumes and containers..."
 	docker ps -a | grep 'deployments'  | awk -F ' ' '{print $$1}' | xargs -I {} sh -c "docker rm -f {}"
 	docker volume list | grep 'deployments' | awk -F ' ' '{print $$2}' | xargs -I {} sh -c "docker volume rm -f {}"
+
 --- /home/saidler/slam/tatari-tv/tf-anomaly-detection/Makefile ---
 .DEFAULT_GOAL: dev
 
@@ -5746,6 +5887,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/pyspark-ingestion-jobs/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -5788,6 +5930,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/apigw-lambdas/Makefile ---
 # Check that given variables are set and all have non-empty values,
 # die with an error otherwise.
@@ -5834,6 +5977,7 @@ deploy-info: ## Create deploy.info File.
 	@echo "creating deploy.info file..."
 	$(shell jq -n --arg author "$(GIT_AUTHOR)" --arg commit "$(GIT_COMMIT_DATETIME)" --arg describe "$(GIT_DESCRIBE)" --arg version "$(GIT_VERSION)" \
 		'{"author": $$author, "commit_datetime": $$commit, "git_describe": $$describe, "status": "OK", "version": $$version}' > deploy.info)
+
 --- /home/saidler/slam/tatari-tv/python-tatari-statuspage-client/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -5878,6 +6022,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-analysis-jobs/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -5923,6 +6068,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/devs/Makefile ---
 .DEFAULT_GOAL := build
 
@@ -5974,6 +6120,7 @@ lint: fmt
 clean:
 	rm -rf dist/
 	rm -rf .coverage
+
 --- /home/saidler/slam/tatari-tv/python-some-package/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -6018,6 +6165,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/pyspark-data-infra-jobs/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -6060,6 +6208,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-xandr-client/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -6104,6 +6253,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-media-planning-service-models/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -6152,6 +6302,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-hubspot-client/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -6200,6 +6351,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-data-logging/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -6244,6 +6396,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/slack-ai/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -6286,6 +6439,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-pyspark-framework/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -6330,6 +6484,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-user-agents/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -6374,6 +6529,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/tatari-cronjob-operator/Makefile ---
 
 # Image URL to use all building/pushing image targets
@@ -6538,6 +6694,7 @@ $(CONTROLLER_GEN): $(LOCALBIN)
 envtest: $(ENVTEST) ## Download envtest-setup locally if necessary.
 $(ENVTEST): $(LOCALBIN)
 	test -s $(LOCALBIN)/setup-envtest || GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+
 --- /home/saidler/slam/tatari-tv/pyspark-feature-jobs/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -6580,6 +6737,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/python-tatari-logging/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -6624,6 +6782,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/tatari-semver-inc/Makefile ---
 .DEFAULT_GOAL := dev
 
@@ -6676,6 +6835,7 @@ clean:
 	rm -rf .coverage
 	find . -name '__pycache__' -delete
 	find . -name '*.pyc' -delete
+
 --- /home/saidler/slam/tatari-tv/beeswax-win-logs-lambdas/Makefile ---
 # Check that given variables are set and all have non-empty values,
 # die with an error otherwise.
@@ -6727,6 +6887,7 @@ deploy-info: ## Create deploy.info File.
 	@echo "creating deploy.info file..."
 	$(shell jq -n --arg author "$(GIT_AUTHOR)" --arg commit "$(GIT_COMMIT_DATETIME)" --arg describe "$(GIT_DESCRIBE)" --arg version "$(GIT_VERSION)" \
 		'{"author": $$author, "commit_datetime": $$commit, "git_describe": $$describe, "status": "OK", "version": $$version}' > deploy.info)
+
 --- /home/saidler/slam/tatari-tv/ml-affinity/Makefile ---
 .DEFAULT_GOAL := dev
 

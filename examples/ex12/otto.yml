@@ -7,7 +7,7 @@ otto:
     GOCMD: "go"
     BINARY_NAME: "ttha"
     GOBUILD: "go build"
-    GOINSTALL: "go install" 
+    GOINSTALL: "go install"
     GOCLEAN: "go clean"
     GOTEST: "go test"
     GOGET: "go get"
@@ -16,7 +16,7 @@ otto:
     GIT_COMMIT: "${GIT_COMMIT:-$(git rev-parse --short HEAD)}"
 
 tasks:
-  help:
+  info:
     help: "Show help information"
     action: |
       echo "Available tasks:"
@@ -98,4 +98,4 @@ tasks:
     help: "Format source code"
     action: |
       echo "==> Fixing source code with gofmt..."
-      gofmt -s -w ./main.go ./meta.go ./cmd 
+      gofmt -s -w ./main.go ./meta.go ./cmd

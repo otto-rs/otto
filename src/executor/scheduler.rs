@@ -20,6 +20,7 @@ use super::{
     workspace::{Workspace, ExecutionContext},
     output::{TaskStreams, OutputType},
     action::{ActionProcessor, ProcessedAction},
+    colors::set_global_task_order,
 };
 
 /// Status of a task during execution
@@ -74,6 +75,10 @@ impl TaskScheduler {
         cpu_limit: usize,
     ) -> Result<Self> {
         let task_statuses = Arc::new(Mutex::new(HashMap::new()));
+
+        // Set up global task ordering for consistent color assignment
+        let task_names: Vec<String> = tasks.iter().map(|t| t.name.clone()).collect();
+        set_global_task_order(task_names);
 
         Ok(Self {
             task_statuses,

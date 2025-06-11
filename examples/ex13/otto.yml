@@ -1,0 +1,83 @@
+otto:
+  api: 1
+  jobs: 4
+  tasks:
+  - build
+  - test
+  - deploy
+  - cleanup
+
+tasks:
+  build:
+    action: |
+      #!/bin/bash
+      echo "Building the project..."
+      sleep 1
+      echo "Build completed successfully!"
+    help: "Build the project"
+
+  test:
+    before:
+    - build
+    action: |
+      #!/bin/bash
+      echo "Running tests..."
+      sleep 2
+      echo "All tests passed!"
+      echo "Coverage: 95%"
+    help: "Run project tests"
+
+  deploy:
+    before:
+    - test
+    action: |
+      #!/bin/bash
+      echo "Deploying to production..."
+      sleep 1
+      echo "Deployment successful!"
+    help: "Deploy to production"
+
+  cleanup:
+    before:
+    - deploy
+    action: |
+      #!/bin/bash
+      echo "Cleaning up temporary files..."
+      sleep 1
+      echo "Cleanup completed!"
+    help: "Clean up temporary files"
+
+  lint:
+    action: |
+      #!/bin/bash
+      echo "Running linter..."
+      echo "Found 3 style issues"
+      echo "Auto-fixing..."
+      echo "Linting completed!"
+    help: "Run code linter"
+
+  format:
+    action: |
+      #!/bin/bash
+      echo "Formatting code..."
+      sleep 1
+      echo "Code formatted successfully!"
+    help: "Format code"
+
+  docs:
+    action: |
+      #!/bin/bash
+      echo "Generating documentation..."
+      sleep 2
+      echo "Documentation generated!"
+    help: "Generate documentation"
+
+  notify:
+    before:
+    - cleanup  
+    action: |
+      #!/bin/bash
+      echo "Sending notifications..."
+      echo "Slack notification sent"
+      echo "Email notification sent"
+    help: "Send notifications" 

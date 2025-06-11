@@ -12,6 +12,8 @@ use tokio::{
     sync::broadcast,
 };
 
+use super::colors::colorize_task_prefix;
+
 /// Type of output stream
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum OutputType {
@@ -56,11 +58,12 @@ impl TeeWriter {
 
     /// Write data to both file and terminal
     pub async fn write(&mut self, data: &[u8]) -> Result<()> {
-        // Write to file
+        // Write to file (no colors)
         self.file.write_all(data).await?;
         
-        // Write to terminal with task name prefix
-        let terminal_output = format!("[{}] {}", self.task_name, String::from_utf8_lossy(data));
+        // Write to terminal with colored task name prefix
+        let colored_prefix = colorize_task_prefix(&self.task_name);
+        let terminal_output = format!("{} {}", colored_prefix, String::from_utf8_lossy(data));
         if self.is_stderr {
             eprint!("{}", terminal_output);
         } else {
