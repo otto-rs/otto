@@ -175,10 +175,9 @@ impl BashProcessor {
     fn get_yaml_env_vars(&self, task: &Task) -> std::collections::HashMap<String, String> {
         let mut yaml_envs = std::collections::HashMap::new();
         for (key, value) in &task.envs {
-            // Only include if it's not a CLI parameter
-            if !task.values.contains_key(key) {
-                yaml_envs.insert(key.clone(), value.clone());
-            }
+            // Include all environment variables - CLI parameters are handled separately
+            // The task.envs already contains both global and task-level env vars
+            yaml_envs.insert(key.clone(), value.clone());
         }
         yaml_envs
     }
@@ -196,8 +195,8 @@ impl BashProcessor {
 
         // Export only actual environment variables from YAML (not CLI parameters)
         for (key, value) in &yaml_envs {
-            // Allow shell expansion by not escaping the value
-            env_exports.push(format!("export {}={}", key.to_uppercase(), value));
+            // Allow shell expansion by properly quoting the value and preserving case
+            env_exports.push(format!("export {}=\"{}\"", key, value));
         }
 
         env_exports.push(String::new()); // Add blank line after section
@@ -414,10 +413,9 @@ impl PythonProcessor {
     fn get_yaml_env_vars(&self, task: &Task) -> std::collections::HashMap<String, String> {
         let mut yaml_envs = std::collections::HashMap::new();
         for (key, value) in &task.envs {
-            // Only include if it's not a CLI parameter
-            if !task.values.contains_key(key) {
-                yaml_envs.insert(key.clone(), value.clone());
-            }
+            // Include all environment variables - CLI parameters are handled separately
+            // The task.envs already contains both global and task-level env vars
+            yaml_envs.insert(key.clone(), value.clone());
         }
         yaml_envs
     }
