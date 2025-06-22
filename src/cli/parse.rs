@@ -326,6 +326,7 @@ impl Parser {
         Command::new(&otto_spec.name)
             .bin_name(&otto_spec.name)
             .about(&otto_spec.about)
+            .version(env!("GIT_DESCRIBE"))
             .arg(
                 Arg::new("ottofile")
                     .short('o')
@@ -509,7 +510,19 @@ impl Parser {
         let otto_cmd = Self::otto_command(&default_otto_spec);
 
         // Try to parse with allow_external_subcommands to capture remaining args
-        let matches = otto_cmd.try_get_matches_from(&self.args)?;
+        let matches = match otto_cmd.try_get_matches_from(&self.args) {
+            Ok(m) => m,
+            Err(e) => {
+                use clap::error::ErrorKind;
+                match e.kind() {
+                    ErrorKind::DisplayVersion | ErrorKind::DisplayHelp => {
+                        e.print().expect("clap error print failed");
+                        std::process::exit(0);
+                    }
+                    _ => return Err(eyre!(e)),
+                }
+            }
+        };
 
         // Extract ottofile path and load config
         let ottofile_value = matches.get_one::<String>("ottofile")

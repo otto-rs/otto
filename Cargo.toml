@@ -3,6 +3,7 @@ name = "otto"
 version = "0.1.0"
 edition = "2021"
 authors = ["Scott Idler <scott.a.idler@gmail.com>"]
+build = "build.rs"
 
 [lib]
 name = "otto"
@@ -42,3 +43,6 @@ predicates = "3.1"
 filetime = "0.2"
 assert_cmd = "2.0"
 tempfile = "3.10"
+
+[build-dependencies]
+regex = "1"
