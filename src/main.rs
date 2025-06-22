@@ -3,6 +3,7 @@
 use std::env;
 use eyre::Report;
 use std::sync::Arc;
+use colored::Colorize;
 
 use otto::{
     cli::parse::Parser,
@@ -13,7 +14,31 @@ use otto::{
 async fn main() -> Result<(), Report> {
     let args: Vec<String> = env::args().collect();
     let mut parser = Parser::new(args.clone())?;
-    let (otto, dag, _hash, ottofile_path) = parser.parse()?;
+    let parse_result = parser.parse();
+    if let Err(e) = &parse_result {
+        // Check for OttofileNotFound
+        if let Some(_inner) = e.root_cause().downcast_ref::<otto::cli::parse::OttofileNotFound>() {
+            // Print help with epilogue
+            let epilogue = format!(
+                "\n{}\n{}\n{}\n{}\n  - otto.yml\n  - .otto.yml\n  - otto.yaml\n  - .otto.yaml\n  - Ottofile\n  - OTTOFILE\n",
+                "ERROR: No ottofile found in this directory or any parent directory!".bold().red(),
+                "Otto looks for one of the following files in the current or parent directories:".yellow(),
+                "",
+                "To get started, create an otto.yml file in your project root."
+            );
+            let default_otto_spec = otto::cfg::config::OttoSpec::default();
+            let mut help_cmd = otto::cli::parse::Parser::help_command(&default_otto_spec, &otto::cfg::config::ConfigSpec::default().tasks)
+                .after_help(epilogue.clone())
+                .after_long_help(epilogue);
+            let _ = help_cmd.print_help();
+            std::process::exit(2);
+        } else {
+            // Other errors
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
+    }
+    let (otto, dag, _hash, ottofile_path) = parse_result?;
 
     // Check if graph visualization was requested
     if let Some(graph_result) = handle_graph_if_requested(&dag)? {

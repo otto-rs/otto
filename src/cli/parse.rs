@@ -39,7 +39,16 @@ fn calculate_hash(action: &String) -> String {
     hex::encode(&result)[..8].to_string()
 }
 
+#[derive(Debug)]
+pub struct OttofileNotFound;
 
+impl std::fmt::Display for OttofileNotFound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "No ottofile found in this directory or any parent directory!")
+    }
+}
+
+impl std::error::Error for OttofileNotFound {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Task {
@@ -279,11 +288,17 @@ impl Parser {
                 return Ok(Some(ottofile_path));
             }
         }
-        let Some(parent) = path.parent() else { return Ok(None)};
-        if parent == Path::new("/") {
-            return Ok(None);
+        // If we've reached the root, stop searching
+        if let Some(parent) = path.parent() {
+            if parent == path {
+                // We're at the root
+                return Ok(None);
+            }
+            // Recurse up
+            Self::find_ottofile(parent)
+        } else {
+            Ok(None)
         }
-        Self::find_ottofile(parent)
     }
 
     fn divine_ottofile(value: String) -> Result<Option<PathBuf>> {
@@ -302,7 +317,7 @@ impl Parser {
             let config_spec: ConfigSpec = serde_yaml::from_str(&content)?;
             Ok((config_spec, hash, Some(ottofile)))
         } else {
-            Ok((ConfigSpec::default(), DEFAULT_HASH.to_owned(), None))
+            Err(eyre!(OttofileNotFound))
         }
     }
 
@@ -373,7 +388,7 @@ impl Parser {
     }
 
     /// Create the help command with all tasks as subcommands
-    fn help_command(otto_spec: &OttoSpec, tasks: &TaskSpecs) -> Command {
+    pub fn help_command(otto_spec: &OttoSpec, tasks: &TaskSpecs) -> Command {
         let mut command = Self::otto_command(otto_spec);
 
         // Sort tasks with built-in meta-tasks first, then alphabetically
@@ -1231,11 +1246,13 @@ mod tests {
     fn test_config_loading_scenarios() -> Result<()> {
         // Test different config loading scenarios
 
-        // Test with None (no config)
-        let (config, hash, ottofile) = Parser::load_config_from_path(None)?;
-        assert_eq!(config.tasks.len(), 0);
-        assert_eq!(hash, DEFAULT_HASH);
-        assert_eq!(ottofile, None);
+        // Test with None (no config) -- should return OttofileNotFound error
+        let err = Parser::load_config_from_path(None).unwrap_err();
+        let is_ottofile_not_found = err
+            .root_cause()
+            .downcast_ref::<super::OttofileNotFound>()
+            .is_some();
+        assert!(is_ottofile_not_found, "Should return OttofileNotFound error");
 
         Ok(())
     }
