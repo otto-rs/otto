@@ -4,14 +4,42 @@ use std::env;
 use eyre::Report;
 use std::sync::Arc;
 use colored::Colorize;
+use log::info;
+use env_logger::Target;
+use std::fs::OpenOptions;
 
 use otto::{
     cli::parse::Parser,
     executor::{TaskScheduler, Workspace, graph::{DagVisualizer, GraphOptions, GraphFormat}},
 };
 
+fn setup_logging() -> Result<(), Report> {
+    let log_dir = dirs::data_local_dir()
+        .ok_or_else(|| eyre::eyre!("Could not determine local data directory"))?
+        .join("otto")
+        .join("logs");
+
+    std::fs::create_dir_all(&log_dir)?;
+    let log_file_path = log_dir.join("otto.log");
+
+    let log_file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file_path)?;
+
+    env_logger::Builder::from_env(env_logger::Env::default().filter_or("RUST_LOG", "info"))
+        .target(Target::Pipe(Box::new(log_file)))
+        .init();
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Report> {
+    // Setup logging first
+    setup_logging()?;
+    info!("Starting otto");
+
     let args: Vec<String> = env::args().collect();
     let mut parser = Parser::new(args.clone())?;
     let parse_result = parser.parse();
@@ -19,8 +47,14 @@ async fn main() -> Result<(), Report> {
         // Check for OttofileNotFound
         if let Some(_inner) = e.root_cause().downcast_ref::<otto::cli::parse::OttofileNotFound>() {
             // Print help with epilogue
+            let log_location = dirs::data_local_dir()
+                .map(|dir| dir.join("otto").join("logs").join("otto.log"))
+                .and_then(|path| path.to_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| "~/.local/share/otto/logs/otto.log".to_string());
+
             let epilogue = format!(
-                "\n{}\n{}\n{}\n{}\n  - otto.yml\n  - .otto.yml\n  - otto.yaml\n  - .otto.yaml\n  - Ottofile\n  - OTTOFILE\n",
+                "Logs are written to: {}\n\n{}\n{}\n{}\n{}\n  - otto.yml\n  - .otto.yml\n  - otto.yaml\n  - .otto.yaml\n  - Ottofile\n  - OTTOFILE\n",
+                log_location,
                 "ERROR: No ottofile found in this directory or any parent directory!".bold().red(),
                 "Otto looks for one of the following files in the current or parent directories:".yellow(),
                 "",

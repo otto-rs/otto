@@ -13,7 +13,7 @@ use tokio::{
     time::timeout,
     io::BufReader,
 };
-use tracing::{error, info, debug};
+use log::{error, info, debug};
 
 use crate::cli::parse::Task;
 use super::{

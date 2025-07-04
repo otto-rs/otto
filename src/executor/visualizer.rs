@@ -4,7 +4,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use tokio::sync::{broadcast, Mutex};
-use tracing::info;
+use log::info;
 use eyre::Result;
 
 use super::output::{TaskOutput, OutputType};

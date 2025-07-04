@@ -15,6 +15,7 @@ use eyre::{eyre, Result};
 use hex;
 use sha2::{Digest, Sha256};
 use glob;
+use dirs;
 
 use crate::cfg::config::{ConfigSpec, OttoSpec, ParamSpec, TaskSpec, TaskSpecs, Value};
 use crate::cfg::env as env_eval;
@@ -391,6 +392,14 @@ impl Parser {
     /// Create the help command with all tasks as subcommands
     pub fn help_command(otto_spec: &OttoSpec, tasks: &TaskSpecs) -> Command {
         let mut command = Self::otto_command(otto_spec);
+
+        // Add log location to help text
+        let log_location = dirs::data_local_dir()
+            .map(|dir| dir.join("otto").join("logs").join("otto.log"))
+            .and_then(|path| path.to_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| "~/.local/share/otto/logs/otto.log".to_string());
+
+        command = command.after_help(format!("Logs are written to: {}", log_location));
 
         // Sort tasks with built-in meta-tasks first, then alphabetically
         let mut task_list: Vec<_> = tasks.values().collect();
