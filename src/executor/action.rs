@@ -233,10 +233,17 @@ impl BashProcessor {
         ];
 
         // Simple parameter assignments for CLI parameters only
-        for (param_name, _) in &task.values {
-            if let Some(env_value) = task.envs.get(param_name) {
-                param_section.push(format!("{}=\"{}\"", param_name, env_value));
-            }
+        for (param_name, param_value) in &task.values {
+            let value_str = match param_value {
+                crate::cfg::param::Value::Item(s) => s.clone(),
+                crate::cfg::param::Value::List(l) => l.join(" "),
+                crate::cfg::param::Value::Dict(d) => {
+                    // Convert dict to space-separated key=value pairs
+                    d.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join(" ")
+                }
+                crate::cfg::param::Value::Empty => String::new(),
+            };
+            param_section.push(format!("{}=\"{}\"", param_name, value_str));
         }
 
         param_section.push(String::new()); // Add blank line after section
@@ -471,10 +478,17 @@ impl PythonProcessor {
         ];
 
         // Simple parameter assignments for CLI parameters only
-        for (param_name, _) in &task.values {
-            if let Some(env_value) = task.envs.get(param_name) {
-                param_section.push(format!("{} = '{}'", param_name, env_value));
-            }
+        for (param_name, param_value) in &task.values {
+            let value_str = match param_value {
+                crate::cfg::param::Value::Item(s) => s.clone(),
+                crate::cfg::param::Value::List(l) => l.join(" "),
+                crate::cfg::param::Value::Dict(d) => {
+                    // Convert dict to space-separated key=value pairs
+                    d.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join(" ")
+                }
+                crate::cfg::param::Value::Empty => String::new(),
+            };
+            param_section.push(format!("{} = '{}'", param_name, value_str));
         }
 
         param_section.push(String::new()); // Add blank line after section

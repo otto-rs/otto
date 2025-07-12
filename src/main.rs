@@ -549,8 +549,62 @@ async fn main_nom() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     let command_line = args[1..].join(" ");
 
-    // Try to find and load config
-    let (config_spec, _hash, ottofile_path) = match load_config_from_path(None) {
+        // Extract ottofile path from command line arguments first
+    let ottofile_path = {
+        let args: Vec<&str> = command_line.split_whitespace().collect();
+        let mut ottofile_value = None;
+
+        // Look for --ottofile or -o arguments
+        for i in 0..args.len() {
+            if args[i] == "--ottofile" || args[i] == "-o" {
+                if i + 1 < args.len() {
+                    ottofile_value = Some(args[i + 1].to_string());
+                    break;
+                }
+            } else if args[i].starts_with("--ottofile=") {
+                ottofile_value = Some(args[i].split('=').nth(1).unwrap_or("").to_string());
+                break;
+            }
+        }
+
+        match ottofile_value {
+            Some(path) => divine_ottofile(path)?,
+            None => find_ottofile(&std::env::current_dir()?)?,
+        }
+    };
+
+    // Check for task-level help first (before parsing)
+    if command_line.contains("--help") || command_line.contains("-h") {
+        let args: Vec<&str> = command_line.split_whitespace().collect();
+
+        // Check if help comes after a task name
+        for i in 1..args.len() {
+            if (args[i] == "--help" || args[i] == "-h") && i > 0 {
+                let potential_task_name = args[i - 1];
+
+                // Try to load config to check if it's a valid task
+                match load_config_from_path(ottofile_path.clone()) {
+                    Ok((config_spec, _, _)) => {
+                        if config_spec.tasks.contains_key(potential_task_name) {
+                            // Show task-specific help
+                            show_task_help(&config_spec, potential_task_name);
+                            return Ok(());
+                        }
+                        // If not a valid task, continue with normal parsing
+                        break;
+                    }
+                    Err(_) => {
+                        // No config found, show help with error message
+                        show_no_ottofile_help();
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+
+    // Try to load config using the determined ottofile path
+    let (config_spec, _hash, ottofile_path) = match load_config_from_path(ottofile_path) {
         Ok((config, hash, path)) => (Some(config), hash, path),
         Err(_) => {
             // No config found, check if help is requested
@@ -591,7 +645,7 @@ async fn main_nom() -> Result<()> {
     }
 
     if parsed.global_options.version {
-        println!("{}", env!("CARGO_PKG_VERSION"));
+        println!("{}", env!("GIT_DESCRIBE"));
         return Ok(());
     }
 

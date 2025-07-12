@@ -118,7 +118,7 @@ pub fn global_option_short_with_space(input: &str) -> ParseResult<GlobalOption> 
             |(_, short_char, _, value)| {
                 let name = match short_char {
                     'o' => "ottofile",
-                    'a' => "api", 
+                    'a' => "api",
                     'j' => "jobs",
                     'H' => "home",
                     't' => "tasks",
@@ -247,9 +247,9 @@ pub fn task_argument(input: &str) -> ParseResult<TaskArgument> {
         "task argument",
         alt((
             task_argument_long_with_equals,
-            task_argument_flag,
-            task_argument_short_with_space,
             task_argument_long_with_space,
+            task_argument_short_with_space,
+            task_argument_flag,
         ))
     ).parse(input)
 }
@@ -365,4 +365,4 @@ mod tests {
         assert_eq!(cmd.tasks[0].name, "hello");
         assert_eq!(cmd.tasks[1].name, "test");
     }
-} 
+}

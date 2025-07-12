@@ -20,7 +20,7 @@ pub fn validate_global_options(
     global_options: &[crate::cli3::types::GlobalOption],
 ) -> Result<GlobalOptions, ParseError> {
     let mut result = GlobalOptions::default();
-    
+
     for option in global_options {
         match option.name.as_str() {
             "ottofile" => {
@@ -117,7 +117,7 @@ pub fn validate_global_options(
             }
         }
     }
-    
+
     Ok(result)
 }
 
@@ -128,49 +128,43 @@ pub fn validate_task_invocation(
     let task_spec = config.tasks.get(&task_invocation.name).ok_or_else(|| {
         let task_names: Vec<String> = config.tasks.keys().cloned().collect();
         let suggestions = suggest_similar_task_names(&task_invocation.name, &task_names);
-        
+
         ParseError::UnknownTask {
             name: task_invocation.name.clone(),
             suggestions,
         }
     })?;
-    
-    let mut validated_args = HashMap::new();
-    
-    // Validate provided arguments
+
+    let mut resolved_args = HashMap::new();
+
+    // Validate provided arguments, mapping short flags to long names first
     for arg in &task_invocation.arguments {
-        let param_spec = task_spec.params.get(&arg.name).ok_or_else(|| {
+        // Map short flag to long name if needed
+        let resolved_arg_name = if arg.name.len() == 1 {
+            // This might be a short flag, find the corresponding long name
+            let mut found_long_name = None;
+            for (param_name, param_spec) in &task_spec.params {
+                if param_spec.short == Some(arg.name.chars().next().unwrap()) {
+                    found_long_name = Some(param_name.clone());
+                    break;
+                }
+            }
+            found_long_name.unwrap_or(arg.name.clone())
+        } else {
+            arg.name.clone()
+        };
+
+        let param_spec = task_spec.params.get(&resolved_arg_name).ok_or_else(|| {
             ParseError::UnknownTaskArgument {
                 task_name: task_invocation.name.clone(),
                 arg_name: arg.name.clone(),
             }
         })?;
-        
+
         let validated_value = validate_argument_value(arg, param_spec, &task_invocation.name)?;
-        validated_args.insert(arg.name.clone(), validated_value);
+        resolved_args.insert(resolved_arg_name, validated_value);
     }
-    
-    // Handle short flags by mapping them to long names
-    let mut resolved_args = HashMap::new();
-    for (arg_name, value) in validated_args {
-        // Check if this is a short flag that needs to be mapped to a long name
-        let final_name = if arg_name.len() == 1 {
-            // This might be a short flag, find the corresponding long name
-            let mut found_long_name = None;
-            for (param_name, param_spec) in &task_spec.params {
-                if param_spec.short == Some(arg_name.chars().next().unwrap()) {
-                    found_long_name = Some(param_name.clone());
-                    break;
-                }
-            }
-            found_long_name.unwrap_or(arg_name)
-        } else {
-            arg_name
-        };
-        
-        resolved_args.insert(final_name, value);
-    }
-    
+
     // Apply defaults for missing parameters
     for (param_name, param_spec) in &task_spec.params {
         if !resolved_args.contains_key(param_name) {
@@ -180,7 +174,7 @@ pub fn validate_task_invocation(
             }
         }
     }
-    
+
     // Check for required parameters
     for (param_name, param_spec) in &task_spec.params {
         if param_spec.default.is_none() && !resolved_args.contains_key(param_name) {
@@ -191,7 +185,7 @@ pub fn validate_task_invocation(
             });
         }
     }
-    
+
     Ok(ParsedTask {
         name: task_invocation.name.clone(),
         arguments: resolved_args,
@@ -215,7 +209,7 @@ fn validate_argument_value(
             }
         }
     };
-    
+
     // Validate choices if specified
     if !param_spec.choices.is_empty() {
         if !param_spec.choices.contains(&value) {
@@ -230,7 +224,7 @@ fn validate_argument_value(
             });
         }
     }
-    
+
     // Type validation based on default value or parameter type
     if let Some(ref default) = param_spec.default {
         if default == "true" || default == "false" {
@@ -311,7 +305,7 @@ mod tests {
                 value: None,
             },
         ];
-        
+
         let result = validate_global_options(&options).unwrap();
         assert_eq!(result.jobs, Some(4));
         assert_eq!(result.help, true);
@@ -321,8 +315,8 @@ mod tests {
     fn test_suggest_similar_task_names() {
         let tasks = vec!["hello".to_string(), "help".to_string(), "build".to_string()];
         let suggestions = suggest_similar_task_names("hell", &tasks);
-        
+
         assert!(suggestions.contains(&"hello".to_string()));
         assert!(suggestions.contains(&"help".to_string()));
     }
-} 
+}
