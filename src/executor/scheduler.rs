@@ -15,7 +15,7 @@ use tokio::{
 };
 use log::{error, info, debug};
 
-use crate::cli::parse::Task;
+use super::task::Task;
 use super::{
     workspace::{Workspace, ExecutionContext},
     output::{TaskStreams, OutputType},
@@ -316,14 +316,14 @@ impl TaskScheduler {
             for dep_name in &task_deps {
                 let dep_output_file = workspace.task_output_file(dep_name);
                 let current_input_file = workspace.task_input_file(&task_name, dep_name);
-                
+
                 // Only create symlink if dependency output exists
                 if dep_output_file.exists() {
                     // Remove existing symlink/file if it exists
                     if current_input_file.exists() {
                         tokio::fs::remove_file(&current_input_file).await.ok();
                     }
-                    
+
                     // Create symlink from dependency output to current task input
                     #[cfg(unix)]
                     {

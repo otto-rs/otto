@@ -9,8 +9,8 @@ use nom::{
     error::context,
 };
 
-use crate::cli3::error::ParseError;
-use crate::cli3::types::{GlobalOption, TaskInvocation, TaskArgument, RawParsedCommand};
+use crate::cli::error::ParseError;
+use crate::cli::types::{GlobalOption, TaskInvocation, TaskArgument, RawParsedCommand};
 
 pub type ParseResult<'a, T> = IResult<&'a str, T, ParseError>;
 

@@ -1,8 +1,8 @@
 use std::collections::HashMap;
-use crate::cli3::types::{ValidatedValue, ParsedTask, GlobalOptions};
-use crate::cli3::error::ParseError;
+use crate::cli::types::{ValidatedValue, ParsedTask, GlobalOptions};
+use crate::cli::error::ParseError;
 use crate::cfg::config::ConfigSpec;
-use crate::cfg::task::TaskSpec;
+
 use crate::cfg::param::ParamSpec;
 
 pub fn suggest_similar_task_names(invalid_name: &str, valid_tasks: &[String]) -> Vec<String> {
@@ -17,7 +17,7 @@ pub fn suggest_similar_task_names(invalid_name: &str, valid_tasks: &[String]) ->
 }
 
 pub fn validate_global_options(
-    global_options: &[crate::cli3::types::GlobalOption],
+    global_options: &[crate::cli::types::GlobalOption],
 ) -> Result<GlobalOptions, ParseError> {
     let mut result = GlobalOptions::default();
 
@@ -122,7 +122,7 @@ pub fn validate_global_options(
 }
 
 pub fn validate_task_invocation(
-    task_invocation: &crate::cli3::types::TaskInvocation,
+    task_invocation: &crate::cli::types::TaskInvocation,
     config: &ConfigSpec,
 ) -> Result<ParsedTask, ParseError> {
     let task_spec = config.tasks.get(&task_invocation.name).ok_or_else(|| {
@@ -193,7 +193,7 @@ pub fn validate_task_invocation(
 }
 
 fn validate_argument_value(
-    arg: &crate::cli3::types::TaskArgument,
+    arg: &crate::cli::types::TaskArgument,
     param_spec: &ParamSpec,
     task_name: &str,
 ) -> Result<ValidatedValue, ParseError> {
@@ -274,24 +274,35 @@ fn validate_default_value(
     param_spec: &ParamSpec,
 ) -> Result<ValidatedValue, ParseError> {
     // For defaults, we don't validate choices (matches clap behavior)
-    if default_value == "true" || default_value == "false" {
-        Ok(ValidatedValue::Boolean(default_value.parse().unwrap()))
-    } else if let Ok(int_val) = default_value.parse::<i64>() {
-        Ok(ValidatedValue::Integer(int_val))
-    } else if let Ok(float_val) = default_value.parse::<f64>() {
-        Ok(ValidatedValue::Float(float_val))
-    } else {
-        Ok(ValidatedValue::String(default_value.to_string()))
+    // But we can use param_type for better validation
+    match param_spec.param_type {
+        crate::cfg::param::ParamType::FLG => {
+            // Flag parameters should be boolean
+            if default_value == "true" || default_value == "false" {
+                Ok(ValidatedValue::Boolean(default_value.parse().unwrap()))
+            } else {
+                Ok(ValidatedValue::Boolean(false)) // Default for flags
+            }
+        }
+        _ => {
+            // For other types, infer from the string value
+            if default_value == "true" || default_value == "false" {
+                Ok(ValidatedValue::Boolean(default_value.parse().unwrap()))
+            } else if let Ok(int_val) = default_value.parse::<i64>() {
+                Ok(ValidatedValue::Integer(int_val))
+            } else if let Ok(float_val) = default_value.parse::<f64>() {
+                Ok(ValidatedValue::Float(float_val))
+            } else {
+                Ok(ValidatedValue::String(default_value.to_string()))
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli3::types::{GlobalOption, TaskInvocation, TaskArgument};
-    use crate::cfg::param::{ParamType, Nargs};
-    use crate::cfg::task::TaskSpec;
-    use std::collections::HashMap;
+    use crate::cli::types::GlobalOption;
 
     #[test]
     fn test_validate_global_options() {

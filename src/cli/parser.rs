@@ -1,7 +1,7 @@
-use crate::cli3::combinators::parse_command_line;
-use crate::cli3::types::{ParsedCommand, ParsedTask, GlobalOptions, RawParsedCommand};
-use crate::cli3::error::ParseError;
-use crate::cli3::validation::{validate_global_options, validate_task_invocation};
+use crate::cli::combinators::parse_command_line;
+use crate::cli::types::{ParsedCommand, ParsedTask, GlobalOptions, RawParsedCommand};
+use crate::cli::error::ParseError;
+use crate::cli::validation::{validate_global_options, validate_task_invocation};
 use crate::cfg::config::ConfigSpec;
 
 pub struct NomParser {
@@ -115,11 +115,11 @@ mod tests {
     use crate::cfg::config::{ConfigSpec, OttoSpec};
     use crate::cfg::task::TaskSpec;
     use crate::cfg::param::{ParamSpec, ParamType, Nargs};
-    use crate::cli3::types::ValidatedValue;
+    use crate::cli::types::ValidatedValue;
 
     fn create_test_config() -> ConfigSpec {
         let mut tasks = HashMap::new();
-        
+
         // Hello task with greeting parameter
         let mut hello_params = HashMap::new();
         hello_params.insert("greeting".to_string(), ParamSpec {
@@ -208,7 +208,7 @@ mod tests {
         let config = create_test_config();
         let mut parser = NomParser::new(Some(config)).unwrap();
         let result = parser.parse("").unwrap();
-        
+
         assert_eq!(result.tasks.len(), 1);
         assert_eq!(result.tasks[0].name, "punch");
     }
@@ -217,7 +217,7 @@ mod tests {
     fn test_help_flag() {
         let mut parser = NomParser::new(None).unwrap();
         let result = parser.parse("--help").unwrap();
-        
+
         assert!(result.global_options.help);
         assert!(result.tasks.is_empty());
     }
@@ -227,7 +227,7 @@ mod tests {
         let config = create_test_config();
         let mut parser = NomParser::new(Some(config)).unwrap();
         let result = parser.parse("hello").unwrap();
-        
+
         assert_eq!(result.tasks.len(), 1);
         assert_eq!(result.tasks[0].name, "hello");
         // Should have default greeting
@@ -242,7 +242,7 @@ mod tests {
         let config = create_test_config();
         let mut parser = NomParser::new(Some(config)).unwrap();
         let result = parser.parse("hello -g howdy").unwrap();
-        
+
         assert_eq!(result.tasks.len(), 1);
         assert_eq!(result.tasks[0].name, "hello");
         assert!(result.tasks[0].arguments.contains_key("greeting"));
@@ -256,11 +256,11 @@ mod tests {
         let config = create_test_config();
         let mut parser = NomParser::new(Some(config)).unwrap();
         let result = parser.parse("hello -g howdy world -n mundo").unwrap();
-        
+
         assert_eq!(result.tasks.len(), 2);
         assert_eq!(result.tasks[0].name, "hello");
         assert_eq!(result.tasks[1].name, "world");
-        
+
         if let ValidatedValue::String(greeting) = &result.tasks[0].arguments["greeting"] {
             assert_eq!(greeting, "howdy");
         }
@@ -274,7 +274,7 @@ mod tests {
         let config = create_test_config();
         let mut parser = NomParser::new(Some(config)).unwrap();
         let result = parser.parse("--ottofile examples/ex1 hello").unwrap();
-        
+
         assert!(result.global_options.ottofile.is_some());
         assert_eq!(result.global_options.ottofile.unwrap().to_string_lossy(), "examples/ex1");
         assert_eq!(result.tasks.len(), 1);
@@ -285,13 +285,14 @@ mod tests {
     fn test_unknown_task() {
         let config = create_test_config();
         let mut parser = NomParser::new(Some(config)).unwrap();
-        let result = parser.parse("unknown_task");
-        
+        let result = parser.parse("hell");  // Close to "hello"
+
         assert!(result.is_err());
         match result.unwrap_err() {
             ParseError::UnknownTask { name, suggestions } => {
-                assert_eq!(name, "unknown_task");
+                assert_eq!(name, "hell");
                 assert!(!suggestions.is_empty());
+                assert!(suggestions.contains(&"hello".to_string()));
             }
             _ => panic!("Expected UnknownTask error"),
         }
@@ -302,10 +303,10 @@ mod tests {
         let config = create_test_config();
         let mut parser = NomParser::new(Some(config)).unwrap();
         let result = parser.parse("world").unwrap();
-        
+
         // Note: This test just verifies parsing, not dependency resolution
         // Dependency resolution happens in the executor
         assert_eq!(result.tasks.len(), 1);
         assert_eq!(result.tasks[0].name, "world");
     }
-} 
+}

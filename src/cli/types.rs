@@ -83,28 +83,28 @@ impl ValidatedValue {
     }
 }
 
-// Token types for parsing
+// Internal parsing types
 #[derive(Debug, Clone, PartialEq)]
-pub enum Token {
-    TaskName(String),
-    GlobalOption { name: String, value: Option<String> },
-    TaskArgument { name: String, value: Option<String> },
-    Help,
-    Version,
-    Unknown(String),
+pub struct GlobalOption {
+    pub name: String,
+    pub value: Option<String>,
 }
 
-// Parsing state for completion
-#[derive(Debug, Clone)]
-pub enum ParseState {
-    ExpectingGlobalOption,
-    ExpectingTaskName,
-    ExpectingTaskArgument { task_name: String },
-    ExpectingArgumentValue { task_name: String, arg_name: String },
+#[derive(Debug, Clone, PartialEq)]
+pub struct TaskInvocation {
+    pub name: String,
+    pub arguments: Vec<TaskArgument>,
 }
 
-#[derive(Debug, Clone)]
-pub struct PartialParseResult {
-    pub state: ParseState,
-    pub tokens: Vec<String>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct TaskArgument {
+    pub name: String,
+    pub value: Option<String>,
+}
+
+// Raw parsed command before validation
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawParsedCommand {
+    pub global_options: Vec<GlobalOption>,
+    pub tasks: Vec<TaskInvocation>,
 }
