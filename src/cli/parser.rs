@@ -4,11 +4,11 @@ use regex::Regex;
 use lru::LruCache;
 use std::num::NonZeroUsize;
 
-use crate::cli2::types::{
+use crate::cli::types::{
     ParsedCommand, ParsedTask, GlobalOptions, Token
 };
-use crate::cli2::error::{ParseError};
-use crate::cli2::validation::{KeywordValidator, ArgumentValidator, suggest_similar_task_names};
+use crate::cli::error::{ParseError};
+use crate::cli::validation::{KeywordValidator, ArgumentValidator, suggest_similar_task_names};
 use crate::cfg::config::ConfigSpec;
 
 pub struct NomParser {
@@ -478,7 +478,7 @@ impl NomParser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+
 
     #[test]
     fn test_empty_input() {

@@ -15,7 +15,7 @@ use tokio::{
 };
 use log::{error, info, debug};
 
-use crate::cli::parse::Task;
+use crate::executor::task::Task;
 use super::{
     workspace::{Workspace, ExecutionContext},
     output::{TaskStreams, OutputType},

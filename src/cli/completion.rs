@@ -1,5 +1,5 @@
-use crate::cli2::types::{ParseState, PartialParseResult};
-use crate::cli2::validation::KeywordValidator;
+use crate::cli::types::{ParseState, PartialParseResult};
+use crate::cli::validation::KeywordValidator;
 use crate::cfg::config::ConfigSpec;
 
 #[derive(Debug, Clone)]
@@ -285,7 +285,7 @@ impl BashCompletionGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+
 
     #[test]
     fn test_global_option_completions() {

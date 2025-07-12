@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use crate::cli2::NomParser;
-use crate::cli2::help::HelpGenerator;
+use crate::cli::NomParser;
+use crate::cli::help::HelpGenerator;
 use crate::cfg::config::ConfigSpec;
 use crate::cfg::task::TaskSpec;
 use crate::cfg::param::{ParamSpec, ParamSpecs};

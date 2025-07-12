@@ -1,6 +1,6 @@
 use std::collections::HashSet;
-use crate::cli2::types::ValidatedValue;
-use crate::cli2::error::{ValidationError, CollisionError};
+use crate::cli::types::ValidatedValue;
+use crate::cli::error::{ValidationError, CollisionError};
 use crate::cfg::config::ConfigSpec;
 use crate::cfg::task::TaskSpec;
 use crate::cfg::param::ParamSpec;
@@ -210,7 +210,7 @@ pub fn suggest_similar_task_names(invalid_name: &str, valid_tasks: &[String]) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+
 
     #[test]
     fn test_keyword_validator() {

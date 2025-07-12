@@ -6,7 +6,7 @@ use eyre::Result;
 
 use otto::cfg::config::ConfigSpec;
 use otto::cfg::task::TaskSpec;
-use otto::cli::parse::Task;
+use otto::executor::task::Task;
 use otto::executor::scheduler::{TaskScheduler, TaskStatus};
 use otto::executor::workspace::{Workspace, ExecutionContext};
 

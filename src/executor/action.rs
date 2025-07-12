@@ -5,7 +5,7 @@ use sha2::{Sha256, Digest};
 use hex;
 
 use super::workspace::Workspace;
-use crate::cli::parse::Task;
+use crate::executor::task::Task;
 
 /// Processed action with script type encoded in the enum variant
 pub enum ProcessedAction {

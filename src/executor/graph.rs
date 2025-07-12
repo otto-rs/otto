@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
 use eyre::{eyre, Result};
-
-use crate::cli::parse::{Task, DAG};
+use crate::executor::task::{Task, DAG};
 
 /// Graph visualization options
 #[derive(Debug, Clone)]
