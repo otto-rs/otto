@@ -187,7 +187,14 @@ impl ArgumentValidator {
         for (param_name, param_spec) in &task_spec.params {
             if !provided_args.contains_key(param_name) {
                 if let Some(ref default_value) = param_spec.default {
-                    let validated = Self::validate_argument(default_value, param_spec)?;
+                    // For defaults, we skip choice validation to match clap behavior
+                    // Clap allows defaults that aren't in the choices list
+                    let validated = if !param_spec.choices.is_empty() {
+                        // Skip choice validation for defaults
+                        Ok(ValidatedValue::String(default_value.clone()))
+                    } else {
+                        Self::validate_argument(default_value, param_spec)
+                    }?;
                     provided_args.insert(param_name.clone(), validated);
                 }
             }
