@@ -2,15 +2,25 @@
 
 use std::env;
 use eyre::Report;
-use std::sync::Arc;
-use colored::Colorize;
 use log::info;
 use env_logger::Target;
 use std::fs::OpenOptions;
 
+#[cfg(feature = "clap-cli")]
+use std::sync::Arc;
+#[cfg(feature = "clap-cli")]
+use colored::Colorize;
+
+#[cfg(feature = "clap-cli")]
 use otto::{
     cli::parse::Parser,
     executor::{TaskScheduler, Workspace, graph::{DagVisualizer, GraphOptions, GraphFormat}},
+};
+
+#[cfg(feature = "nom-cli")]
+use otto::{
+    cli2::demo::run_demo,
+    cli2::NomParser,
 };
 
 fn setup_logging() -> Result<(), Report> {
@@ -40,9 +50,29 @@ async fn main() -> Result<(), Report> {
     setup_logging()?;
     info!("Starting otto");
 
-    let args: Vec<String> = env::args().collect();
-    let mut parser = Parser::new(args.clone())?;
-    let parse_result = parser.parse();
+    let _args: Vec<String> = env::args().collect();
+
+    #[cfg(feature = "clap-cli")]
+    {
+        let mut parser = Parser::new(_args.clone())?;
+        let parse_result = parser.parse();
+        return main_clap(_args, parser, parse_result).await;
+    }
+
+    #[cfg(feature = "nom-cli")]
+    {
+        return main_nom(_args).await;
+    }
+
+    #[cfg(not(any(feature = "clap-cli", feature = "nom-cli")))]
+    {
+        eprintln!("Error: No CLI parser feature enabled. Enable either 'clap-cli' or 'nom-cli' feature.");
+        std::process::exit(1);
+    }
+}
+
+#[cfg(feature = "clap-cli")]
+async fn main_clap(args: Vec<String>, parser: Parser, parse_result: Result<(otto::cfg::otto::OttoSpec, otto::cli::parse::DAG<otto::cli::parse::Task>, String, Option<std::path::PathBuf>), Report>) -> Result<(), Report> {
     if let Err(e) = &parse_result {
         // Check for OttofileNotFound
         if let Some(_inner) = e.root_cause().downcast_ref::<otto::cli::parse::OttofileNotFound>() {
@@ -120,6 +150,7 @@ async fn main() -> Result<(), Report> {
     Ok(())
 }
 
+#[cfg(feature = "clap-cli")]
 fn handle_graph_if_requested(dag: &otto::cli::parse::DAG<otto::cli::parse::Task>) -> Result<Option<String>, Report> {
     // Check if any task in the DAG is named "graph"
     let mut graph_task = None;
@@ -154,6 +185,7 @@ fn handle_graph_if_requested(dag: &otto::cli::parse::DAG<otto::cli::parse::Task>
     Ok(None)
 }
 
+#[cfg(feature = "clap-cli")]
 fn parse_graph_parameters(task: &otto::cli::parse::Task) -> Result<GraphOptions, Report> {
     let mut options = GraphOptions::default();
 
@@ -188,6 +220,7 @@ fn parse_graph_parameters(task: &otto::cli::parse::Task) -> Result<GraphOptions,
     Ok(options)
 }
 
+#[cfg(feature = "clap-cli")]
 fn create_dag_without_graph_task(original_dag: &otto::cli::parse::DAG<otto::cli::parse::Task>) -> Result<otto::cli::parse::DAG<otto::cli::parse::Task>, Report> {
     use otto::cli::parse::DAG;
 
@@ -203,6 +236,7 @@ fn create_dag_without_graph_task(original_dag: &otto::cli::parse::DAG<otto::cli:
     Ok(new_dag)
 }
 
+#[cfg(feature = "clap-cli")]
 fn create_dag_for_tasks_with_dependencies(original_dag: &otto::cli::parse::DAG<otto::cli::parse::Task>, tasks: &[&otto::cli::parse::Task]) -> Result<otto::cli::parse::DAG<otto::cli::parse::Task>, Report> {
     use otto::cli::parse::DAG;
 
@@ -218,4 +252,49 @@ fn create_dag_for_tasks_with_dependencies(original_dag: &otto::cli::parse::DAG<o
     }
 
     Ok(new_dag)
+}
+
+#[cfg(feature = "nom-cli")]
+async fn main_nom(args: Vec<String>) -> Result<(), Report> {
+    // For now, just run the demo to show that nom-cli is working
+    // In a full implementation, this would:
+    // 1. Parse command line arguments using NomParser
+    // 2. Load configuration from ottofile
+    // 3. Execute tasks like the clap version does
+
+    println!("Otto CLI2 (nom-based) - Command: {:?}", args.get(1).unwrap_or(&"(none)".to_string()));
+
+    // Check if this is a demo request
+    if args.get(1).map(|s| s.as_str()) == Some("demo") {
+        run_demo().await;
+        return Ok(());
+    }
+
+    // For now, just show that we received the arguments
+    if args.len() > 1 {
+        println!("Received arguments: {:?}", &args[1..]);
+        println!("This would be parsed by the nom-based CLI parser.");
+
+        // Example of how the nom parser would be used:
+        let input = args[1..].join(" ");
+        println!("Input to parse: '{}'", input);
+
+        // Create a basic parser (without config for now)
+        let mut parser = NomParser::new(None).map_err(|e| eyre::eyre!("Failed to create parser: {}", e))?;
+
+        match parser.parse(&input) {
+            Ok(parsed) => {
+                println!("✓ Parsed successfully:");
+                println!("  Global options: {:?}", parsed.global_options);
+                println!("  Tasks: {:?}", parsed.tasks);
+            }
+            Err(e) => {
+                println!("✗ Parse error: {}", e);
+            }
+        }
+    } else {
+        println!("No arguments provided. Try 'otto demo' to see the nom-based parser demo.");
+    }
+
+    Ok(())
 }
