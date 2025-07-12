@@ -16,7 +16,8 @@ path = "src/main.rs"
 [features]
 default = ["clap-cli"]
 clap-cli = []
-nom-cli = []
+bespoke-cli = []  # Renamed from nom-cli
+nom-cli = []      # New feature for actual nom implementation
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

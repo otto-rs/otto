@@ -5,6 +5,19 @@ use eyre::Report;
 use log::info;
 use env_logger::Target;
 use std::fs::OpenOptions;
+use std::sync::Arc;
+use sha2::Digest;
+
+#[cfg(feature = "bespoke-cli")]
+use std::collections::HashSet;
+#[cfg(feature = "bespoke-cli")]
+use std::collections::HashMap;
+#[cfg(feature = "bespoke-cli")]
+use daggy::NodeIndex;
+#[cfg(feature = "bespoke-cli")]
+use eyre::eyre;
+use eyre::Result;
+
 #[cfg(feature = "nom-cli")]
 use std::collections::HashSet;
 #[cfg(feature = "nom-cli")]
@@ -13,28 +26,40 @@ use std::collections::HashMap;
 use daggy::NodeIndex;
 #[cfg(feature = "nom-cli")]
 use eyre::eyre;
-use eyre::Result;
-#[cfg(feature = "nom-cli")]
-use std::sync::Arc;
-#[cfg(feature = "nom-cli")]
-use sha2::Digest;
 
 #[cfg(feature = "clap-cli")]
 use colored::Colorize;
 
-#[cfg(feature = "clap-cli")]
-use std::sync::Arc;
 #[cfg(feature = "clap-cli")]
 use otto::{
     cli::parse::Parser,
     executor::{TaskScheduler, Workspace, graph::{DagVisualizer, GraphOptions, GraphFormat}},
 };
 
-#[cfg(feature = "nom-cli")]
+#[cfg(all(feature = "bespoke-cli", not(feature = "clap-cli")))]
 use otto::{
-    cli2::{NomParser, ValidatedValue},
+    cli2::{BespokeParser, ValidatedValue},
     executor::{TaskScheduler, Workspace},
 };
+
+#[cfg(all(feature = "nom-cli", not(feature = "clap-cli"), not(feature = "bespoke-cli")))]
+use otto::{
+    cli3::{NomParser, ValidatedValue},
+    executor::{TaskScheduler, Workspace},
+};
+
+#[cfg(feature = "bespoke-cli")]
+use otto::cli::parse::DAG;
+#[cfg(feature = "bespoke-cli")]
+use otto::cli::parse::Task;
+#[cfg(feature = "bespoke-cli")]
+use otto::cfg::config::ConfigSpec;
+#[cfg(feature = "bespoke-cli")]
+use otto::cfg::config::Value;
+#[cfg(feature = "bespoke-cli")]
+use otto::cfg::env as env_eval;
+#[cfg(feature = "bespoke-cli")]
+use otto::executor::workspace::ExecutionContext;
 
 #[cfg(feature = "nom-cli")]
 use otto::cli::parse::DAG;
@@ -85,14 +110,19 @@ async fn main() -> Result<(), Report> {
         return main_clap(_args, parser, parse_result).await;
     }
 
+    #[cfg(feature = "bespoke-cli")]
+    {
+        return main_bespoke().await;
+    }
+
     #[cfg(feature = "nom-cli")]
     {
         return main_nom().await;
     }
 
-    #[cfg(not(any(feature = "clap-cli", feature = "nom-cli")))]
+    #[cfg(not(any(feature = "clap-cli", feature = "bespoke-cli", feature = "nom-cli")))]
     {
-        eprintln!("Error: No CLI parser feature enabled. Enable either 'clap-cli' or 'nom-cli' feature.");
+        eprintln!("Error: No CLI parser feature enabled. Enable either 'clap-cli', 'bespoke-cli', or 'nom-cli' feature.");
         std::process::exit(1);
     }
 }
@@ -280,8 +310,8 @@ fn create_dag_for_tasks_with_dependencies(original_dag: &otto::cli::parse::DAG<o
     Ok(new_dag)
 }
 
-#[cfg(feature = "nom-cli")]
-async fn main_nom() -> Result<()> {
+#[cfg(feature = "bespoke-cli")]
+async fn main_bespoke() -> Result<()> {
     let args: Vec<String> = env::args().collect();
 
     // First, extract ottofile path from arguments if present
@@ -374,7 +404,7 @@ async fn main_nom() -> Result<()> {
     let cwd = std::env::current_dir()?;
 
     // Parse command line arguments
-    let mut parser = NomParser::new(Some(config_spec.clone()))?;
+            let mut parser = BespokeParser::new(Some(config_spec.clone()))?;
     let parsed = parser.parse(&input)?;
 
     // Handle help and version
@@ -514,8 +544,172 @@ async fn main_nom() -> Result<()> {
     Ok(())
 }
 
-/// Show comprehensive help like the clap version
 #[cfg(feature = "nom-cli")]
+async fn main_nom() -> Result<()> {
+    let args: Vec<String> = env::args().collect();
+    let command_line = args[1..].join(" ");
+
+    // Try to find and load config
+    let (config_spec, _hash, ottofile_path) = match load_config_from_path(None) {
+        Ok((config, hash, path)) => (Some(config), hash, path),
+        Err(_) => {
+            // No config found, check if help is requested
+            if command_line.contains("--help") || command_line.contains("-h") {
+                show_no_ottofile_help();
+                return Ok(());
+            }
+            (None, String::new(), None)
+        }
+    };
+
+    // Create nom parser
+    let mut parser = match NomParser::new(config_spec.clone()) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    };
+
+    // Parse command line
+    let parsed = match parser.parse(&command_line) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    };
+
+    // Handle help/version
+    if parsed.global_options.help {
+        if let Some(ref config) = config_spec {
+            show_comprehensive_help(config);
+        } else {
+            show_no_ottofile_help();
+        }
+        return Ok(());
+    }
+
+    if parsed.global_options.version {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
+    // Need config for actual execution
+    let config_spec = config_spec.ok_or_else(|| {
+        eyre::eyre!("No ottofile found. Use --help for more information.")
+    })?;
+
+    // Convert to execution format (reuse existing logic)
+    let cwd = env::current_dir()?;
+    let global_envs = if config_spec.otto.envs.is_empty() {
+        HashMap::new()
+    } else {
+        env_eval::evaluate_envs(&config_spec.otto.envs, Some(&cwd))
+            .unwrap_or_else(|e| {
+                eprintln!("Warning: Failed to evaluate global environment variables: {}", e);
+                HashMap::new()
+            })
+    };
+
+    // Compute task dependencies
+    let task_deps = compute_task_deps(&config_spec)?;
+
+    // Collect tasks to execute
+    let mut requested_tasks = Vec::new();
+    for parsed_task in &parsed.tasks {
+        requested_tasks.push(parsed_task.name.clone());
+    }
+
+    // If no tasks specified, use defaults
+    if requested_tasks.is_empty() {
+        requested_tasks = config_spec.otto.tasks.clone();
+    }
+
+    // Find all tasks needed (requested + their transitive dependencies)
+    let mut tasks_needed = HashSet::new();
+    for task_name in &requested_tasks {
+        collect_transitive_deps(task_name, &task_deps, &mut tasks_needed, &config_spec)?;
+    }
+
+    // Build tasks with computed dependencies
+    let mut tasks = Vec::new();
+    for task_name in &tasks_needed {
+        if let Some(task_spec) = config_spec.tasks.get(task_name) {
+            // Find the parsed task arguments if this task was explicitly requested
+            let mut task_args = HashMap::new();
+            for parsed_task in &parsed.tasks {
+                if parsed_task.name == *task_name {
+                    for (arg_name, validated_value) in &parsed_task.arguments {
+                        let value = match validated_value {
+                            ValidatedValue::String(s) => Value::Item(s.clone()),
+                            ValidatedValue::Integer(i) => Value::Item(i.to_string()),
+                            ValidatedValue::Float(f) => Value::Item(f.to_string()),
+                            ValidatedValue::Boolean(b) => Value::Item(b.to_string()),
+                            ValidatedValue::Path(p) => Value::Item(p.to_string_lossy().to_string()),
+                            ValidatedValue::Url(u) => Value::Item(u.clone()),
+                        };
+                        task_args.insert(arg_name.clone(), value);
+                    }
+                    break;
+                }
+            }
+
+            // Create task
+            let task = Task {
+                name: task_name.clone(),
+                task_deps: task_deps.get(task_name).cloned().unwrap_or_default().into_iter().collect(),
+                file_deps: task_spec.input.clone(),
+                output_deps: task_spec.output.clone(),
+                envs: {
+                    let mut envs = global_envs.clone();
+                    if let Ok(task_envs) = env_eval::evaluate_envs(&task_spec.envs, Some(&cwd)) {
+                        envs.extend(task_envs);
+                    }
+                    envs
+                },
+                values: task_args,
+                action: task_spec.action.clone(),
+                hash: "".to_string(), // Will be computed later
+            };
+
+            tasks.push(task);
+        }
+    }
+
+    // Setup workspace
+    let workspace_root = if let Some(ref ottofile) = ottofile_path {
+        ottofile.parent()
+            .unwrap_or_else(|| ottofile.as_path())
+            .to_path_buf()
+    } else {
+        env::current_dir()?
+    };
+
+    let workspace = Workspace::new(workspace_root).await?;
+    workspace.init().await?;
+
+    // Save execution context metadata
+    let execution_context = ExecutionContext {
+        prog: "otto".to_string(),
+        cwd: cwd.clone(),
+        user: env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
+        timestamp: workspace.timestamp(),
+        hash: workspace.hash().to_string(),
+        ottofile: ottofile_path,
+        args,
+    };
+    workspace.save_execution_context(execution_context.clone()).await?;
+
+    // Execute tasks
+    let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), execution_context.clone(), config_spec.otto.jobs * 2, config_spec.otto.jobs).await?;
+    scheduler.execute_all().await?;
+
+    Ok(())
+}
+
+/// Show comprehensive help like the clap version
+#[cfg(any(feature = "bespoke-cli", feature = "nom-cli"))]
 fn show_comprehensive_help(config_spec: &ConfigSpec) {
     let otto_spec = &config_spec.otto;
 
@@ -576,7 +770,7 @@ fn show_comprehensive_help(config_spec: &ConfigSpec) {
 }
 
 /// Show task-specific help like clap does
-#[cfg(feature = "nom-cli")]
+#[cfg(any(feature = "bespoke-cli", feature = "nom-cli"))]
 fn show_task_help(config_spec: &ConfigSpec, task_name: &str) {
     if let Some(task_spec) = config_spec.tasks.get(task_name) {
         // Generate task-specific help similar to clap's task_to_command
@@ -642,7 +836,7 @@ fn show_task_help(config_spec: &ConfigSpec, task_name: &str) {
 
 /// Compute task dependencies using simple linear-time algorithm
 /// This mirrors the logic from src/cli/parse.rs
-#[cfg(feature = "nom-cli")]
+#[cfg(any(feature = "bespoke-cli", feature = "nom-cli"))]
 fn compute_task_deps(config_spec: &ConfigSpec) -> Result<HashMap<String, HashSet<String>>> {
     // Initialize empty dependency sets for all tasks
     let mut task_deps: HashMap<String, HashSet<String>> = HashMap::new();
@@ -676,7 +870,7 @@ fn compute_task_deps(config_spec: &ConfigSpec) -> Result<HashMap<String, HashSet
 
 /// Collect all transitive dependencies for a task
 /// This mirrors the logic from src/cli/parse.rs
-#[cfg(feature = "nom-cli")]
+#[cfg(any(feature = "bespoke-cli", feature = "nom-cli"))]
 fn collect_transitive_deps(
     task_name: &str,
     task_deps: &HashMap<String, HashSet<String>>,
@@ -704,7 +898,7 @@ fn collect_transitive_deps(
 }
 
 // Helper function to find ottofile
-#[cfg(feature = "nom-cli")]
+#[cfg(any(feature = "bespoke-cli", feature = "nom-cli"))]
 fn find_ottofile(path: &std::path::Path) -> Result<Option<std::path::PathBuf>, Report> {
     const OTTOFILES: &[&str] = &[
         "otto.yml",
@@ -732,7 +926,7 @@ fn find_ottofile(path: &std::path::Path) -> Result<Option<std::path::PathBuf>, R
 }
 
 // Helper function to divine ottofile path
-#[cfg(feature = "nom-cli")]
+#[cfg(any(feature = "bespoke-cli", feature = "nom-cli"))]
 fn divine_ottofile(value: String) -> Result<Option<std::path::PathBuf>, Report> {
     let mut path = expanduser::expanduser(value)?;
     path = std::fs::canonicalize(path)?;
@@ -743,7 +937,7 @@ fn divine_ottofile(value: String) -> Result<Option<std::path::PathBuf>, Report> 
 }
 
 // Helper function to load config
-#[cfg(feature = "nom-cli")]
+#[cfg(any(feature = "bespoke-cli", feature = "nom-cli"))]
 fn load_config_from_path(ottofile_path: Option<std::path::PathBuf>) -> Result<(ConfigSpec, String, Option<std::path::PathBuf>), Report> {
     if let Some(ottofile) = ottofile_path {
         let content = std::fs::read_to_string(&ottofile)?;
@@ -758,7 +952,7 @@ fn load_config_from_path(ottofile_path: Option<std::path::PathBuf>) -> Result<(C
     }
 }
 
-#[cfg(feature = "nom-cli")]
+#[cfg(any(feature = "bespoke-cli", feature = "nom-cli"))]
 fn show_no_ottofile_help() {
     let log_location = dirs::data_local_dir()
         .map(|dir| dir.join("otto").join("logs").join("otto.log"))

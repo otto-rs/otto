@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::cli2::NomParser;
+use crate::cli2::BespokeParser;
 use crate::cli2::help::HelpGenerator;
 use crate::cfg::config::ConfigSpec;
 use crate::cfg::task::TaskSpec;
@@ -18,7 +18,7 @@ pub fn demo_nom_parser() {
     let config = create_sample_config();
 
     // Create parser with configuration
-    let mut parser = NomParser::new(Some(config.clone())).unwrap();
+    let mut parser = BespokeParser::new(Some(config.clone())).unwrap();
 
     // Test various command line inputs
     let test_commands = vec![

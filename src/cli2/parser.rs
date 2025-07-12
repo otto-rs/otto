@@ -11,7 +11,7 @@ use crate::cli2::error::{ParseError};
 use crate::cli2::validation::{KeywordValidator, ArgumentValidator, suggest_similar_task_names};
 use crate::cfg::config::ConfigSpec;
 
-pub struct NomParser {
+pub struct BespokeParser {
     config: Option<ConfigSpec>,
     keyword_validator: KeywordValidator,
     // Performance optimizations
@@ -21,7 +21,7 @@ pub struct NomParser {
     parser_cache: LruCache<String, ()>, // Placeholder for cached parsers
 }
 
-impl NomParser {
+impl BespokeParser {
     pub fn new(config: Option<ConfigSpec>) -> Result<Self, ParseError> {
         let keyword_validator = KeywordValidator::new();
 
@@ -623,7 +623,7 @@ mod tests {
 
     #[test]
     fn test_empty_input() {
-        let mut parser = NomParser::new(None).unwrap();
+        let mut parser = BespokeParser::new(None).unwrap();
         let result = parser.parse("").unwrap();
         assert!(result.tasks.is_empty());
         assert!(!result.global_options.help);
@@ -632,7 +632,7 @@ mod tests {
 
     #[test]
     fn test_help_flag() {
-        let mut parser = NomParser::new(None).unwrap();
+        let mut parser = BespokeParser::new(None).unwrap();
         let result = parser.parse("--help").unwrap();
         assert!(result.global_options.help);
         assert!(result.tasks.is_empty());
@@ -640,7 +640,7 @@ mod tests {
 
     #[test]
     fn test_version_flag() {
-        let mut parser = NomParser::new(None).unwrap();
+        let mut parser = BespokeParser::new(None).unwrap();
         let result = parser.parse("--version").unwrap();
         assert!(result.global_options.version);
         assert!(result.tasks.is_empty());
@@ -687,7 +687,7 @@ mod tests {
             tasks,
         };
 
-        let mut parser = NomParser::new(Some(config)).unwrap();
+        let mut parser = BespokeParser::new(Some(config)).unwrap();
         let result = parser.parse("hello --greeting=howdy").unwrap();
 
         assert_eq!(result.tasks.len(), 1);
@@ -741,7 +741,7 @@ mod tests {
             tasks,
         };
 
-        let mut parser = NomParser::new(Some(config)).unwrap();
+        let mut parser = BespokeParser::new(Some(config)).unwrap();
         let result = parser.parse("task2").unwrap();
 
         assert_eq!(result.tasks.len(), 1);
@@ -750,7 +750,7 @@ mod tests {
 
     #[test]
     fn test_global_options() {
-        let mut parser = NomParser::new(None).unwrap();
+        let mut parser = BespokeParser::new(None).unwrap();
         let result = parser.parse("--jobs 4 --verbosity 2").unwrap();
 
         assert_eq!(result.global_options.jobs, Some(4));
@@ -860,7 +860,7 @@ mod tests {
             tasks,
         };
 
-        let mut parser = NomParser::new(Some(config)).unwrap();
+        let mut parser = BespokeParser::new(Some(config)).unwrap();
 
         // Test the complex command: build --release=true test --verbose deploy --env=staging
         let result = parser.parse("build --release=true test --verbose deploy --env=staging").unwrap();
@@ -936,7 +936,7 @@ mod tests {
             tasks,
         };
 
-        let mut parser = NomParser::new(Some(config)).unwrap();
+        let mut parser = BespokeParser::new(Some(config)).unwrap();
         let result = parser.parse("hello").unwrap();
 
         assert_eq!(result.tasks.len(), 1);
@@ -991,7 +991,7 @@ mod tests {
             tasks,
         };
 
-        let mut parser = NomParser::new(Some(config)).unwrap();
+        let mut parser = BespokeParser::new(Some(config)).unwrap();
 
         // Test short flag
         let result = parser.parse("hello -g howdy").unwrap();
@@ -1053,7 +1053,7 @@ mod tests {
             tasks,
         };
 
-        let mut parser = NomParser::new(Some(config)).unwrap();
+        let mut parser = BespokeParser::new(Some(config)).unwrap();
 
         // Test empty input uses default task
         let result = parser.parse("").unwrap();
@@ -1148,7 +1148,7 @@ mod tests {
             tasks,
         };
 
-        let mut parser = NomParser::new(Some(config)).unwrap();
+        let mut parser = BespokeParser::new(Some(config)).unwrap();
 
         // Test cases that should match clap behavior:
 
