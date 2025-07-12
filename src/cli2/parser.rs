@@ -228,6 +228,55 @@ impl NomParser {
                         value,
                     });
                     continue;
+                } else {
+                    // Check if this is a task-specific short flag
+                    if let Some(ref config) = self.config {
+                        let mut found_param = None;
+
+                        // Search all tasks for a parameter with this short flag
+                        for task_spec in config.tasks.values() {
+                            for param_spec in task_spec.params.values() {
+                                if param_spec.short == Some(flag_char) {
+                                    found_param = Some(param_spec.name.clone());
+                                    break;
+                                }
+                            }
+                            if found_param.is_some() {
+                                break;
+                            }
+                        }
+
+                        if let Some(param_name) = found_param {
+                            remaining = &remaining[2..].trim_start();
+
+                            let value = if !remaining.is_empty() && !remaining.starts_with("-") {
+                                let value_end = remaining.find(' ').unwrap_or(remaining.len());
+                                let value_str = &remaining[..value_end];
+
+                                // Check if this potential value is actually a known task name
+                                if config.tasks.contains_key(value_str) {
+                                    // This is a task name, don't consume it as a value
+                                    None
+                                } else {
+                                    remaining = &remaining[value_end..];
+                                    Some(value_str.to_string())
+                                }
+                            } else {
+                                None
+                            };
+
+                            tokens.push(Token::TaskArgument {
+                                name: param_name,
+                                value,
+                            });
+                            continue;
+                        }
+                    }
+
+                    // Unknown short flag, treat as unknown token
+                    tokens.push(Token::Unknown(flag_str));
+                    remaining = &remaining[2..];
+                    continue;
                 }
             }
 
@@ -545,15 +594,17 @@ impl NomParser {
 
     fn get_default_tasks(&self) -> Vec<ParsedTask> {
         if let Some(ref config) = self.config {
-            // Return the first task as default, or empty if no tasks
-            if let Some((task_name, _)) = config.tasks.iter().next() {
-                vec![ParsedTask {
-                    name: task_name.clone(),
-                    arguments: HashMap::new(),
-                }]
-            } else {
-                vec![]
+            // Use the default tasks from otto.tasks configuration
+            let mut default_tasks = Vec::new();
+            for task_name in &config.otto.tasks {
+                if config.tasks.contains_key(task_name) {
+                    default_tasks.push(ParsedTask {
+                        name: task_name.clone(),
+                        arguments: HashMap::new(),
+                    });
+                }
             }
+            default_tasks
         } else {
             vec![]
         }
@@ -896,6 +947,249 @@ mod tests {
             assert_eq!(value, "hello");
         } else {
             panic!("Expected string value for greeting");
+        }
+    }
+
+    #[test]
+    fn test_short_flags_work() {
+        // Test that short flags like -g work correctly
+        let mut tasks = HashMap::new();
+        let mut params = HashMap::new();
+        params.insert("greeting".to_string(), ParamSpec {
+            name: "greeting".to_string(),
+            short: Some('g'),
+            long: Some("greeting".to_string()),
+            param_type: ParamType::OPT,
+            dest: None,
+            metavar: None,
+            default: Some("hello".to_string()),
+            constant: crate::cfg::param::Value::Empty,
+            choices: vec!["hello".to_string(), "howdy".to_string()],
+            nargs: Nargs::One,
+            help: Some("Greeting to use".to_string()),
+            value: crate::cfg::param::Value::Empty,
+        });
+
+        tasks.insert("hello".to_string(), TaskSpec {
+            name: "hello".to_string(),
+            help: Some("Say hello".to_string()),
+            after: vec![],
+            before: vec![],
+            input: vec![],
+            output: vec![],
+            envs: HashMap::new(),
+            params,
+            action: "echo ${greeting}".to_string(),
+            timeout: None,
+        });
+
+        let config = ConfigSpec {
+            otto: OttoSpec {
+                tasks: vec!["hello".to_string()],
+                ..Default::default()
+            },
+            tasks,
+        };
+
+        let mut parser = NomParser::new(Some(config)).unwrap();
+
+        // Test short flag
+        let result = parser.parse("hello -g howdy").unwrap();
+        assert_eq!(result.tasks.len(), 1);
+        assert_eq!(result.tasks[0].name, "hello");
+        if let ValidatedValue::String(value) = &result.tasks[0].arguments["greeting"] {
+            assert_eq!(value, "howdy");
+        } else {
+            panic!("Expected string value for greeting");
+        }
+
+        // Test long flag
+        let result = parser.parse("hello --greeting howdy").unwrap();
+        assert_eq!(result.tasks.len(), 1);
+        assert_eq!(result.tasks[0].name, "hello");
+        if let ValidatedValue::String(value) = &result.tasks[0].arguments["greeting"] {
+            assert_eq!(value, "howdy");
+        } else {
+            panic!("Expected string value for greeting");
+        }
+    }
+
+    #[test]
+    fn test_default_tasks_from_config() {
+        // Test that default tasks come from otto.tasks configuration
+        let mut tasks = HashMap::new();
+
+        tasks.insert("punch".to_string(), TaskSpec {
+            name: "punch".to_string(),
+            help: Some("Punch task".to_string()),
+            after: vec![],
+            before: vec![],
+            input: vec![],
+            output: vec![],
+            envs: HashMap::new(),
+            params: HashMap::new(),
+            action: "echo punch".to_string(),
+            timeout: None,
+        });
+
+        tasks.insert("hello".to_string(), TaskSpec {
+            name: "hello".to_string(),
+            help: Some("Hello task".to_string()),
+            after: vec![],
+            before: vec![],
+            input: vec![],
+            output: vec![],
+            envs: HashMap::new(),
+            params: HashMap::new(),
+            action: "echo hello".to_string(),
+            timeout: None,
+        });
+
+        let config = ConfigSpec {
+            otto: OttoSpec {
+                tasks: vec!["punch".to_string()], // punch is the default task
+                ..Default::default()
+            },
+            tasks,
+        };
+
+        let mut parser = NomParser::new(Some(config)).unwrap();
+
+        // Test empty input uses default task
+        let result = parser.parse("").unwrap();
+        assert_eq!(result.tasks.len(), 1);
+        assert_eq!(result.tasks[0].name, "punch"); // Should be punch, not hello
+    }
+
+    #[test]
+    fn test_behavior_matches_clap_examples() {
+        // Test scenarios that should match clap behavior exactly
+        let mut tasks = HashMap::new();
+
+        // Hello task with -g short flag
+        let mut hello_params = HashMap::new();
+        hello_params.insert("greeting".to_string(), ParamSpec {
+            name: "greeting".to_string(),
+            short: Some('g'),
+            long: Some("greeting".to_string()),
+            param_type: ParamType::OPT,
+            dest: None,
+            metavar: None,
+            default: Some("hello".to_string()),
+            constant: crate::cfg::param::Value::Empty,
+            choices: vec!["hello".to_string(), "howdy".to_string()],
+            nargs: Nargs::One,
+            help: Some("Greeting to use".to_string()),
+            value: crate::cfg::param::Value::Empty,
+        });
+
+        tasks.insert("hello".to_string(), TaskSpec {
+            name: "hello".to_string(),
+            help: Some("Hello task".to_string()),
+            after: vec![],
+            before: vec![],
+            input: vec![],
+            output: vec![],
+            envs: HashMap::new(),
+            params: hello_params,
+            action: "echo ${greeting}".to_string(),
+            timeout: None,
+        });
+
+        // World task with -n short flag and dependency on hello
+        let mut world_params = HashMap::new();
+        world_params.insert("name".to_string(), ParamSpec {
+            name: "name".to_string(),
+            short: Some('n'),
+            long: Some("name".to_string()),
+            param_type: ParamType::OPT,
+            dest: None,
+            metavar: None,
+            default: Some("world".to_string()),
+            constant: crate::cfg::param::Value::Empty,
+            choices: vec![],
+            nargs: Nargs::One,
+            help: Some("Name to use".to_string()),
+            value: crate::cfg::param::Value::Empty,
+        });
+
+        tasks.insert("world".to_string(), TaskSpec {
+            name: "world".to_string(),
+            help: Some("World task".to_string()),
+            after: vec![],
+            before: vec!["hello".to_string()], // world depends on hello
+            input: vec![],
+            output: vec![],
+            envs: HashMap::new(),
+            params: world_params,
+            action: "echo ${name}".to_string(),
+            timeout: None,
+        });
+
+        // Punch task (default)
+        tasks.insert("punch".to_string(), TaskSpec {
+            name: "punch".to_string(),
+            help: Some("Punch task".to_string()),
+            after: vec![],
+            before: vec![],
+            input: vec![],
+            output: vec![],
+            envs: HashMap::new(),
+            params: HashMap::new(),
+            action: "echo punch".to_string(),
+            timeout: None,
+        });
+
+        let config = ConfigSpec {
+            otto: OttoSpec {
+                tasks: vec!["punch".to_string()], // punch is the default
+                ..Default::default()
+            },
+            tasks,
+        };
+
+        let mut parser = NomParser::new(Some(config)).unwrap();
+
+        // Test cases that should match clap behavior:
+
+        // 1. Empty input -> runs default task (punch)
+        let result = parser.parse("").unwrap();
+        assert_eq!(result.tasks.len(), 1);
+        assert_eq!(result.tasks[0].name, "punch");
+
+        // 2. hello -g howdy -> runs hello with greeting=howdy
+        let result = parser.parse("hello -g howdy").unwrap();
+        assert_eq!(result.tasks.len(), 1);
+        assert_eq!(result.tasks[0].name, "hello");
+        if let ValidatedValue::String(value) = &result.tasks[0].arguments["greeting"] {
+            assert_eq!(value, "howdy");
+        } else {
+            panic!("Expected string value for greeting");
+        }
+
+        // 3. hello --greeting howdy -> runs hello with greeting=howdy
+        let result = parser.parse("hello --greeting howdy").unwrap();
+        assert_eq!(result.tasks.len(), 1);
+        assert_eq!(result.tasks[0].name, "hello");
+        if let ValidatedValue::String(value) = &result.tasks[0].arguments["greeting"] {
+            assert_eq!(value, "howdy");
+        } else {
+            panic!("Expected string value for greeting");
+        }
+
+        // 4. world -> runs world task (dependencies handled by main execution logic)
+        let result = parser.parse("world").unwrap();
+        assert_eq!(result.tasks.len(), 1);
+        assert_eq!(result.tasks[0].name, "world");
+
+        // 5. world -n universe -> runs world with name=universe
+        let result = parser.parse("world -n universe").unwrap();
+        assert_eq!(result.tasks.len(), 1);
+        assert_eq!(result.tasks[0].name, "world");
+        if let ValidatedValue::String(value) = &result.tasks[0].arguments["name"] {
+            assert_eq!(value, "universe");
+        } else {
+            panic!("Expected string value for name");
         }
     }
 }
