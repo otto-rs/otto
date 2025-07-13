@@ -91,9 +91,25 @@ async fn main_nom() -> Result<()> {
         }
     };
 
-    // Check for task-level help first (before parsing)
+    // Check for help first (before parsing)
     if command_line.contains("--help") || command_line.contains("-h") {
         let args: Vec<&str> = command_line.split_whitespace().collect();
+
+        // Check if help is the first argument (global help)
+        if args.len() > 0 && (args[0] == "--help" || args[0] == "-h") {
+            // Global help requested
+            match load_config_from_path(ottofile_path.clone()) {
+                Ok((config_spec, _, _)) => {
+                    show_tasks_help(&config_spec);
+                    return Ok(());
+                }
+                Err(_) => {
+                    // No config found, show help with ottofile error details
+                    show_help(true);
+                    std::process::exit(2);
+                }
+            }
+        }
 
         // Check if help comes after a task name
         for i in 1..args.len() {
@@ -112,9 +128,9 @@ async fn main_nom() -> Result<()> {
                         break;
                     }
                     Err(_) => {
-                        // No config found, show generic help
-                        show_help();
-                        std::process::exit(0);
+                        // No config found, show help with ottofile error details
+                        show_help(true);
+                        std::process::exit(2);
                     }
                 }
             }
@@ -151,9 +167,9 @@ async fn main_nom() -> Result<()> {
     // Handle help/version
     if parsed.global_options.help {
         if let Some(ref config) = config_spec {
-            show_comprehensive_help(config);
+            show_tasks_help(config);
         } else {
-            show_help();
+            show_help(true);
         }
         return Ok(());
     }
@@ -168,7 +184,7 @@ async fn main_nom() -> Result<()> {
         Some(config) => config,
         None => {
             // If no ottofile is found, always show helpful error message regardless of task specification
-            show_no_ottofile_help();
+            show_help(true);
             std::process::exit(2);
         }
     };
@@ -282,7 +298,7 @@ async fn main_nom() -> Result<()> {
 }
 
 /// Show comprehensive help like the clap version
-fn show_comprehensive_help(config_spec: &ConfigSpec) {
+fn show_tasks_help(config_spec: &ConfigSpec) {
     let otto_spec = &config_spec.otto;
 
     println!("A task runner");
@@ -323,7 +339,7 @@ fn show_comprehensive_help(config_spec: &ConfigSpec) {
 
     // Show options
     println!("\x1b[1mOptions:\x1b[0m");
-    println!("  \x1b[1m-o, --ottofile <PATH>\x1b[0m    path to the ottofile [default: ./]");
+    println!("  \x1b[1m-o, --ottofile <PATH>\x1b[0m    path to the ottofile [default: {}]", otto_spec.home);
     println!("  \x1b[1m-a, --api <URL>\x1b[0m          api url [default: {}]", otto_spec.api);
     println!("  \x1b[1m-j, --jobs <JOBS>\x1b[0m        number of jobs to run in parallel [default: {}]", otto_spec.jobs);
     println!("  \x1b[1m-H, --home <PATH>\x1b[0m        path to the Otto home directory [default: {}]", otto_spec.home);
@@ -527,7 +543,7 @@ fn load_config_from_path(ottofile_path: Option<std::path::PathBuf>) -> Result<(C
     }
 }
 
-fn show_no_ottofile_help() {
+fn show_help(missing_ottofile: bool) {
     let log_location = dirs::data_local_dir()
         .map(|dir| dir.join("otto").join("logs").join("otto.log"))
         .and_then(|path| path.to_str().map(|s| s.to_string()))
@@ -548,36 +564,18 @@ fn show_no_ottofile_help() {
     println!("  \x1b[1m-V, --version\x1b[0m            Print version");
     println!();
     println!("Logs are written to: {}", log_location);
-    println!();
-    println!("\x1b[1m\x1b[31mERROR: No ottofile found in this directory or any parent directory!\x1b[0m");
-    println!("\x1b[33mOtto looks for one of the following files in the current or parent directories:\x1b[0m");
-    println!();
-    println!("To get started, create an otto.yml file in your project root.");
-    println!("  - otto.yml");
-    println!("  - .otto.yml");
-    println!("  - otto.yaml");
-    println!("  - .otto.yaml");
-    println!("  - Ottofile");
-    println!("  - OTTOFILE");
-}
 
-fn show_help() {
-    println!("A task runner");
-    println!();
-    println!("\x1b[1mUsage:\x1b[0m \x1b[1motto\x1b[0m [OPTIONS] [COMMAND]");
-    println!();
-    println!("\x1b[1mOptions:\x1b[0m");
-    println!("  \x1b[1m-o, --ottofile <PATH>\x1b[0m    path to the ottofile [default: ./]");
-    println!("  \x1b[1m-a, --api <URL>\x1b[0m          api url [default: 1]");
-    println!("  \x1b[1m-j, --jobs <JOBS>\x1b[0m        number of jobs to run in parallel [default: 32]");
-    println!("  \x1b[1m-H, --home <PATH>\x1b[0m        path to the Otto home directory [default: ~/.otto]");
-    println!("  \x1b[1m-t, --tasks <TASKS>\x1b[0m      comma separated list of tasks to run [default: *]");
-    println!("  \x1b[1m-v, --verbosity <LEVEL>\x1b[0m  verbosity level [default: 1]");
-    println!("  \x1b[1m-T, --timeout <SECONDS>\x1b[0m  global timeout in seconds (overrides task-specific timeouts)");
-    println!("  \x1b[1m-V, --version\x1b[0m            Print version");
-    println!();
-    println!("Logs are written to: {}", dirs::data_local_dir()
-        .map(|dir| dir.join("otto").join("logs").join("otto.log"))
-        .and_then(|path| path.to_str().map(|s| s.to_string()))
-        .unwrap_or_else(|| "~/.local/share/otto/logs/otto.log".to_string()));
+    if missing_ottofile {
+        println!();
+        println!("\x1b[1m\x1b[31mERROR: No ottofile found in this directory or any parent directory!\x1b[0m");
+        println!("\x1b[33mOtto looks for one of the following files in the current or parent directories:\x1b[0m");
+        println!();
+        println!("To get started, create an otto.yml file in your project root.");
+        println!("  - otto.yml");
+        println!("  - .otto.yml");
+        println!("  - otto.yaml");
+        println!("  - .otto.yaml");
+        println!("  - Ottofile");
+        println!("  - OTTOFILE");
+    }
 }
