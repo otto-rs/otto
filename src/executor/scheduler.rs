@@ -352,8 +352,8 @@ impl TaskScheduler {
             let mut cmd = Command::new(interpreter);
             cmd.arg(&script_path)
                .current_dir(workspace.root())
-               .env_clear()
-               .envs(&envs)
+               // Inherit current environment by default (no env_clear())
+               .envs(&envs)  // Override with user-specified env vars
                .env("OTTO_TASK", &task_name)
                .env("OTTO_TASK_DIR", task_dir.to_string_lossy().to_string())
                .env("OTTO_WORKSPACE", workspace.root().to_string_lossy().to_string())
