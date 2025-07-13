@@ -294,8 +294,17 @@ fn show_comprehensive_help(config_spec: &ConfigSpec) {
     if !config_spec.tasks.is_empty() {
         println!("\x1b[1mCommands:\x1b[0m");
 
+        // Calculate the maximum command name length for proper alignment
+        let mut max_command_len = "graph".len(); // Start with built-in commands
+        max_command_len = max_command_len.max("help".len());
+
+        // Check all task names
+        for task_spec in config_spec.tasks.values() {
+            max_command_len = max_command_len.max(task_spec.name.len());
+        }
+
         // Add graph meta-task first
-        println!("  \x1b[1mgraph\x1b[0m  [built-in] Visualize the task dependency graph");
+        println!("  \x1b[1m{:<width$}\x1b[0m  [built-in] Visualize the task dependency graph", "graph", width = max_command_len);
 
         // Sort tasks alphabetically
         let mut task_list: Vec<_> = config_spec.tasks.values().collect();
@@ -303,12 +312,12 @@ fn show_comprehensive_help(config_spec: &ConfigSpec) {
 
         for task_spec in task_list {
             match &task_spec.help {
-                Some(help) => println!("  \x1b[1m{}\x1b[0m  {}", task_spec.name, help),
-                None => println!("  \x1b[1m{}\x1b[0m  {} task help", task_spec.name, task_spec.name),
+                Some(help) => println!("  \x1b[1m{:<width$}\x1b[0m  {}", task_spec.name, help, width = max_command_len),
+                None => println!("  \x1b[1m{:<width$}\x1b[0m  {} task help", task_spec.name, task_spec.name, width = max_command_len),
             }
         }
 
-        println!("  \x1b[1mhelp\x1b[0m   Print this message or the help of the given subcommand(s)");
+        println!("  \x1b[1m{:<width$}\x1b[0m  Print this message or the help of the given subcommand(s)", "help", width = max_command_len);
         println!();
     }
 

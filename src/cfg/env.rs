@@ -184,16 +184,20 @@ mod tests {
     #[test]
     fn test_evaluate_envs_simple() {
         let mut envs = HashMap::new();
-        envs.insert("GREETING".to_string(), "Hello ${USER}".to_string());
+        envs.insert("GREETING".to_string(), "Hello ${TEST_USER}".to_string());
         
-        // Mock USER environment variable for test
-        env::set_var("USER", "testuser");
+        // Set a test-specific environment variable
+        unsafe {
+            env::set_var("TEST_USER", "testuser");
+        }
         
         let result = evaluate_envs(&envs, None).unwrap();
         assert_eq!(result.get("GREETING").unwrap(), "Hello testuser");
         
-        // Clean up
-        env::remove_var("USER");
+        // Clean up our test variable
+        unsafe {
+            env::remove_var("TEST_USER");
+        }
     }
 
     #[test]

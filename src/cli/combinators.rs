@@ -55,7 +55,7 @@ pub fn unquoted_value(input: &str) -> ParseResult<String> {
     context(
         "unquoted value",
         map(
-            take_while1(|c: char| !c.is_whitespace() && c != '-'),
+            take_while1(|c: char| !c.is_whitespace()),
             |s: &str| s.to_string()
         )
     ).parse(input)
