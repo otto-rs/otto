@@ -39,9 +39,6 @@ pub struct TaskSpec {
 
     #[serde(default, deserialize_with = "deserialize_script")]
     pub action: String,
-
-    #[serde(default)]
-    pub timeout: Option<u64>,
 }
 
 fn deserialize_script<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -87,7 +84,6 @@ impl TaskSpec {
         envs: HashMap<String, String>,
         params: ParamSpecs,
         action: String,
-        timeout: Option<u64>,
     ) -> Self {
         Self {
             name,
@@ -99,7 +95,6 @@ impl TaskSpec {
             envs,
             params,
             action,
-            timeout,
         }
     }
 }

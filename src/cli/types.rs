@@ -21,7 +21,6 @@ pub struct GlobalOptions {
     pub home: Option<PathBuf>,
     pub tasks: Option<String>,
     pub verbosity: Option<u8>,
-    pub timeout: Option<u64>,
     pub help: bool,
     pub version: bool,
 }
@@ -35,7 +34,6 @@ impl Default for GlobalOptions {
             home: None,
             tasks: None,
             verbosity: None,
-            timeout: None,
             help: false,
             version: false,
         }

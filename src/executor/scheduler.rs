@@ -94,37 +94,6 @@ impl TaskScheduler {
         })
     }
 
-    /// Classify task based on its properties
-    fn classify_task(spec: &Task) -> TaskType {
-        let cmd = spec.action.to_lowercase();
-
-        // Network operations
-        if cmd.contains("curl") || cmd.contains("wget") ||
-           cmd.contains("http") || cmd.contains("ssh") {
-            return TaskType::NetworkBound;
-        }
-
-        // CPU intensive operations
-        if cmd.contains("gcc") || cmd.contains("rustc") ||
-           cmd.contains("make") || cmd.contains("cargo build") ||
-           cmd.contains("cargo test") || cmd.contains("cargo check") ||
-           cmd.contains("cmake") || cmd.contains("ninja") {
-            return TaskType::CPUBound;
-        }
-
-        // Default to I/O bound
-        TaskType::IOBound
-    }
-
-    /// Get default timeout based on task type
-    fn get_default_timeout(task_type: &TaskType) -> u64 {
-        match task_type {
-            TaskType::IOBound => 30,      // 30 seconds
-            TaskType::CPUBound => 120,    // 2 minutes
-            TaskType::NetworkBound => 60,  // 1 minute
-        }
-    }
-
     /// Execute all tasks in the graph
     pub async fn execute_all(&self) -> Result<()> {
         let (tx, mut rx) = mpsc::channel(32);
@@ -291,15 +260,11 @@ impl TaskScheduler {
         task: Task,
         tx: mpsc::Sender<Result<String>>,
     ) -> Result<JoinHandle<Result<()>>> {
-        let task_type = Self::classify_task(&task);
-        let semaphore = match task_type {
-            TaskType::IOBound | TaskType::NetworkBound => self.io_semaphore.clone(),
-            TaskType::CPUBound => self.cpu_semaphore.clone(),
-        };
+        let task_type = TaskType::IOBound; // Simplified to always IOBound for now
+        let semaphore = self.io_semaphore.clone();
 
         let task_name = task.name.clone();
         let task_dir = self.workspace.task(&task_name);
-        let timeout_secs = Self::get_default_timeout(&task_type);
         let task_statuses = self.task_statuses.clone();
         let task_deps = task.task_deps.clone();
         let workspace = self.workspace.clone();
@@ -385,8 +350,8 @@ impl TaskScheduler {
                .env("OTTO_TASKS_DIR", tasks_dir.to_string_lossy().to_string())
                .env("OTTO_USER", &execution_context.user);
 
-            // Execute with timeout
-            let result = timeout(Duration::from_secs(timeout_secs), async {
+            // Execute without timeout - runs until completion or failure
+            let result = async {
                 let mut child = cmd
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped())
@@ -420,7 +385,7 @@ impl TaskScheduler {
                 // Wait for process to complete
                 let status = child.wait().await?;
 
-                // Wait for output handling to complete with timeout
+                // Wait for output handling to complete with timeout (only for output processing)
                 let output_timeout = Duration::from_secs(OUTPUT_PROCESSING_TIMEOUT_SECS);
 
                 match timeout(output_timeout, stdout_handle).await {
@@ -458,31 +423,22 @@ impl TaskScheduler {
                 } else {
                     Err(eyre!("Task {} failed with exit code {:?}", task_name, status.code()))
                 }
-            }).await;
+            }.await;
 
             match result {
-                Ok(Ok(())) => {
+                Ok(()) => {
                     info!("Task {} completed successfully", task_name);
                     // Ensure we send the completion message
                     if let Err(e) = tx.send(Ok(task_name.clone())).await {
                         error!("Failed to send completion notification for task {}: {}", task_name, e);
                     }
                 }
-                Ok(Err(e)) => {
+                Err(e) => {
                     error!("Task {} failed: {}", task_name, e);
                     let mut statuses = task_statuses.lock().await;
                     statuses.insert(task_name.clone(), TaskStatus::Failed(e.to_string()));
                     if let Err(send_err) = tx.send(Err(e)).await {
                         error!("Failed to send error notification for task {}: {}", task_name, send_err);
-                    }
-                }
-                Err(_) => {
-                    error!("Task {} timed out after {} seconds", task_name, timeout_secs);
-                    let err = eyre!("Task {} timed out after {} seconds", task_name, timeout_secs);
-                    let mut statuses = task_statuses.lock().await;
-                    statuses.insert(task_name.clone(), TaskStatus::Failed(err.to_string()));
-                    if let Err(send_err) = tx.send(Err(err)).await {
-                        error!("Failed to send timeout notification for task {}: {}", task_name, send_err);
                     }
                 }
             }

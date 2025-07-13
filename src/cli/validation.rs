@@ -89,21 +89,7 @@ pub fn validate_global_options(
                     });
                 }
             }
-            "timeout" => {
-                if let Some(ref value) = option.value {
-                    result.timeout = Some(value.parse().map_err(|_| {
-                        ParseError::InvalidArgumentValue {
-                            arg_name: "timeout".to_string(),
-                            value: value.clone(),
-                            expected: "positive integer (seconds)".to_string(),
-                        }
-                    })?);
-                } else {
-                    return Err(ParseError::MissingArgumentValue {
-                        arg_name: "timeout".to_string(),
-                    });
-                }
-            }
+
             "help" => {
                 result.help = true;
             }

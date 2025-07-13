@@ -147,7 +147,6 @@ mod tests {
             envs: HashMap::new(),
             params: hello_params,
             action: "echo \"$greeting World!\"".to_string(),
-            timeout: None,
         });
 
         // World task with name parameter

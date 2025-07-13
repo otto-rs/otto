@@ -123,7 +123,7 @@ pub fn global_option_short_with_space(input: &str) -> ParseResult<GlobalOption> 
                     'H' => "home",
                     't' => "tasks",
                     'v' => "verbosity",
-                    'T' => "timeout",
+
                     _ => "unknown",
                 };
                 GlobalOption {

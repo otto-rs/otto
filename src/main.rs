@@ -353,7 +353,6 @@ fn show_tasks_help(config_spec: &ConfigSpec) {
     println!("  \x1b[1m-t, --tasks <TASKS>\x1b[0m      comma separated list of tasks to run [default: {}]", default_tasks);
 
     println!("  \x1b[1m-v, --verbosity <LEVEL>\x1b[0m  verbosity level [default: {}]", otto_spec.verbosity);
-    println!("  \x1b[1m-T, --timeout <SECONDS>\x1b[0m  global timeout in seconds (overrides task-specific timeouts)");
     println!("  \x1b[1m-V, --version\x1b[0m            Print version");
     println!();
 
@@ -560,7 +559,6 @@ fn show_help(missing_ottofile: bool) {
     println!("  \x1b[1m-H, --home <PATH>\x1b[0m        path to the Otto home directory [default: ~/.otto]");
     println!("  \x1b[1m-t, --tasks <TASKS>\x1b[0m      comma separated list of tasks to run [default: *]");
     println!("  \x1b[1m-v, --verbosity <LEVEL>\x1b[0m  verbosity level [default: 1]");
-    println!("  \x1b[1m-T, --timeout <SECONDS>\x1b[0m  global timeout in seconds (overrides task-specific timeouts)");
     println!("  \x1b[1m-V, --version\x1b[0m            Print version");
     println!();
     println!("Logs are written to: {}", log_location);
