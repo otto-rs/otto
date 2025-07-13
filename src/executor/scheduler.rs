@@ -3,6 +3,7 @@ use std::{
     sync::Arc,
     time::Duration,
     path::Path,
+    io::{self, Write},
 };
 
 use eyre::{eyre, Result};
@@ -20,7 +21,7 @@ use super::{
     workspace::{Workspace, ExecutionContext},
     output::{TaskStreams, OutputType},
     action::{ActionProcessor, ProcessedAction},
-    colors::set_global_task_order,
+    colors::{set_global_task_order, colorize_task_prefix},
 };
 
 /// Status of a task during execution
@@ -187,6 +188,12 @@ impl TaskScheduler {
                     Ok(false) => {
                         // Task can be skipped - outputs are up to date
                         info!("Skipping task {} - outputs are up to date ({}/{})", task.name, completed_tasks + 1, total_tasks);
+
+                        // Print user-visible skipped message
+                        let skipped_msg = format!("{} skipped (up to date)\n", colorize_task_prefix(&task.name));
+                        print!("{}", skipped_msg);
+                        io::stdout().flush().unwrap_or(());
+
                         let mut statuses = self.task_statuses.lock().await;
                         statuses.insert(task.name.clone(), TaskStatus::Skipped);
                         completed_set.insert(task.name.clone());
@@ -219,6 +226,12 @@ impl TaskScheduler {
             match rx.recv().await {
                 Some(Ok(completed_task)) => {
                     info!("Task {} completed successfully", completed_task);
+
+                    // Print user-visible success message
+                    let success_msg = format!("{} finished successfully\n", colorize_task_prefix(&completed_task));
+                    print!("{}", success_msg);
+                    io::stdout().flush().unwrap_or(());
+
                     let mut statuses = self.task_statuses.lock().await;
                     statuses.insert(completed_task.clone(), TaskStatus::Completed);
                     completed_set.insert(completed_task.clone());
@@ -248,6 +261,15 @@ impl TaskScheduler {
                 }
                 Some(Err(e)) => {
                     error!("Task execution failed: {}", e);
+
+                    // Extract task name from error message for user-visible failure message
+                    let error_str = e.to_string();
+                    if let Some(task_name) = error_str.split_whitespace().nth(1) {
+                        let failure_msg = format!("{} failed\n", colorize_task_prefix(task_name));
+                        eprint!("{}", failure_msg);
+                        io::stderr().flush().unwrap_or(());
+                    }
+
                     return Err(e);
                 }
                 None => {
