@@ -169,9 +169,14 @@ async fn main_nom() -> Result<()> {
     }
 
     // Need config for actual execution
-    let config_spec = config_spec.ok_or_else(|| {
-        eyre::eyre!("No ottofile found. Use --help for more information.")
-    })?;
+    let config_spec = match config_spec {
+        Some(config) => config,
+        None => {
+            // If no ottofile is found, always show helpful error message regardless of task specification
+            show_no_ottofile_help();
+            std::process::exit(2);
+        }
+    };
 
     // Convert to execution format (reuse existing logic)
     let cwd = env::current_dir()?;
