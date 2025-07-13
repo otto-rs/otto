@@ -24,6 +24,9 @@ use super::{
     colors::{set_global_task_order, colorize_task_prefix},
 };
 
+/// Timeout for output processing after task completion
+const OUTPUT_PROCESSING_TIMEOUT_SECS: u64 = 5;
+
 /// Status of a task during execution
 #[derive(Debug, Clone, PartialEq)]
 pub enum TaskStatus {
@@ -417,9 +420,38 @@ impl TaskScheduler {
                 // Wait for process to complete
                 let status = child.wait().await?;
 
-                // Wait for output handling to complete
-                stdout_handle.await??;
-                stderr_handle.await??;
+                // Wait for output handling to complete with timeout
+                let output_timeout = Duration::from_secs(OUTPUT_PROCESSING_TIMEOUT_SECS);
+
+                match timeout(output_timeout, stdout_handle).await {
+                    Ok(Ok(Ok(()))) => {
+                        // Stdout processing completed successfully
+                    }
+                    Ok(Ok(Err(e))) => {
+                        error!("Stdout processing failed for task {}: {}", task_name, e);
+                    }
+                    Ok(Err(e)) => {
+                        error!("Stdout processing join failed for task {}: {}", task_name, e);
+                    }
+                    Err(_) => {
+                        error!("Stdout processing timed out for task {}", task_name);
+                    }
+                }
+
+                match timeout(output_timeout, stderr_handle).await {
+                    Ok(Ok(Ok(()))) => {
+                        // Stderr processing completed successfully
+                    }
+                    Ok(Ok(Err(e))) => {
+                        error!("Stderr processing failed for task {}: {}", task_name, e);
+                    }
+                    Ok(Err(e)) => {
+                        error!("Stderr processing join failed for task {}: {}", task_name, e);
+                    }
+                    Err(_) => {
+                        error!("Stderr processing timed out for task {}", task_name);
+                    }
+                }
 
                 if status.success() {
                     Ok(())
@@ -431,16 +463,17 @@ impl TaskScheduler {
             match result {
                 Ok(Ok(())) => {
                     info!("Task {} completed successfully", task_name);
-                    if tx.send(Ok(task_name.clone())).await.is_err() {
-                        error!("Failed to send completion notification for task {}", task_name);
+                    // Ensure we send the completion message
+                    if let Err(e) = tx.send(Ok(task_name.clone())).await {
+                        error!("Failed to send completion notification for task {}: {}", task_name, e);
                     }
                 }
                 Ok(Err(e)) => {
                     error!("Task {} failed: {}", task_name, e);
                     let mut statuses = task_statuses.lock().await;
                     statuses.insert(task_name.clone(), TaskStatus::Failed(e.to_string()));
-                    if tx.send(Err(e)).await.is_err() {
-                        error!("Failed to send error notification for task {}", task_name);
+                    if let Err(send_err) = tx.send(Err(e)).await {
+                        error!("Failed to send error notification for task {}: {}", task_name, send_err);
                     }
                 }
                 Err(_) => {
@@ -448,8 +481,8 @@ impl TaskScheduler {
                     let err = eyre!("Task {} timed out after {} seconds", task_name, timeout_secs);
                     let mut statuses = task_statuses.lock().await;
                     statuses.insert(task_name.clone(), TaskStatus::Failed(err.to_string()));
-                    if tx.send(Err(err)).await.is_err() {
-                        error!("Failed to send timeout notification for task {}", task_name);
+                    if let Err(send_err) = tx.send(Err(err)).await {
+                        error!("Failed to send timeout notification for task {}: {}", task_name, send_err);
                     }
                 }
             }
