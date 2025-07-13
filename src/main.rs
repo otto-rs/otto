@@ -112,9 +112,9 @@ async fn main_nom() -> Result<()> {
                         break;
                     }
                     Err(_) => {
-                        // No config found, show help with error message
-                        show_no_ottofile_help();
-                        std::process::exit(2);
+                        // No config found, show generic help
+                        show_help();
+                        std::process::exit(0);
                     }
                 }
             }
@@ -124,12 +124,8 @@ async fn main_nom() -> Result<()> {
     // Try to load config using the determined ottofile path
     let (config_spec, _hash, ottofile_path) = match load_config_from_path(ottofile_path) {
         Ok((config, hash, path)) => (Some(config), hash, path),
-        Err(_) => {
-            // No config found, check if help is requested
-            if command_line.contains("--help") || command_line.contains("-h") {
-                show_no_ottofile_help();
-                std::process::exit(2);
-            }
+        Err(_e) => {
+            // No config found - we'll handle this later based on what the user wants to do
             (None, String::new(), None)
         }
     };
@@ -157,8 +153,7 @@ async fn main_nom() -> Result<()> {
         if let Some(ref config) = config_spec {
             show_comprehensive_help(config);
         } else {
-            show_no_ottofile_help();
-            std::process::exit(2);
+            show_help();
         }
         return Ok(());
     }
@@ -564,4 +559,25 @@ fn show_no_ottofile_help() {
     println!("  - .otto.yaml");
     println!("  - Ottofile");
     println!("  - OTTOFILE");
+}
+
+fn show_help() {
+    println!("A task runner");
+    println!();
+    println!("\x1b[1mUsage:\x1b[0m \x1b[1motto\x1b[0m [OPTIONS] [COMMAND]");
+    println!();
+    println!("\x1b[1mOptions:\x1b[0m");
+    println!("  \x1b[1m-o, --ottofile <PATH>\x1b[0m    path to the ottofile [default: ./]");
+    println!("  \x1b[1m-a, --api <URL>\x1b[0m          api url [default: 1]");
+    println!("  \x1b[1m-j, --jobs <JOBS>\x1b[0m        number of jobs to run in parallel [default: 32]");
+    println!("  \x1b[1m-H, --home <PATH>\x1b[0m        path to the Otto home directory [default: ~/.otto]");
+    println!("  \x1b[1m-t, --tasks <TASKS>\x1b[0m      comma separated list of tasks to run [default: *]");
+    println!("  \x1b[1m-v, --verbosity <LEVEL>\x1b[0m  verbosity level [default: 1]");
+    println!("  \x1b[1m-T, --timeout <SECONDS>\x1b[0m  global timeout in seconds (overrides task-specific timeouts)");
+    println!("  \x1b[1m-V, --version\x1b[0m            Print version");
+    println!();
+    println!("Logs are written to: {}", dirs::data_local_dir()
+        .map(|dir| dir.join("otto").join("logs").join("otto.log"))
+        .and_then(|path| path.to_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "~/.local/share/otto/logs/otto.log".to_string()));
 }
