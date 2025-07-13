@@ -42,7 +42,6 @@ pub fn default_otto() -> OttoSpec {
         home: default_home(),
         tasks: default_tasks(),
         verbosity: default_verbosity(),
-        timeout: None,
         envs: HashMap::new(),
     }
 }
@@ -71,9 +70,6 @@ pub struct OttoSpec {
     pub verbosity: u8,
 
     #[serde(default)]
-    pub timeout: Option<u64>,
-
-    #[serde(default)]
     pub envs: HashMap<String, String>,
 }
 
@@ -87,7 +83,6 @@ impl Default for OttoSpec {
             home: default_home(),
             tasks: default_tasks(),
             verbosity: default_verbosity(),
-            timeout: None,
             envs: HashMap::new(),
         }
     }

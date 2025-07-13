@@ -5,7 +5,7 @@ pub mod cli;
 pub use cfg::otto::OttoSpec;
 pub use cli::NomParser as Parser;
 
-pub use executor::{Task, TaskScheduler, TaskStatus, TaskType, Workspace};
+pub use executor::{Task, TaskScheduler, TaskStatus, Workspace};
 
 #[cfg(test)]
 mod tests {

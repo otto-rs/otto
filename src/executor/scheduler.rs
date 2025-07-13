@@ -42,16 +42,7 @@ pub enum TaskStatus {
     Failed(String),
 }
 
-/// Classification of task types for optimal execution strategy
-#[derive(Debug, Clone)]
-pub enum TaskType {
-    /// I/O bound tasks like shell commands, file operations
-    IOBound,
-    /// CPU bound tasks like computation, data processing
-    CPUBound,
-    /// Network bound tasks like downloads, API calls
-    NetworkBound,
-}
+
 
 /// Task scheduler that manages concurrent execution
 pub struct TaskScheduler {
@@ -260,7 +251,6 @@ impl TaskScheduler {
         task: Task,
         tx: mpsc::Sender<Result<String>>,
     ) -> Result<JoinHandle<Result<()>>> {
-        let task_type = TaskType::IOBound; // Simplified to always IOBound for now
         let semaphore = self.io_semaphore.clone();
 
         let task_name = task.name.clone();

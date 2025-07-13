@@ -176,7 +176,6 @@ mod tests {
             envs: HashMap::new(),
             params: world_params,
             action: "echo \"$name\"".to_string(),
-            timeout: None,
         });
 
         // Punch task (default)
@@ -190,7 +189,6 @@ mod tests {
             envs: HashMap::new(),
             params: HashMap::new(),
             action: "echo \"donkey\"".to_string(),
-            timeout: None,
         });
 
         ConfigSpec {
