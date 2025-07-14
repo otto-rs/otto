@@ -175,7 +175,7 @@ fn find_ottofile_in_current_and_parent_dirs() -> Option<PathBuf> {
 
 /// Helper function to show version
 fn show_version() {
-    println!("otto {}", env!("CARGO_PKG_VERSION"));
+    println!("otto {}", env!("GIT_DESCRIBE"));
 }
 
 /// Helper function to handle graph command with the new signature
