@@ -70,10 +70,16 @@ async fn main_two_pass(command_line: &str) -> Result<()> {
                 find_ottofile_in_current_and_parent_dirs()
             };
 
-            let missing_ottofile = load_config_from_path(ottofile_path).is_err();
-            show_help(missing_ottofile);
-            if missing_ottofile {
-                std::process::exit(2);
+            match load_config_from_path(ottofile_path) {
+                Ok((config_spec, _, _)) => {
+                    show_tasks_help(&config_spec);
+                    return Ok(());
+                }
+                Err(_) => {
+                    // No config found, show help with ottofile error details
+                    show_help(true);
+                    std::process::exit(2);
+                }
             }
         } else {
             // Parse the remaining args to get the task name for help
@@ -376,6 +382,74 @@ fn show_help(missing_ottofile: bool) {
         println!("  - Ottofile");
         println!("  - OTTOFILE");
     }
+}
+
+/// Show comprehensive help with available tasks
+fn show_tasks_help(config_spec: &ConfigSpec) {
+    let otto_spec = &config_spec.otto;
+
+    println!("A task runner");
+    println!();
+    println!("\x1b[1mUsage:\x1b[0m \x1b[1motto\x1b[0m [OPTIONS] [COMMAND]");
+    println!();
+
+    // Show commands (tasks)
+    if !config_spec.tasks.is_empty() {
+        println!("\x1b[1mCommands:\x1b[0m");
+
+        // Calculate the maximum command name length for proper alignment
+        let mut max_command_len = "graph".len(); // Start with built-in commands
+        max_command_len = max_command_len.max("help".len());
+
+        // Check all task names
+        for task_spec in config_spec.tasks.values() {
+            max_command_len = max_command_len.max(task_spec.name.len());
+        }
+
+        // Add graph meta-task first
+        println!("  \x1b[1m{:<width$}\x1b[0m  [built-in] Visualize the task dependency graph", "graph", width = max_command_len);
+
+        // Sort tasks alphabetically
+        let mut task_list: Vec<_> = config_spec.tasks.values().collect();
+        task_list.sort_by(|a, b| a.name.cmp(&b.name));
+
+        for task_spec in task_list {
+            match &task_spec.help {
+                Some(help) => println!("  \x1b[1m{:<width$}\x1b[0m  {}", task_spec.name, help, width = max_command_len),
+                None => println!("  \x1b[1m{:<width$}\x1b[0m  {} task help", task_spec.name, task_spec.name, width = max_command_len),
+            }
+        }
+
+        println!("  \x1b[1m{:<width$}\x1b[0m  Print this message or the help of the given subcommand(s)", "help", width = max_command_len);
+        println!();
+    }
+
+    // Show options
+    println!("\x1b[1mOptions:\x1b[0m");
+    println!("  \x1b[1m-o, --ottofile <PATH>\x1b[0m    path to the ottofile [default: {}]", otto_spec.home);
+    println!("  \x1b[1m-a, --api <URL>\x1b[0m          api url [default: {}]", otto_spec.api);
+    println!("  \x1b[1m-j, --jobs <JOBS>\x1b[0m        number of jobs to run in parallel [default: {}]", otto_spec.jobs);
+    println!("  \x1b[1m-H, --home <PATH>\x1b[0m        path to the Otto home directory [default: {}]", otto_spec.home);
+
+    // Show default tasks
+    let default_tasks = if otto_spec.tasks.is_empty() {
+        "*".to_string()
+    } else {
+        otto_spec.tasks.join(",")
+    };
+    println!("  \x1b[1m-t, --tasks <TASKS>\x1b[0m      comma separated list of tasks to run [default: {}]", default_tasks);
+
+    println!("  \x1b[1m-v, --verbosity <LEVEL>\x1b[0m  verbosity level [default: {}]", otto_spec.verbosity);
+    println!("  \x1b[1m-V, --version\x1b[0m            Print version");
+    println!();
+
+    // Show log location
+    let log_location = dirs::data_local_dir()
+        .map(|dir| dir.join("otto").join("logs").join("otto.log"))
+        .and_then(|path| path.to_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "~/.local/share/otto/logs/otto.log".to_string());
+
+    println!("Logs are written to: {}", log_location);
 }
 
 /// Build a DAG from a list of tasks
