@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 #[allow(dead_code)]
 fn print_type_of<T>(t: &T)
 where
@@ -7,19 +9,25 @@ where
 }
 
 #[allow(dead_code)]
-fn format_items(items: &[&str], before: Option<&str>, between: Option<&str>, after: Option<&str>) -> String
-where
-{
-    //if between is not None, then join with between
-    //if between is None, then join with ""
-    let mut s = between.map_or_else(|| items.join(""), |between| items.join(between));
-    //if before is not None, then prepend with before
-    if let Some(before) = before {
-        s = format!("{before}{s}");
+fn format_items(items: &[&str], before: Option<&str>, between: Option<&str>, after: Option<&str>) -> String {
+    let before_str = before.unwrap_or("");
+    let between_str = between.unwrap_or("");
+    let after_str = after.unwrap_or("");
+
+    if items.is_empty() {
+        return format!("{}{}", before_str, after_str);
     }
-    //if after is not None, then append with after
-    if let Some(after) = after {
-        s = format!("{s}{after}");
+
+    let mut result = String::new();
+    result.push_str(before_str);
+
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            result.push_str(between_str);
+        }
+        result.push_str(item);
     }
-    s
+
+    result.push_str(after_str);
+    result
 }

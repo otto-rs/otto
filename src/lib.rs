@@ -1,11 +1,11 @@
 pub mod cfg;
-pub mod executor;
 pub mod cli;
+pub mod executor;
+pub mod utils;
 
-pub use cfg::otto::OttoSpec;
-pub use cli::NomParser as Parser;
-
-pub use executor::{Task, TaskScheduler, TaskStatus, Workspace};
+pub use cli::Parser;
+pub use cfg::config::ConfigSpec;
+pub use executor::{Task, TaskScheduler, Workspace};
 
 #[cfg(test)]
 mod tests {

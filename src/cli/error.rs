@@ -1,203 +1,65 @@
-use std::fmt;
-use nom::error::{ErrorKind, ParseError as NomParseError, ContextError};
-use colored::Colorize;
+#![allow(unused_imports, unused_variables, unused_attributes, unused_mut, dead_code)]
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum ParseError {
-    // nom-specific errors
-    NomError {
-        input: String,
-        position: usize,
-        kind: ErrorKind,
-        context: Vec<String>,
-    },
+use std::env;
+use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
+use std::path::PathBuf;
 
-    // Semantic errors
-    UnknownTask {
-        name: String,
-        suggestions: Vec<String>,
-    },
+use eyre::{eyre, Result, Report};
 
-    UnknownGlobalOption {
-        name: String,
-    },
+// Since these error types aren't used elsewhere in the codebase,
+// we can simplify this to just use eyre::Report directly.
+// If specific error types are needed later, they can be added back.
 
-    UnknownTaskArgument {
-        task_name: String,
-        arg_name: String,
-    },
+pub type OttoResult<T> = Result<T, Report>;
 
-    MissingArgumentValue {
-        arg_name: String,
-    },
-
-    InvalidArgumentValue {
-        arg_name: String,
-        value: String,
-        expected: String,
-    },
-
-    // Validation errors
-    ValidationError {
-        task_name: String,
-        arg_name: String,
-        error: String,
-    },
-
-    // Config errors
-    NoConfigFound {
-        searched_paths: Vec<String>,
-    },
-
-    // Input errors
-    UnconsumedInput {
-        remaining: String,
-    },
-
-    IncompleteInput,
+// Helper functions for creating specific Otto errors
+pub fn home_undefined_error(source: env::VarError) -> Report {
+    eyre!("env var error: {}", source)
 }
 
-impl NomParseError<&str> for ParseError {
-    fn from_error_kind(input: &str, kind: ErrorKind) -> Self {
-        ParseError::NomError {
-            input: input.to_string(),
-            position: 0,
-            kind,
-            context: vec![],
-        }
-    }
+pub fn canonicalize_error(source: std::io::Error) -> Report {
+    eyre!("canonicalize error: {}", source)
+}
 
-    fn append(input: &str, kind: ErrorKind, mut other: Self) -> Self {
-        match &mut other {
-            ParseError::NomError { context, .. } => {
-                context.push(format!("{:?} at '{}'", kind, input));
-                other
-            }
-            _ => other,
-        }
+pub fn divine_error(path: PathBuf) -> Report {
+    eyre!("divine error; unable to find ottofile from path=[{}]", path.display())
+}
+
+pub fn relative_path_error() -> Report {
+    eyre!("relative path error")
+}
+
+pub fn current_exe_filename_error() -> Report {
+    eyre!("current exe filename error")
+}
+
+pub fn config_error(source: Report) -> Report {
+    eyre!("config error: {}", source)
+}
+
+pub fn clap_error(source: clap::Error) -> Report {
+    eyre!("Clap parse error: {}", source)
+}
+
+// Keep SilentError as a unit struct since it has special Display behavior
+#[derive(Debug)]
+pub struct SilentError;
+
+impl Display for SilentError {
+    fn fmt(&self, _f: &mut Formatter) -> FmtResult {
+        Ok(())
     }
 }
 
-impl ContextError<&str> for ParseError {
-    fn add_context(input: &str, ctx: &'static str, mut other: Self) -> Self {
-        match &mut other {
-            ParseError::NomError { context, .. } => {
-                context.push(format!("{} at '{}'", ctx, input));
-                other
-            }
-            _ => other,
-        }
-    }
-}
+impl std::error::Error for SilentError {}
 
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ParseError::NomError { input, position, kind, context } => {
-                write!(f, "{}: Parse error at position {}", "error".red().bold(), position)?;
-                if !context.is_empty() {
-                    write!(f, "\nContext: {}", context.join(" -> "))?;
-                }
-                write!(f, "\nInput: {}", input)?;
-                write!(f, "\nKind: {:?}", kind)
-            }
+// Deprecated error types - keeping for backward compatibility but not used
+#[derive(Debug)]
+pub struct ParseError;
 
-            ParseError::UnknownTask { name, suggestions } => {
-                write!(f, "{}: The task '{}' wasn't found", "error".red().bold(), name)?;
-
-                if !suggestions.is_empty() {
-                    writeln!(f)?;
-                    writeln!(f)?;
-                    if suggestions.len() == 1 {
-                        write!(f, "Did you mean '{}'?", suggestions[0].green())?;
-                    } else {
-                        writeln!(f, "Did you mean one of these?")?;
-                        for suggestion in suggestions {
-                            writeln!(f, "    {}", suggestion.green())?;
-                        }
-                    }
-                }
-
-                writeln!(f)?;
-                write!(f, "For more information try {}", "--help".cyan())
-            }
-
-            ParseError::UnknownGlobalOption { name } => {
-                write!(
-                    f,
-                    "{}: Unknown global option '{}'\n\nFor more information try {}",
-                    "error".red().bold(),
-                    name.yellow(),
-                    "--help".cyan()
-                )
-            }
-
-            ParseError::UnknownTaskArgument { task_name, arg_name } => {
-                write!(
-                    f,
-                    "{}: Unknown argument '{}' for task '{}'\n\nFor more information try {}",
-                    "error".red().bold(),
-                    arg_name.yellow(),
-                    task_name.blue(),
-                    format!("otto {} --help", task_name).cyan()
-                )
-            }
-
-            ParseError::MissingArgumentValue { arg_name } => {
-                write!(
-                    f,
-                    "{}: Missing value for argument '{}'",
-                    "error".red().bold(),
-                    arg_name.yellow()
-                )
-            }
-
-            ParseError::InvalidArgumentValue { arg_name, value, expected } => {
-                write!(
-                    f,
-                    "{}: Invalid value '{}' for argument '{}'\nExpected: {}",
-                    "error".red().bold(),
-                    value.red(),
-                    arg_name.yellow(),
-                    expected.green()
-                )
-            }
-
-            ParseError::ValidationError { task_name, arg_name, error } => {
-                write!(
-                    f,
-                    "{}: Validation failed for argument '{}' in task '{}'\n\n{}\n\nFor more information try {}",
-                    "error".red().bold(),
-                    arg_name.yellow(),
-                    task_name.blue(),
-                    error,
-                    format!("otto {} --help", task_name).cyan()
-                )
-            }
-
-            ParseError::NoConfigFound { searched_paths } => {
-                writeln!(f, "{}: No ottofile found in this directory or any parent directory!", "ERROR".red().bold())?;
-                writeln!(f, "Otto looks for one of the following files in the current or parent directories:")?;
-                writeln!(f)?;
-                for path in searched_paths {
-                    writeln!(f, "  - {}", path.green())?;
-                }
-                write!(f, "\nTo get started, create an otto.yml file in your project root.")
-            }
-
-            ParseError::UnconsumedInput { remaining } => {
-                write!(
-                    f,
-                    "{}: Unexpected input: '{}'",
-                    "error".red().bold(),
-                    remaining
-                )
-            }
-
-            ParseError::IncompleteInput => {
-                write!(f, "{}: Incomplete input", "error".red().bold())
-            }
-        }
+impl Display for ParseError {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "Parse error")
     }
 }
 
