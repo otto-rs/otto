@@ -102,7 +102,7 @@ async fn main_two_pass(command_line: &str) -> Result<()> {
 
         // Try to load config
         let config = match load_config_from_path(ottofile_path) {
-            Ok((config, _, _)) => config,
+            Ok((config, hash, path)) => config,
             Err(_) => {
                 show_help(true);
                 std::process::exit(2);
@@ -155,7 +155,7 @@ async fn main_two_pass(command_line: &str) -> Result<()> {
 
     // ===== PASS 2: Parse tasks with config =====
     let parser = NomParser::new(Some(config_spec.clone()))?;
-    let tasks = match parser.parse_tasks_only(&remaining_args) {
+    let tasks = match parser.parse_tasks_with_config(&remaining_args) {
         Ok(tasks) => tasks,
         Err(e) => {
             eprintln!("{}", e);

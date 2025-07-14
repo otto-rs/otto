@@ -1,8 +1,9 @@
-use crate::cli::combinators::{parse_command_line, parse_task_invocations_only};
+use crate::cli::combinators::{parse_command_line, parse_task_invocations_only, parse_task_invocations_with_config, parse_command_line_with_config};
 use crate::cli::types::{ParsedCommand, ParsedTask, GlobalOptions, RawParsedCommand};
 use crate::cli::error::ParseError;
 use crate::cli::validation::{validate_global_options, validate_task_invocation};
 use crate::cfg::config::ConfigSpec;
+use std::collections::HashSet;
 
 pub struct NomParser {
     config: Option<ConfigSpec>,
@@ -24,18 +25,36 @@ impl NomParser {
             });
         }
 
-        // Parse using nom combinators
-        let raw_command = match parse_command_line(input) {
-            Ok((remaining, parsed)) => {
-                if !remaining.trim().is_empty() {
-                    return Err(ParseError::UnconsumedInput {
-                        remaining: remaining.to_string(),
-                    });
+        // Parse using nom combinators - use config-aware parsing if config is available
+        let raw_command = if let Some(ref config) = self.config {
+            // Use config-aware parsing
+            let known_tasks = config.tasks.keys().cloned().collect::<HashSet<String>>();
+            match parse_command_line_with_config(input, &known_tasks) {
+                Ok((remaining, parsed)) => {
+                    if !remaining.trim().is_empty() {
+                        return Err(ParseError::UnconsumedInput {
+                            remaining: remaining.to_string(),
+                        });
+                    }
+                    parsed
                 }
-                parsed
+                Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => return Err(e),
+                Err(nom::Err::Incomplete(_)) => return Err(ParseError::IncompleteInput),
             }
-            Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => return Err(e),
-            Err(nom::Err::Incomplete(_)) => return Err(ParseError::IncompleteInput),
+        } else {
+            // Use regular parsing without config
+            match parse_command_line(input) {
+                Ok((remaining, parsed)) => {
+                    if !remaining.trim().is_empty() {
+                        return Err(ParseError::UnconsumedInput {
+                            remaining: remaining.to_string(),
+                        });
+                    }
+                    parsed
+                }
+                Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => return Err(e),
+                Err(nom::Err::Incomplete(_)) => return Err(ParseError::IncompleteInput),
+            }
         };
 
         // Validate and convert to final types
@@ -98,6 +117,69 @@ impl NomParser {
 
         // Parse task invocations only (no global options)
         let task_invocations = match parse_task_invocations_only(input) {
+            Ok((remaining, parsed)) => {
+                if !remaining.trim().is_empty() {
+                    return Err(ParseError::UnconsumedInput {
+                        remaining: remaining.to_string(),
+                    });
+                }
+                parsed
+            }
+            Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => return Err(e),
+            Err(nom::Err::Incomplete(_)) => return Err(ParseError::IncompleteInput),
+        };
+
+        // Validate tasks against config
+        let mut validated_tasks = Vec::new();
+        for task_invocation in &task_invocations {
+            if let Some(ref config) = self.config {
+                let validated_task = validate_task_invocation(task_invocation, config)?;
+                validated_tasks.push(validated_task);
+            } else {
+                return Err(ParseError::NoConfigFound {
+                    searched_paths: vec![
+                        "otto.yml".to_string(),
+                        ".otto.yml".to_string(),
+                        "otto.yaml".to_string(),
+                        ".otto.yaml".to_string(),
+                        "Ottofile".to_string(),
+                        "OTTOFILE".to_string(),
+                    ],
+                });
+            }
+        }
+
+        Ok(validated_tasks)
+    }
+
+    /// Parse only tasks with config-aware disambiguation (for Pass 2)
+    /// This uses known task names to resolve --flag vs --flag value ambiguity
+    pub fn parse_tasks_with_config(&self, input: &str) -> Result<Vec<ParsedTask>, ParseError> {
+        let input = input.trim();
+
+        // Handle empty input
+        if input.is_empty() {
+            return Ok(self.get_default_tasks());
+        }
+
+        // Get known task names from config
+        let known_tasks = if let Some(ref config) = self.config {
+            config.tasks.keys().cloned().collect::<HashSet<String>>()
+        } else {
+            return Err(ParseError::NoConfigFound {
+                searched_paths: vec![
+                    "otto.yml".to_string(),
+                    ".otto.yml".to_string(),
+                    "otto.yaml".to_string(),
+                    ".otto.yaml".to_string(),
+                    "Ottofile".to_string(),
+                    "OTTOFILE".to_string(),
+                ],
+            });
+        };
+
+        // Parse task invocations with config-aware disambiguation
+        let task_invocations = match parse_task_invocations_with_config(input, &known_tasks) {
             Ok((remaining, parsed)) => {
                 if !remaining.trim().is_empty() {
                     return Err(ParseError::UnconsumedInput {
