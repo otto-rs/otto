@@ -10,7 +10,7 @@ use std::sync::Arc;
 use sha2::Digest;
 use otto::{
     cli::{NomParser, ValidatedValue},
-    executor::{TaskScheduler, Workspace, Task},
+    executor::{TaskScheduler, Workspace, Task, DAG, graph::{DagVisualizer, GraphOptions, GraphFormat}},
     cfg::{config::{ConfigSpec, Value}, env as env_eval},
 };
 
@@ -146,6 +146,56 @@ async fn main_nom() -> Result<()> {
         }
     };
 
+    // Handle graph command before parsing (it's a built-in command)
+    if command_line.trim() == "graph" || command_line.trim().starts_with("graph ") {
+        // Check if help is requested for graph command
+        if command_line.contains("--help") || command_line.contains("-h") {
+            show_task_help(&ConfigSpec::default(), "graph");
+            return Ok(());
+        }
+
+        if let Some(ref config) = config_spec {
+            // Parse graph command arguments manually
+            let mut arguments = HashMap::new();
+            let parts: Vec<&str> = command_line.split_whitespace().collect();
+
+            let mut i = 1; // Skip "graph"
+            while i < parts.len() {
+                match parts[i] {
+                    "--format" | "-f" => {
+                        if i + 1 < parts.len() {
+                            arguments.insert("format".to_string(), otto::cli::types::ValidatedValue::String(parts[i + 1].to_string()));
+                            i += 2;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    "--output" => {
+                        if i + 1 < parts.len() {
+                            arguments.insert("output".to_string(), otto::cli::types::ValidatedValue::Path(std::path::PathBuf::from(parts[i + 1])));
+                            i += 2;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    _ => {
+                        i += 1;
+                    }
+                }
+            }
+
+            let fake_parsed_task = otto::cli::types::ParsedTask {
+                name: "graph".to_string(),
+                arguments,
+            };
+            return handle_graph_command(config, &fake_parsed_task).await;
+        } else {
+            // No config found, show help with ottofile error details
+            show_help(true);
+            std::process::exit(2);
+        }
+    }
+
     // Create nom parser
     let mut parser = match NomParser::new(config_spec.clone()) {
         Ok(p) => p,
@@ -188,6 +238,8 @@ async fn main_nom() -> Result<()> {
             std::process::exit(2);
         }
     };
+
+
 
     // Convert to execution format (reuse existing logic)
     let cwd = env::current_dir()?;
@@ -576,4 +628,123 @@ fn show_help(missing_ottofile: bool) {
         println!("  - Ottofile");
         println!("  - OTTOFILE");
     }
+}
+
+async fn handle_graph_command(config_spec: &ConfigSpec, parsed_task: &otto::cli::types::ParsedTask) -> Result<()> {
+    let mut options = GraphOptions::default();
+
+    // Default to ASCII format for terminal output
+    options.format = GraphFormat::Ascii;
+
+    // Parse arguments
+    for (arg_name, validated_value) in &parsed_task.arguments {
+        match arg_name.as_str() {
+            "format" | "f" => {
+                if let Some(ValidatedValue::String(s)) = Some(validated_value) {
+                    options.format = match s.as_str() {
+                        "ascii" => GraphFormat::Ascii,
+                        "dot" => GraphFormat::Dot,
+                        "svg" => GraphFormat::Svg,
+                        "png" => GraphFormat::Png,
+                        "pdf" => GraphFormat::Pdf,
+                        _ => {
+                            eprintln!("Warning: Unknown format '{}', using ASCII", s);
+                            GraphFormat::Ascii
+                        }
+                    };
+                }
+            }
+            "output" => {
+                if let Some(ValidatedValue::Path(p)) = Some(validated_value) {
+                    options.output_path = Some(p.to_path_buf());
+                }
+            }
+            _ => {
+                // Ignore unknown arguments
+            }
+        }
+    }
+
+    // Compute task dependencies
+    let task_deps = compute_task_deps(&config_spec)?;
+
+    // Get current working directory for environment evaluation
+    let cwd = env::current_dir()?;
+    let global_envs = if config_spec.otto.envs.is_empty() {
+        HashMap::new()
+    } else {
+        env_eval::evaluate_envs(&config_spec.otto.envs, Some(&cwd))
+            .unwrap_or_else(|e| {
+                eprintln!("Warning: Failed to evaluate global environment variables: {}", e);
+                HashMap::new()
+            })
+    };
+
+    // Build tasks with computed dependencies
+    let mut tasks = Vec::new();
+    for task_name in config_spec.tasks.keys() {
+        if let Some(task_spec) = config_spec.tasks.get(task_name) {
+            let task = Task {
+                name: task_name.clone(),
+                task_deps: task_deps.get(task_name).cloned().unwrap_or_default().into_iter().collect(),
+                file_deps: task_spec.input.clone(),
+                output_deps: task_spec.output.clone(),
+                envs: {
+                    let mut envs = global_envs.clone();
+                    if let Ok(task_envs) = env_eval::evaluate_envs(&task_spec.envs, Some(&cwd)) {
+                        envs.extend(task_envs);
+                    }
+                    envs
+                },
+                values: HashMap::new(),
+                action: task_spec.action.clone(),
+                hash: "000000".to_string(), // Dummy hash for visualization
+            };
+            tasks.push(task);
+        }
+    }
+
+    // Build DAG from tasks
+    let dag = build_dag_from_tasks(&tasks)?;
+
+    // Create visualizer and generate output
+    let output_path = options.output_path.clone();
+    let visualizer = DagVisualizer::new(options);
+    let output = visualizer.visualize(&dag)?;
+
+    // Output to file or stdout
+    if let Some(output_path) = output_path {
+        std::fs::write(&output_path, output)?;
+        println!("Graph saved to {}", output_path.display());
+    } else {
+        println!("{}", output);
+    }
+
+    Ok(())
+}
+
+/// Build a DAG from a list of tasks
+fn build_dag_from_tasks(tasks: &[Task]) -> Result<DAG<Task>> {
+    let mut dag = DAG::new();
+    let mut task_to_node = HashMap::new();
+
+    // Add all tasks as nodes first
+    for task in tasks {
+        let node_index = dag.add_node(task.clone());
+        task_to_node.insert(task.name.clone(), node_index);
+    }
+
+    // Add edges based on task dependencies
+    for task in tasks {
+        if let Some(target_node) = task_to_node.get(&task.name) {
+            for dep_name in &task.task_deps {
+                if let Some(source_node) = task_to_node.get(dep_name) {
+                    // Add edge from dependency to task (dependency -> task)
+                    dag.add_edge(*source_node, *target_node, ())?;
+                }
+            }
+        }
+    }
+
+    Ok(dag)
 }
