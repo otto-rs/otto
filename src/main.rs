@@ -63,7 +63,18 @@ async fn main_two_pass(command_line: &str) -> Result<()> {
     // Handle help/version early (short-circuit)
     if global_options.help {
         if remaining_args.trim().is_empty() {
-            show_help(false);
+            // For global help, check if ottofile exists to show appropriate error
+            let ottofile_path = if let Some(ref ottofile) = global_options.ottofile {
+                Some(ottofile.clone())
+            } else {
+                find_ottofile_in_current_and_parent_dirs()
+            };
+
+            let missing_ottofile = load_config_from_path(ottofile_path).is_err();
+            show_help(missing_ottofile);
+            if missing_ottofile {
+                std::process::exit(2);
+            }
         } else {
             // Parse the remaining args to get the task name for help
             let task_name = remaining_args.trim().split_whitespace().next().unwrap_or("");
@@ -153,9 +164,9 @@ async fn main_two_pass(command_line: &str) -> Result<()> {
         }
     };
 
-    // ===== PASS 2: Parse tasks with config =====
+    // ===== PASS 2: Parse tasks with config-aware disambiguation =====
     let parser = NomParser::new(Some(config_spec.clone()))?;
-    let tasks = match parser.parse_tasks_only(&remaining_args) {
+    let tasks = match parser.parse_tasks_with_config(&remaining_args) {
         Ok(tasks) => tasks,
         Err(e) => {
             eprintln!("{}", e);

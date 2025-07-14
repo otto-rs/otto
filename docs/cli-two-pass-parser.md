@@ -13,7 +13,7 @@ The existing `main_nom()` function in `src/main.rs` is a hybrid approach that de
 3. **Bypasses nom parser**: Uses `split_whitespace()` and manual iteration instead of combinators
 4. **Maintenance nightmare**: Complex nested if-blocks that are hard to extend
 
-## Solution: Two-Pass Parsing
+## Solution: Two-Pass Parsing with Config-Aware Task Segmentation
 
 ### Architecture Overview
 
@@ -22,14 +22,15 @@ Command Line Input
         ↓
    ┌─────────────┐
    │   Pass 1    │  ← Parse global options only (no config needed)
-   │ Global Opts │
+   │ Global Opts │  ← Pure nom combinators, restrictive parsing
    └─────────────┘
         ↓
    [Load Config]   ← Use --ottofile from Pass 1
-        ↓
+        ↓           ← Extract known task names from config
    ┌─────────────┐
-   │   Pass 2    │  ← Parse tasks with config validation
-   │    Tasks    │
+   │   Pass 2    │  ← Parse tasks with config-aware disambiguation
+   │Config-Aware │  ← Task names become KEYWORDS that segment command line
+   │Task Parsing │  ← Use config to resolve --flag vs --flag value ambiguity
    └─────────────┘
         ↓
     [Execute]
@@ -60,9 +61,9 @@ Command Line Input
 # - Remaining: "hello --greeting world test --flag"
 ```
 
-### Pass 2: Task Parser
+### Pass 2: Config-Aware Task Parser
 
-**Purpose**: Parse task invocations using config-aware validation.
+**Purpose**: Parse task invocations using configuration to eliminate ambiguity.
 
 **Input**:
 - `remaining_args` from Pass 1
@@ -70,10 +71,19 @@ Command Line Input
 
 **Output**: `Vec<ParsedTask>`
 
+**Key Innovation**: **Task names become KEYWORDS** that segment the command line:
+
+1. **Extract known task names** from `ConfigSpec.tasks.keys()`
+2. **Use task names as delimiters** to partition command line
+3. **Resolve flag ambiguity** using config:
+   - `--flag taskname` → if `taskname` is a known task, `--flag` is boolean
+   - `--flag somevalue` → if `somevalue` is not a known task, `--flag` takes the value
+4. **Validate arguments** against task parameter specifications
+
 **What it parses**:
-- Task names (validated against config)
+- Task names (validated against config.tasks)
 - Task arguments (validated against task parameter specs)
-- Task flags (validated against task parameter specs)
+- Task flags (disambiguated using known task names)
 
 ## Implementation Plan
 
@@ -142,23 +152,23 @@ async fn main() -> Result<()> {
     // ===== LOAD CONFIG (using ottofile from pass 1) =====
     let config = load_config_with_ottofile(global_options.ottofile.as_ref())?;
 
-    // ===== PASS 2: Parse tasks with config =====
+    // ===== PASS 2: Parse tasks with config-aware disambiguation =====
     let mut parser = NomParser::new(Some(config))?;
-    let tasks = parser.parse_tasks_only(remaining_args)?;
+    let tasks = parser.parse_tasks_with_config(remaining_args)?;
 
     // ===== EXECUTE =====
     execute_tasks(tasks, global_options).await
 }
 ```
 
-### 3. Update `src/cli/parser.rs` for Tasks-Only Mode
+### 3. Update `src/cli/parser.rs` for Config-Aware Task Parsing
 
 Add a new method to `NomParser`:
 
 ```rust
 impl NomParser {
-    /// Parse only tasks (for Pass 2), assuming global options already processed
-    pub fn parse_tasks_only(&mut self, input: &str) -> Result<Vec<ParsedTask>, ParseError> {
+    /// Parse tasks with config-aware disambiguation (for Pass 2)
+    pub fn parse_tasks_with_config(&mut self, input: &str) -> Result<Vec<ParsedTask>, ParseError> {
         let input = input.trim();
 
         // Handle empty input
@@ -166,8 +176,8 @@ impl NomParser {
             return Ok(self.get_default_tasks());
         }
 
-        // Parse task invocations only (no global options)
-        let task_invocations = match parse_task_invocations_only(input) {
+        // Parse task invocations with config-aware disambiguation
+        let task_invocations = match parse_task_invocations_with_config(input, self.config.as_ref().unwrap()) {
             Ok((remaining, parsed)) => {
                 if !remaining.trim().is_empty() {
                     return Err(ParseError::UnconsumedInput {
@@ -198,17 +208,107 @@ impl NomParser {
 }
 ```
 
-### 4. Create Task-Only Parser in `src/cli/combinators.rs`
+### 4. Create Config-Aware Task Parser in `src/cli/combinators.rs`
 
 ```rust
-/// Parse task invocations only (no global options)
-pub fn parse_task_invocations_only(input: &str) -> ParseResult<Vec<TaskInvocation>> {
+/// Parse task invocations with config-aware disambiguation
+pub fn parse_task_invocations_with_config(
+    input: &str,
+    config: &ConfigSpec
+) -> ParseResult<Vec<TaskInvocation>> {
+    let known_tasks: HashSet<String> = config.tasks.keys().cloned().collect();
+
     context(
-        "task invocations",
+        "task invocations with config",
         all_consuming(
-            separated_list0(whitespace1, task_invocation)
+            separated_list0(
+                whitespace1,
+                task_invocation_with_config(&known_tasks, config)
+            )
         )
     ).parse(input)
+}
+
+/// Parse a single task invocation with config-aware argument parsing
+fn task_invocation_with_config(
+    known_tasks: &HashSet<String>,
+    config: &ConfigSpec
+) -> impl Fn(&str) -> ParseResult<TaskInvocation> {
+    move |input| {
+        context("task invocation with config",
+            map(
+                pair(
+                    known_task_name(known_tasks),
+                    many0(preceded(
+                        whitespace1,
+                        task_argument_with_config(known_tasks, config)
+                    ))
+                ),
+                |(name, arguments)| TaskInvocation {
+                    name: name.to_string(),
+                    arguments,
+                }
+            )
+        ).parse(input)
+    }
+}
+
+/// Parse task name that must be in the known tasks set
+fn known_task_name(
+    known_tasks: &HashSet<String>
+) -> impl Fn(&str) -> ParseResult<&str> {
+    move |input| {
+        context("known task name",
+            verify(identifier, |name: &str| known_tasks.contains(name))
+        ).parse(input)
+    }
+}
+
+/// Parse task argument with config-aware flag disambiguation
+fn task_argument_with_config(
+    known_tasks: &HashSet<String>,
+    config: &ConfigSpec
+) -> impl Fn(&str) -> ParseResult<TaskArgument> {
+    move |input| {
+        context("task argument with config",
+            alt((
+                task_argument_long_with_equals,  // --arg=value (unambiguous)
+                task_argument_flag_or_value_with_config(known_tasks),
+                task_argument_short_with_space,
+            ))
+        ).parse(input)
+    }
+}
+
+/// The key function: disambiguate --flag vs --flag value using known task names
+fn task_argument_flag_or_value_with_config(
+    known_tasks: &HashSet<String>
+) -> impl Fn(&str) -> ParseResult<TaskArgument> {
+    move |input| {
+        // Parse --flag first
+        let (remaining, flag_name) = preceded(tag("--"), identifier).parse(input)?;
+
+        // Look ahead to see what follows
+        let (after_space, _) = whitespace1.parse(remaining)?;
+
+        // Check if next token is a known task name
+        if let Ok((_, next_token)) = identifier.parse(after_space) {
+            if known_tasks.contains(next_token) {
+                // Next token is a task name, so this --flag is boolean
+                return Ok((remaining, TaskArgument {
+                    name: flag_name.to_string(),
+                    value: None,
+                }));
+            }
+        }
+
+        // Next token is not a task name, so --flag takes a value
+        let (final_remaining, value) = preceded(whitespace1, argument_value).parse(remaining)?;
+        Ok((final_remaining, TaskArgument {
+            name: flag_name.to_string(),
+            value: Some(value),
+        }))
+    }
 }
 ```
 
@@ -223,20 +323,27 @@ pub fn parse_task_invocations_only(input: &str) -> ParseResult<Vec<TaskInvocatio
 - Config loaded using `--ottofile` from Pass 1
 - Tasks parsed with full config validation
 
-### 3. **Clean Architecture**
+### 3. **Eliminates Grammar Ambiguity**
+- **Task names become keywords** that segment the command line
+- **Config-aware disambiguation**: `--flag taskname` vs `--flag value`
+- **No more precedence rules**: Use semantic information instead of arbitrary ordering
+
+### 4. **Clean Architecture**
 - **Pass 1**: `global_options_parser.rs` - config-agnostic
-- **Pass 2**: `parser.rs` - config-aware
+- **Pass 2**: `parser.rs` - config-aware disambiguation
 - **Separation of concerns**: Each pass has a single responsibility
 
-### 4. **Proper nom Usage**
+### 5. **Proper nom Usage**
 - Both passes use nom combinators
+- Parameterized parsers for config-aware parsing
 - Proper error handling with nom's error types
 - Composable and extensible
 
-### 5. **Maintainability**
+### 6. **Maintainability**
 - Easy to add new global options
 - Easy to extend task parsing
 - Clear code flow
+- No more ambiguous grammar issues
 
 ## Example Flows
 
@@ -319,6 +426,53 @@ Once this architecture is in place, future enhancements become easier:
 4. **Improve error messages** - each pass has its own error context
 5. **Add shell completion** - can reuse both parsers for completion logic
 
+## Config-Aware Disambiguation Example
+
+Given an `otto.yml` with tasks: `build`, `test`, `deploy`
+
+### Before (Ambiguous)
+```bash
+otto test --verbose build --output=dist
+```
+
+**Problem**: Is `--verbose` a boolean flag or does it take `build` as a value?
+
+**Old approach**: Use precedence rules (arbitrary ordering in `alt()` combinator)
+
+### After (Config-Aware)
+```bash
+otto test --verbose build --output=dist
+```
+
+**Solution**: Use known task names to disambiguate:
+
+1. **Parse `test`** → known task ✓
+2. **Parse `--verbose`** → check next token
+3. **Next token is `build`** → known task ✓
+4. **Therefore**: `--verbose` is a boolean flag, `build` starts new task
+5. **Parse `build --output=dist`** → known task with argument
+
+**Result**:
+- Task 1: `test` with `--verbose` flag
+- Task 2: `build` with `--output=dist` argument
+
+### Comparison Example
+
+```bash
+otto test --verbose somevalue deploy --env=prod
+```
+
+**Config-aware parsing**:
+1. `test` → known task ✓
+2. `--verbose` → check next token
+3. `somevalue` → NOT a known task ✗
+4. **Therefore**: `--verbose` takes `somevalue` as value
+5. `deploy` → known task ✓
+
+**Result**:
+- Task 1: `test` with `--verbose=somevalue`
+- Task 2: `deploy` with `--env=prod`
+
 ## Conclusion
 
-This two-pass approach eliminates the current architectural problems while maintaining all existing functionality. It provides a clean, maintainable, and extensible foundation for Otto's CLI parsing that properly leverages nom's parser combinator capabilities.
+This config-aware two-pass approach eliminates the grammar ambiguity by using semantic information (known task names) to make parsing decisions. It maintains all existing functionality while providing a clean, maintainable, and extensible foundation that properly leverages nom's parser combinator capabilities without artificial precedence rules.

@@ -5,7 +5,6 @@ use nom::{
     character::complete::{char, one_of, space1},
     combinator::{recognize, all_consuming, map},
     error::context,
-
 };
 
 use crate::cli::types::GlobalOption;
@@ -47,14 +46,17 @@ fn parse_globals_and_remaining(input: &str) -> ParseResult<(Vec<GlobalOption>, S
     ).parse(input)
 }
 
-/// Extract global options from the beginning and middle of input, leaving task-related args
+/// Extract global options using a hybrid approach
+/// This parses global options that can appear anywhere in the input
+/// NOTE: This is a compromise - it uses nom combinators for individual parsing
+/// but falls back to a controlled loop for the overall structure
 fn extract_global_options_and_remaining(input: &str) -> ParseResult<(Vec<GlobalOption>, String)> {
     let mut global_options = Vec::new();
     let mut remaining_parts = Vec::new();
     let mut current_input = input;
 
     while !current_input.trim().is_empty() {
-        // Skip whitespace
+        // Skip whitespace using nom
         let (after_space, _) = whitespace(current_input)?;
         current_input = after_space;
 
@@ -62,14 +64,14 @@ fn extract_global_options_and_remaining(input: &str) -> ParseResult<(Vec<GlobalO
             break;
         }
 
-        // Try to parse a global option
+        // Try to parse a global option using nom
         match known_global_option(current_input) {
             Ok((remaining, option)) => {
                 global_options.push(option);
                 current_input = remaining;
             }
             Err(_) => {
-                // Not a global option, find the next token and add it to remaining
+                // Not a global option, parse next token using nom
                 let (remaining, token) = next_token(current_input)?;
                 remaining_parts.push(token);
                 current_input = remaining;
@@ -79,6 +81,28 @@ fn extract_global_options_and_remaining(input: &str) -> ParseResult<(Vec<GlobalO
 
     let remaining_str = remaining_parts.join(" ");
     Ok(("", (global_options, remaining_str)))
+}
+
+/// Parse the next token (word or quoted string) for remaining args
+fn next_token(input: &str) -> ParseResult<&str> {
+    context(
+        "next token",
+        alt((
+            // Quoted strings
+            recognize((
+                tag("\""),
+                take_while(|c| c != '"'),
+                tag("\""),
+            )),
+            recognize((
+                tag("'"),
+                take_while(|c| c != '\''),
+                tag("'"),
+            )),
+            // Regular tokens (stop at whitespace)
+            take_while(|c: char| !c.is_whitespace()),
+        ))
+    ).parse(input)
 }
 
 /// Parse only known global options (restrictive parser for Pass 1)
@@ -260,30 +284,12 @@ fn known_global_option_long_with_space(input: &str) -> ParseResult<GlobalOption>
 }
 
 /// Parse the next token (word or quoted string) for remaining args
-fn next_token(input: &str) -> ParseResult<&str> {
-    context(
-        "next token",
-        alt((
-            // Quoted strings
-            recognize((
-                tag("\""),
-                take_while(|c| c != '"'),
-                tag("\""),
-            )),
-            recognize((
-                tag("'"),
-                take_while(|c| c != '\''),
-                tag("'"),
-            )),
-            // Regular tokens (stop at whitespace)
-            take_while(|c: char| !c.is_whitespace()),
-        ))
-    ).parse(input)
-}
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
 
 
     #[test]

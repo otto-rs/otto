@@ -1,4 +1,4 @@
-use crate::cli::combinators::{parse_command_line, parse_task_invocations_only};
+use crate::cli::combinators::{parse_command_line, parse_task_invocations_only, parse_task_invocations_with_config};
 use crate::cli::types::{ParsedCommand, ParsedTask, GlobalOptions, RawParsedCommand};
 use crate::cli::error::ParseError;
 use crate::cli::validation::{validate_global_options, validate_task_invocation};
@@ -128,6 +128,51 @@ impl NomParser {
                     ],
                 });
             }
+        }
+
+        Ok(validated_tasks)
+    }
+
+    /// Parse tasks with config-aware disambiguation (NEW CONFIG-AWARE APPROACH)
+    pub fn parse_tasks_with_config(&self, input: &str) -> Result<Vec<ParsedTask>, ParseError> {
+        let input = input.trim();
+
+        // Handle empty input
+        if input.is_empty() {
+            return Ok(self.get_default_tasks());
+        }
+
+        // Get config - required for config-aware parsing
+        let config = self.config.as_ref().ok_or_else(|| ParseError::NoConfigFound {
+            searched_paths: vec![
+                "otto.yml".to_string(),
+                ".otto.yml".to_string(),
+                "otto.yaml".to_string(),
+                ".otto.yaml".to_string(),
+                "Ottofile".to_string(),
+                "OTTOFILE".to_string(),
+            ],
+        })?;
+
+        // Parse task invocations with config-aware disambiguation
+        let task_invocations = match parse_task_invocations_with_config(input, config) {
+            Ok((remaining, parsed)) => {
+                if !remaining.trim().is_empty() {
+                    return Err(ParseError::UnconsumedInput {
+                        remaining: remaining.to_string(),
+                    });
+                }
+                parsed
+            }
+            Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => return Err(e),
+            Err(nom::Err::Incomplete(_)) => return Err(ParseError::IncompleteInput),
+        };
+
+        // Validate tasks against config
+        let mut validated_tasks = Vec::new();
+        for task_invocation in &task_invocations {
+            let validated_task = validate_task_invocation(task_invocation, config)?;
+            validated_tasks.push(validated_task);
         }
 
         Ok(validated_tasks)
