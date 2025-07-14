@@ -2,6 +2,7 @@
 
 use std::env;
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use eyre::{Report, eyre};
 use log::info;
 use env_logger::Target;
@@ -9,7 +10,8 @@ use std::fs::OpenOptions;
 use std::sync::Arc;
 use sha2::Digest;
 use otto::{
-    cli::{NomParser, ValidatedValue},
+    cli::{NomParser, ValidatedValue, parse_global_options_only},
+    cli::validation::validate_global_options,
     executor::{TaskScheduler, Workspace, Task, DAG, graph::{DagVisualizer, GraphOptions, GraphFormat}},
     cfg::{config::{ConfigSpec, Value}, env as env_eval},
 };
@@ -52,16 +54,251 @@ async fn main() -> Result<(), Report> {
     setup_logging()?;
     info!("Starting otto");
 
-    main_nom().await
+    let args: Vec<String> = env::args().collect();
+    let command_line = args[1..].join(" ");
+
+    main_two_pass(&command_line).await
 }
 
+async fn main_two_pass(command_line: &str) -> Result<()> {
+    // ===== PASS 1: Parse global options only =====
+    let (global_options, remaining_args) = match parse_global_options_only(command_line) {
+        Ok((global_opts, remaining)) => {
+            let validated_globals = validate_global_options(&global_opts)?;
+            (validated_globals, remaining)
+        }
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(2);
+        }
+    };
 
+    // Handle help/version early (short-circuit)
+    if global_options.help {
+        if remaining_args.trim().is_empty() {
+            show_help(false);
+        } else {
+            // Parse the remaining args to get the task name for help
+            let task_name = remaining_args.trim().split_whitespace().next().unwrap_or("");
 
+            // Try to load config for task-specific help
+            let ottofile_path = if let Some(ref ottofile) = global_options.ottofile {
+                Some(ottofile.clone())
+            } else {
+                find_ottofile_in_current_and_parent_dirs()
+            };
 
+            if let Ok((config, _, _)) = load_config_from_path(ottofile_path) {
+                show_task_help(&config, task_name);
+            } else {
+                show_help(true);
+            }
+        }
+        return Ok(());
+    }
 
+    if global_options.version {
+        show_version();
+        return Ok(());
+    }
 
+    // Handle built-in commands (like "graph")
+    if remaining_args.trim() == "graph" || remaining_args.trim().starts_with("graph ") {
+        // Determine ottofile path
+        let ottofile_path = if let Some(ref ottofile) = global_options.ottofile {
+            Some(ottofile.clone())
+        } else {
+            find_ottofile_in_current_and_parent_dirs()
+        };
 
+        // Try to load config
+        let config = match load_config_from_path(ottofile_path) {
+            Ok((config, _, _)) => config,
+            Err(_) => {
+                show_help(true);
+                std::process::exit(2);
+            }
+        };
 
+        // Parse graph command arguments
+        let mut args = remaining_args.split_whitespace().skip(1); // Skip "graph"
+        let mut format = GraphFormat::Ascii;
+        let mut output_path = None;
+
+        while let Some(arg) = args.next() {
+            match arg {
+                "--format" => {
+                    if let Some(format_str) = args.next() {
+                        format = match format_str {
+                            "ascii" => GraphFormat::Ascii,
+                            "dot" => GraphFormat::Dot,
+                            "svg" => GraphFormat::Svg,
+                            _ => return Err(eyre!("Invalid format: {}", format_str)),
+                        };
+                    }
+                }
+                "--output" => {
+                    if let Some(path_str) = args.next() {
+                        output_path = Some(PathBuf::from(path_str));
+                    }
+                }
+                _ => {} // Ignore unknown arguments for now
+            }
+        }
+
+        return handle_graph_command_two_pass(&config, format, output_path).await;
+    }
+
+    // ===== LOAD CONFIG (using ottofile from pass 1) =====
+    let ottofile_path = if let Some(ref ottofile) = global_options.ottofile {
+        Some(ottofile.clone())
+    } else {
+        find_ottofile_in_current_and_parent_dirs()
+    };
+
+    let (config_spec, _hash, ottofile_path) = match load_config_from_path(ottofile_path) {
+        Ok((config, hash, path)) => (config, hash, path),
+        Err(_) => {
+            show_help(true);
+            std::process::exit(2);
+        }
+    };
+
+    // ===== PASS 2: Parse tasks with config =====
+    let parser = NomParser::new(Some(config_spec.clone()))?;
+    let tasks = match parser.parse_tasks_only(&remaining_args) {
+        Ok(tasks) => tasks,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(2);
+        }
+    };
+
+    // ===== EXECUTE =====
+    execute_tasks(tasks, global_options, config_spec, ottofile_path).await
+}
+
+/// Helper function to find ottofile in current and parent directories
+fn find_ottofile_in_current_and_parent_dirs() -> Option<PathBuf> {
+    let current_dir = std::env::current_dir().ok()?;
+    find_ottofile(&current_dir).ok().flatten()
+}
+
+/// Helper function to show version
+fn show_version() {
+    println!("otto {}", env!("CARGO_PKG_VERSION"));
+}
+
+/// Helper function to handle graph command with the new signature
+async fn handle_graph_command_two_pass(config: &ConfigSpec, format: GraphFormat, output_path: Option<PathBuf>) -> Result<()> {
+    // Build DAG from all tasks in config
+    let tasks: Vec<Task> = config.tasks.iter().map(|(_name, task_spec)| {
+        Task::from_task_with_cwd_and_global_envs(
+            task_spec,
+            Path::new("."),
+            &std::collections::HashMap::new()
+        )
+    }).collect();
+
+    let dag = build_dag_from_tasks(&tasks)?;
+
+    // Create graph options
+    let mut options = GraphOptions::default();
+    options.format = format;
+    options.output_path = output_path.clone();
+
+    // Create visualizer and generate output
+    let visualizer = DagVisualizer::new(options);
+    let output = visualizer.visualize(&dag)?;
+
+    // Output to file or stdout
+    if let Some(output_path) = output_path {
+        std::fs::write(&output_path, output)?;
+        println!("Graph saved to {}", output_path.display());
+    } else {
+        println!("{}", output);
+    }
+
+    Ok(())
+}
+
+/// Helper function to execute tasks with the new signature
+async fn execute_tasks(
+    tasks: Vec<otto::cli::types::ParsedTask>,
+    global_options: otto::cli::types::GlobalOptions,
+    config_spec: ConfigSpec,
+    ottofile_path: Option<PathBuf>,
+) -> Result<()> {
+    // Create workspace
+    let workspace_root = ottofile_path.as_ref()
+        .and_then(|p| p.parent())
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+
+    let workspace = Arc::new(Workspace::new(workspace_root).await?);
+    workspace.init().await?;
+
+    // Create execution context
+    let execution_context = otto::executor::workspace::ExecutionContext {
+        prog: "otto".to_string(),
+        cwd: workspace.root().clone(),
+        user: std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        hash: workspace.hash().to_string(),
+        ottofile: ottofile_path.clone(),
+        args: std::env::args().collect(),
+    };
+
+    // Convert parsed tasks to Task objects
+    let mut task_objects = Vec::new();
+    for parsed_task in tasks {
+        let task_spec = config_spec.tasks.get(&parsed_task.name).unwrap();
+
+        // Convert ValidatedValue to Value for the task
+        let mut values = HashMap::new();
+        for (key, validated_value) in parsed_task.arguments {
+            let value = match validated_value {
+                ValidatedValue::String(s) => Value::Item(s),
+                ValidatedValue::Integer(i) => Value::Item(i.to_string()),
+                ValidatedValue::Float(f) => Value::Item(f.to_string()),
+                ValidatedValue::Boolean(b) => Value::Item(b.to_string()),
+                ValidatedValue::Path(p) => Value::Item(p.to_string_lossy().to_string()),
+                ValidatedValue::Url(u) => Value::Item(u),
+            };
+            values.insert(key, value);
+        }
+
+        // Create task using the Task::from_task_with_cwd_and_global_envs method
+        let mut task = Task::from_task_with_cwd_and_global_envs(
+            task_spec,
+            workspace.root(),
+            &HashMap::new()
+        );
+
+        // Override values with CLI arguments
+        task.values = values;
+
+        task_objects.push(task);
+    }
+
+    // Create scheduler with proper parameters
+    let io_limit = global_options.jobs.unwrap_or(4) as usize;
+    let cpu_limit = global_options.jobs.unwrap_or(4) as usize;
+
+    let scheduler = TaskScheduler::new(
+        task_objects,
+        workspace,
+        execution_context,
+        io_limit,
+        cpu_limit,
+    ).await?;
+
+    // Execute tasks
+    scheduler.execute_all().await
+}
 
 async fn main_nom() -> Result<()> {
     let args: Vec<String> = env::args().collect();

@@ -111,7 +111,7 @@ pub fn global_option_short_with_space(input: &str) -> ParseResult<GlobalOption> 
         map(
             (
                 char('-'),
-                one_of("oajHtvT"),  // Known short options
+                one_of("oajHtv"),  // Known short options
                 whitespace1,
                 argument_value,
             ),
@@ -153,6 +153,10 @@ pub fn global_option_flag(input: &str) -> ParseResult<GlobalOption> {
             }),
             map(tag("-V"), |_| GlobalOption {
                 name: "version".to_string(),
+                value: None,
+            }),
+            map(tag("--verbose"), |_| GlobalOption {
+                name: "verbose".to_string(),
                 value: None,
             }),
         ))
@@ -247,9 +251,9 @@ pub fn task_argument(input: &str) -> ParseResult<TaskArgument> {
         "task argument",
         alt((
             task_argument_long_with_equals,
+            task_argument_flag,  // Try flags before arguments with space
             task_argument_long_with_space,
             task_argument_short_with_space,
-            task_argument_flag,
         ))
     ).parse(input)
 }
@@ -294,6 +298,23 @@ pub fn command_line(input: &str) -> ParseResult<RawParsedCommand> {
 
 pub fn parse_command_line(input: &str) -> ParseResult<RawParsedCommand> {
     all_consuming(command_line).parse(input)
+}
+
+/// Parse task invocations only (no global options) - for Pass 2
+pub fn parse_task_invocations_only(input: &str) -> ParseResult<Vec<TaskInvocation>> {
+    context(
+        "task invocations only",
+        all_consuming(
+            map(
+                (
+                    whitespace,
+                    separated_list0(whitespace1, task_invocation),
+                    whitespace,
+                ),
+                |(_, tasks, _)| tasks
+            )
+        )
+    ).parse(input)
 }
 
 #[cfg(test)]
@@ -364,5 +385,68 @@ mod tests {
         assert_eq!(cmd.tasks.len(), 2);
         assert_eq!(cmd.tasks[0].name, "hello");
         assert_eq!(cmd.tasks[1].name, "test");
+    }
+
+    #[test]
+    fn test_parse_task_invocations_only_empty() {
+        let result = parse_task_invocations_only("");
+        assert!(result.is_ok());
+        let (_, tasks) = result.unwrap();
+        assert!(tasks.is_empty());
+    }
+
+    #[test]
+    fn test_parse_task_invocations_only_single_task() {
+        let result = parse_task_invocations_only("hello");
+        assert!(result.is_ok());
+        let (_, tasks) = result.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].name, "hello");
+        assert!(tasks[0].arguments.is_empty());
+    }
+
+    #[test]
+    fn test_parse_task_invocations_only_task_with_args() {
+        let result = parse_task_invocations_only("hello --greeting=world --verbose");
+        assert!(result.is_ok());
+        let (_, tasks) = result.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].name, "hello");
+        assert_eq!(tasks[0].arguments.len(), 2);
+        assert_eq!(tasks[0].arguments[0].name, "greeting");
+        assert_eq!(tasks[0].arguments[0].value, Some("world".to_string()));
+        assert_eq!(tasks[0].arguments[1].name, "verbose");
+        assert_eq!(tasks[0].arguments[1].value, None);
+    }
+
+    #[test]
+    fn test_parse_task_invocations_only_multiple_tasks() {
+        let result = parse_task_invocations_only("hello --greeting=world test --flag build --output=dist");
+        assert!(result.is_ok());
+        let (_, tasks) = result.unwrap();
+
+        assert_eq!(tasks.len(), 3);
+
+        assert_eq!(tasks[0].name, "hello");
+        assert_eq!(tasks[0].arguments.len(), 1);
+        assert_eq!(tasks[0].arguments[0].name, "greeting");
+
+        assert_eq!(tasks[1].name, "test");
+        assert_eq!(tasks[1].arguments.len(), 1);
+        assert_eq!(tasks[1].arguments[0].name, "flag");
+
+        assert_eq!(tasks[2].name, "build");
+        assert_eq!(tasks[2].arguments.len(), 1);
+        assert_eq!(tasks[2].arguments[0].name, "output");
+    }
+
+    #[test]
+    fn test_parse_task_invocations_only_with_whitespace() {
+        let result = parse_task_invocations_only("  hello   --greeting=world   test  ");
+        assert!(result.is_ok());
+        let (_, tasks) = result.unwrap();
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].name, "hello");
+        assert_eq!(tasks[1].name, "test");
     }
 }
