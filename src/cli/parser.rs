@@ -330,6 +330,30 @@ impl Parser {
         Ok((tasks, self.hash.clone(), self.ottofile.clone()))
     }
 
+    pub fn parse_all_tasks(&mut self) -> Result<(Vec<Task>, String, Option<PathBuf>)> {
+        // Load config if not already loaded
+        if self.config_spec.tasks.is_empty() {
+            let ottofile_value = env::var("OTTOFILE").unwrap_or_else(|_| "./".to_owned());
+            let ottofile_path = Self::divine_ottofile(ottofile_value)?;
+            let (config_spec, hash, ottofile) = Self::load_config_from_path(ottofile_path)?;
+
+            self.config_spec = config_spec;
+            self.hash = hash;
+            self.ottofile = ottofile;
+        }
+
+        // Get all task names (excluding graph)
+        let all_task_names: Vec<String> = self.config_spec.tasks.keys()
+            .filter(|name| *name != "graph")
+            .cloned()
+            .collect();
+
+        // Process all tasks
+        let tasks = self.process_tasks_with_filter(&all_task_names)?;
+
+        Ok((tasks, self.hash.clone(), self.ottofile.clone()))
+    }
+
     fn extract_remaining_args(&self, _matches: &ArgMatches) -> Result<Vec<String>> {
         let mut remaining_args = Vec::new();
         let mut skip_next = false;
