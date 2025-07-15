@@ -15,7 +15,7 @@ use hex;
 use sha2::{Digest, Sha256};
 use glob;
 
-use crate::cfg::config::{ConfigSpec, OttoSpec, ParamSpec, TaskSpec, TaskSpecs, Value};
+use crate::cfg::config::{ConfigSpec, ParamSpec, TaskSpec, Value};
 use crate::cfg::env as env_eval;
 
 pub type DAG<T> = Dag<T, (), u32>;
@@ -220,115 +220,72 @@ impl Parser {
     }
 
     pub fn parse(&mut self) -> Result<(Vec<Task>, String, Option<PathBuf>)> {
-        // Check for top-level help first, before any parsing
-        if self.args.iter().any(|arg| arg == "--help" || arg == "-h") {
-            // Load config for top-level help using Clap's argument parsing
-            let default_otto_spec = OttoSpec::default();
-            let otto_cmd = Self::otto_command(&default_otto_spec);
+        // Check if help was requested
+        let help_requested = self.args.contains(&"--help".to_string()) || self.args.contains(&"-h".to_string());
 
-            let ottofile_value = match otto_cmd.try_get_matches_from(&self.args) {
-                Ok(matches) => matches.get_one::<String>("ottofile")
-                    .map(|s| s.clone())
-                    .unwrap_or_else(|| "./".to_owned()),
-                Err(_) => {
-                    // Fall back to manual parsing if Clap fails
-                    self.args.iter()
-                        .position(|arg| arg == "-o" || arg == "--ottofile")
-                        .and_then(|i| self.args.get(i + 1))
-                        .cloned()
-                        .unwrap_or_else(|| env::var("OTTOFILE").unwrap_or_else(|_| "./".to_owned()))
-                }
-            };
-
-            let ottofile_path = Self::divine_ottofile(ottofile_value.clone());
-            match ottofile_path {
-                Ok(Some(path)) => {
-                    let (mut config_spec, _hash, _ottofile) = Self::load_config_from_path(Some(path))?;
-
-                    // Inject graph meta-task before showing help
-                    Self::inject_graph_meta_task_into_tasks(&mut config_spec.tasks);
-
-                    let mut help_cmd = Self::help_command(&config_spec.otto, &config_spec.tasks);
-                    help_cmd.print_help()?;
-                    std::process::exit(0);
-                }
-                Ok(None) | Err(_) => {
-                    // No ottofile found, show help with error message
-                    let default_otto_spec = OttoSpec::default();
-                    let empty_tasks = TaskSpecs::new();
-                    let mut help_cmd = Self::help_command(&default_otto_spec, &empty_tasks);
-                    help_cmd.print_help()?;
-                    std::process::exit(2);
-                }
-            }
-        }
-
-        // Check if help comes after a task name
-        let mut help_after_task = false;
-        let mut task_name = String::new();
-        for i in 1..self.args.len() {
-            if (self.args[i] == "--help" || self.args[i] == "-h") && i > 1 {
-                // Check if previous arg is a task name (we'll need to load config first)
-                let default_otto_spec = OttoSpec::default();
-                let otto_cmd = Self::otto_command(&default_otto_spec);
-
-                let ottofile_value = match otto_cmd.try_get_matches_from(&self.args) {
-                    Ok(matches) => matches.get_one::<String>("ottofile")
-                        .map(|s| s.clone())
-                        .unwrap_or_else(|| "./".to_owned()),
-                    Err(_) => {
-                        // Fall back to manual parsing if Clap fails
-                        self.args.iter()
-                            .position(|arg| arg == "-o" || arg == "--ottofile")
-                            .and_then(|i| self.args.get(i + 1))
-                            .cloned()
-                            .unwrap_or_else(|| env::var("OTTOFILE").unwrap_or_else(|_| "./".to_owned()))
-                    }
-                };
-
-                let ottofile_path = Self::divine_ottofile(ottofile_value)?;
-                let (config_spec, _hash, _ottofile) = Self::load_config_from_path(ottofile_path)?;
-
-                task_name = self.args[i - 1].clone();
-                // Check for both configured tasks and built-in meta-tasks
-                if config_spec.tasks.contains_key(&task_name) || task_name == "graph" {
-                    help_after_task = true;
-                    self.config_spec = config_spec;
-                    self.inject_graph_meta_task();
-                    break;
-                }
-            }
-        }
-
-        if help_after_task {
-            // Show task-specific help
-            if let Some(task) = self.config_spec.tasks.get(&task_name) {
-                let mut task_cmd = Self::task_to_command(task);
-                task_cmd.print_help()?;
-                std::process::exit(0);
-            }
-        }
-
-        // Stage 1: Parse global options with default config
-        let default_otto_spec = OttoSpec::default();
-        let otto_cmd = Self::otto_command(&default_otto_spec);
-
-        // Try to parse with allow_external_subcommands to capture remaining args
+        // FIRST PASS: Parse global options and extract ottofile
+        let otto_cmd = Self::otto_command();
         let matches = match otto_cmd.try_get_matches_from(&self.args) {
             Ok(m) => m,
             Err(e) => {
                 use clap::error::ErrorKind;
                 match e.kind() {
-                    ErrorKind::DisplayVersion | ErrorKind::DisplayHelp => {
+                    ErrorKind::DisplayVersion => {
                         e.print().expect("clap error print failed");
                         std::process::exit(0);
+                    }
+                                        ErrorKind::DisplayHelp => {
+                        // Always show help, but add error message if no ottofile found
+                        if help_requested {
+                            let ottofile_value = ".".to_string();
+                            let ottofile_path = Self::divine_ottofile(ottofile_value);
+
+                            match ottofile_path {
+                                Ok(Some(path)) => {
+                                    // Ottofile exists, load config and show normal help with tasks
+                                    match Self::load_config_from_path(Some(path)) {
+                                        Ok((config_spec, _, _)) => {
+                                            let mut temp_parser = Self {
+                                                prog: self.prog.clone(),
+                                                cwd: self.cwd.clone(),
+                                                user: self.user.clone(),
+                                                config_spec,
+                                                hash: String::new(),
+                                                args: self.args.clone(),
+                                                pargs: Vec::new(),
+                                                ottofile: None,
+                                            };
+                                            temp_parser.inject_graph_meta_task();
+                                            let mut help_cmd = temp_parser.build_help_command();
+                                            help_cmd.print_help().expect("Failed to print help");
+                                            std::process::exit(0);
+                                        }
+                                        Err(_) => {
+                                            // Failed to load config, show help with error message
+                                            let mut help_cmd = Self::build_help_command_with_error();
+                                            help_cmd.print_help().expect("Failed to print help");
+                                            std::process::exit(2);
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    // No ottofile found, show help with error message
+                                    let mut help_cmd = Self::build_help_command_with_error();
+                                    help_cmd.print_help().expect("Failed to print help");
+                                    std::process::exit(2);
+                                }
+                            }
+                        } else {
+                            e.print().expect("clap error print failed");
+                            std::process::exit(0);
+                        }
                     }
                     _ => return Err(eyre!(e)),
                 }
             }
         };
 
-        // Extract ottofile path and load config
+        // Extract ottofile and load config
         let ottofile_value = matches.get_one::<String>("ottofile")
             .map(|s| s.clone())
             .expect("ottofile should have a value from flag, env var, or default");
@@ -343,45 +300,31 @@ impl Parser {
         // Inject built-in meta-tasks
         self.inject_graph_meta_task();
 
-        // Stage 2: Extract remaining arguments manually from original args
-        let remaining_args = self.extract_remaining_args(&matches)?;
+        // Extract remaining arguments after global options
+        let remaining_args = self.extract_remaining_args(&matches);
 
-        // Check for help command before processing tasks
-        if !remaining_args.is_empty() && remaining_args[0] == "help" {
-            if remaining_args.len() == 1 {
-                // "otto help" - show general help
-                let mut help_cmd = Self::help_command(&self.config_spec.otto, &self.config_spec.tasks);
-                help_cmd.print_help()?;
-                std::process::exit(0);
-            } else {
-                // "otto help <task>" - show task-specific help
-                let task_name = &remaining_args[1];
-                if let Some(task) = self.config_spec.tasks.get(task_name) {
-                    let mut task_cmd = Self::task_to_command(task);
-                    task_cmd.print_help()?;
-                    std::process::exit(0);
-                } else {
-                    eprintln!("Task '{}' not found", task_name);
-                    std::process::exit(1);
-                }
-            }
+        // Handle help commands
+        if self.should_show_help(&remaining_args) {
+            self.show_help(&remaining_args)?;
+            std::process::exit(0);
         }
 
-        // Include both configured tasks AND built-in meta-tasks like "graph"
-        let mut task_names: Vec<&str> = self.config_spec.tasks.keys().map(String::as_str).collect();
-        task_names.push("graph"); // Always include graph as a built-in task name
+        // SECOND PASS: Determine which tasks to run
+        let tasks_to_run = if remaining_args.is_empty() {
+            // No task arguments provided - use default tasks from config
+            self.resolve_default_tasks()?
+        } else {
+            // Task arguments provided - partition and parse them
+            let task_names = self.get_task_names();
+            let partitions = partitions(&remaining_args, &task_names);
+            self.pargs = partitions;
 
-        // Partition the remaining args by task names
-        let partitions = partitions(&remaining_args, &task_names);
-        self.pargs = partitions;
-
-        // Extract task names from partitions
-        let configured_tasks = self.pargs.iter()
-            .filter_map(|p| if p.is_empty() { None } else { Some(p[0].clone()) })
-            .collect::<Vec<String>>();
+            // Extract task names from partitions
+            self.extract_task_names_from_partitions()
+        };
 
         // Process tasks and build DAG
-        let tasks = self.process_tasks_with_filter(&configured_tasks)?;
+        let tasks = self.process_tasks_with_filter(&tasks_to_run)?;
 
         Ok((tasks, self.hash.clone(), self.ottofile.clone()))
     }
@@ -390,8 +333,7 @@ impl Parser {
         // Load config if not already loaded
         if self.config_spec.tasks.is_empty() {
             // Parse command line arguments to extract ottofile path (similar to main parse method)
-            let default_otto_spec = OttoSpec::default();
-            let otto_cmd = Self::otto_command(&default_otto_spec);
+            let otto_cmd = Self::otto_command();
 
             // Try to parse with allow_external_subcommands to capture ottofile flag
             let matches = match otto_cmd.try_get_matches_from(&self.args) {
@@ -444,49 +386,169 @@ impl Parser {
         Ok((tasks, self.hash.clone(), self.ottofile.clone()))
     }
 
-    fn extract_remaining_args(&self, _matches: &ArgMatches) -> Result<Vec<String>> {
-        let mut remaining_args = Vec::new();
-        let mut skip_next = false;
-        let mut in_task_args = false;
+    fn otto_command() -> Command {
+        Command::new("otto")
+            .version(env!("GIT_DESCRIBE"))
+            .about("A task runner")
+            .arg(
+                Arg::new("ottofile")
+                    .short('o')
+                    .long("ottofile")
+                    .value_name("PATH")
+                    .help("path to the ottofile")
+                    .default_value(".")
+                    .env("OTTOFILE")
+                    .value_parser(value_parser!(String))
+            )
+            .arg(
+                Arg::new("jobs")
+                    .short('j')
+                    .long("jobs")
+                    .value_name("N")
+                    .help("Number of parallel jobs")
+                    .default_value("1")
+                    .value_parser(value_parser!(String))
+            )
+            .arg(
+                Arg::new("verbose")
+                    .short('v')
+                    .long("verbose")
+                    .help("Verbose output")
+                    .action(clap::ArgAction::SetTrue)
+            )
+            .arg(
+                Arg::new("quiet")
+                    .short('q')
+                    .long("quiet")
+                    .help("Quiet output")
+                    .action(clap::ArgAction::SetTrue)
+            )
+            .arg(
+                Arg::new("dry-run")
+                    .long("dry-run")
+                    .help("Show what would be done without executing")
+                    .action(clap::ArgAction::SetTrue)
+            )
+            .arg(
+                Arg::new("force")
+                    .long("force")
+                    .help("Force execution even if up-to-date")
+                    .action(clap::ArgAction::SetTrue)
+            )
+            .arg(
+                Arg::new("no-deps")
+                    .long("no-deps")
+                    .help("Don't run dependencies")
+                    .action(clap::ArgAction::SetTrue)
+            )
+            .allow_external_subcommands(true)
+    }
 
-        // Include both configured tasks AND built-in meta-tasks like "graph"
-        let mut task_names: Vec<&str> = self.config_spec.tasks.keys().map(String::as_str).collect();
-        task_names.push("graph"); // Always include graph as a built-in task name
+    fn extract_remaining_args(&self, matches: &ArgMatches) -> Vec<String> {
+        // Handle external subcommands properly
+        if let Some((subcommand_name, sub_matches)) = matches.subcommand() {
+            let mut args = vec![subcommand_name.to_string()];
 
-        for (_i, arg) in self.args.iter().enumerate().skip(1) { // Skip program name
-            if skip_next {
-                skip_next = false;
-                continue;
+            // For external subcommands, collect all the trailing arguments
+            // The key for external subcommand arguments is usually "" (empty string)
+            // Note: external subcommands store args as OsString, not String
+            if let Some(trailing_args) = sub_matches.get_many::<std::ffi::OsString>("") {
+                args.extend(trailing_args.map(|s| s.to_string_lossy().to_string()));
             }
 
-            // Check if this is a global option that takes a value
-            if arg == "-o" || arg == "--ottofile" ||
-               arg == "-a" || arg == "--api" ||
-               arg == "-j" || arg == "--jobs" ||
-               arg == "-H" || arg == "--home" ||
-               arg == "-t" || arg == "--tasks" ||
-               arg == "-v" || arg == "--verbosity" ||
-               arg == "-T" || arg == "--timeout" {
-                skip_next = true; // Skip the value
-                continue;
-            }
+            args
+        } else {
+            // No subcommand found, return empty
+            vec![]
+        }
+    }
 
-            // Check if this is a global flag
-            if arg == "-h" || arg == "--help" {
-                continue; // Already handled
-            }
+    fn should_show_help(&self, args: &[String]) -> bool {
+        // Show help if:
+        // 1. Explicit help command: "otto help" or "otto help <task>"
+        // 2. No args AND no default tasks defined
+        if !args.is_empty() {
+            return args[0] == "help";
+        }
 
-            // Check if this is a task name or help command
-            if task_names.contains(&arg.as_str()) || arg == "help" {
-                in_task_args = true;
-            }
+        // Empty args - check if we have default tasks
+        let default_tasks = &self.config_spec.otto.tasks;
+        default_tasks.is_empty() ||
+        (default_tasks.len() == 1 && default_tasks[0] == "*" && self.config_spec.tasks.is_empty())
+    }
 
-            if in_task_args {
-                remaining_args.push(arg.clone());
+
+
+    fn show_help(&self, args: &[String]) -> Result<()> {
+        if args.is_empty() {
+            // Show general help (no default tasks case)
+            let mut help_cmd = self.build_help_command();
+            help_cmd.print_help()?;
+        } else if args.len() == 1 && args[0] == "help" {
+            // "otto help" - show general help
+            let mut help_cmd = self.build_help_command();
+            help_cmd.print_help()?;
+        } else if args.len() == 2 && args[0] == "help" {
+            // "otto help <task>" - show task-specific help
+            let task_name = &args[1];
+            if let Some(task) = self.config_spec.tasks.get(task_name) {
+                let mut task_cmd = Self::task_to_command(task);
+                task_cmd.print_help()?;
+            } else {
+                eprintln!("Task '{}' not found", task_name);
+                std::process::exit(1);
+            }
+        }
+        Ok(())
+    }
+
+    fn resolve_default_tasks(&self) -> Result<Vec<String>> {
+        let default_tasks = &self.config_spec.otto.tasks;
+
+        if default_tasks.is_empty() {
+            return Ok(vec![]); // No default tasks defined
+        }
+
+        let mut resolved_tasks = Vec::new();
+
+        for task_pattern in default_tasks {
+            if task_pattern == "*" {
+                // "*" means all tasks
+                resolved_tasks.extend(
+                    self.config_spec.tasks.keys()
+                        .filter(|name| *name != "graph") // Exclude meta-tasks
+                        .cloned()
+                );
+            } else {
+                // Specific task name
+                if self.config_spec.tasks.contains_key(task_pattern) {
+                    resolved_tasks.push(task_pattern.clone());
+                } else {
+                    eprintln!("Warning: Default task '{}' not found", task_pattern);
+                }
             }
         }
 
-        Ok(remaining_args)
+        // Remove duplicates and sort
+        resolved_tasks.sort();
+        resolved_tasks.dedup();
+
+        Ok(resolved_tasks)
+    }
+
+    fn get_task_names(&self) -> Vec<&str> {
+        let mut task_names: Vec<&str> = self.config_spec.tasks.keys()
+            .map(String::as_str)
+            .collect();
+        task_names.push("graph"); // Always include built-in tasks
+        task_names.push("help"); // Always include help as a special command
+        task_names
+    }
+
+    fn extract_task_names_from_partitions(&self) -> Vec<String> {
+        self.pargs.iter()
+            .filter_map(|p| if p.is_empty() { None } else { Some(p[0].clone()) })
+            .collect()
     }
 
     fn process_tasks_with_filter(&self, requested_tasks: &[String]) -> Result<Vec<Task>> {
@@ -584,76 +646,6 @@ impl Parser {
         Ok(())
     }
 
-    fn otto_command(_otto_spec: &OttoSpec) -> Command {
-        Command::new("otto")
-            .version(env!("GIT_DESCRIBE"))
-            .about("A task runner")
-            .arg(
-                Arg::new("ottofile")
-                    .short('o')
-                    .long("ottofile")
-                    .value_name("PATH")
-                    .help("path to the ottofile")
-                    .default_value(".") // Use a static default
-                    .env("OTTOFILE") // Tie to OTTOFILE environment variable
-                    .value_parser(value_parser!(String))
-            )
-            .arg(
-                Arg::new("api")
-                    .short('a')
-                    .long("api")
-                    .value_name("URL")
-                    .help("api url")
-                    .default_value("http://localhost:8080") // Use a static default
-                    .value_parser(value_parser!(String))
-            )
-            .arg(
-                Arg::new("jobs")
-                    .short('j')
-                    .long("jobs")
-                    .value_name("JOBS")
-                    .help("number of jobs to run in parallel")
-                    .default_value("1") // Use a static default
-                    .value_parser(value_parser!(String))
-            )
-            .arg(
-                Arg::new("home")
-                    .short('H')
-                    .long("home")
-                    .value_name("PATH")
-                    .help("home directory")
-                    .default_value(".") // Use a static default
-                    .value_parser(value_parser!(String))
-            )
-            .arg(
-                Arg::new("tasks")
-                    .short('t')
-                    .long("tasks")
-                    .value_name("TASKS")
-                    .help("comma-separated list of tasks to run")
-                    .value_parser(value_parser!(String))
-            )
-            .arg(
-                Arg::new("verbosity")
-                    .short('v')
-                    .long("verbosity")
-                    .value_name("LEVEL")
-                    .help("verbosity level")
-                    .default_value("0")
-                    .value_parser(value_parser!(String))
-            )
-            .arg(
-                Arg::new("timeout")
-                    .short('T')
-                    .long("timeout")
-                    .value_name("SECONDS")
-                    .help("timeout in seconds")
-                    .default_value("0")
-                    .value_parser(value_parser!(String))
-            )
-            .allow_external_subcommands(true)
-    }
-
     fn task_to_command(task_spec: &TaskSpec) -> Command {
         let mut cmd = Command::new(task_spec.name.clone());
 
@@ -687,7 +679,7 @@ impl Parser {
         arg.value_parser(value_parser!(String))
     }
 
-    fn help_command(_otto_spec: &OttoSpec, tasks: &TaskSpecs) -> Command {
+    fn build_help_command(&self) -> Command {
         let mut cmd = Command::new("otto")
             .version(env!("GIT_DESCRIBE"))
             .about("A task runner")
@@ -735,9 +727,9 @@ impl Parser {
             .allow_external_subcommands(true);
 
         // Add tasks as subcommands
-        if !tasks.is_empty() {
+        if !self.config_spec.tasks.is_empty() {
             // Collect all tasks except graph, sort them alphabetically
-            let mut regular_tasks: Vec<_> = tasks.iter()
+            let mut regular_tasks: Vec<_> = self.config_spec.tasks.iter()
                 .filter(|(name, _)| *name != "graph")
                 .collect();
             regular_tasks.sort_by_key(|(name, _)| name.as_str());
@@ -748,7 +740,7 @@ impl Parser {
             }
 
             // Add graph task at the end if it exists
-            if let Some(graph_task) = tasks.get("graph") {
+            if let Some(graph_task) = self.config_spec.tasks.get("graph") {
                 cmd = cmd.subcommand(Self::task_to_command(graph_task));
             }
         } else {
@@ -756,6 +748,55 @@ impl Parser {
         }
 
         cmd
+    }
+
+    fn build_help_command_with_error() -> Command {
+        Command::new("otto")
+            .version(env!("GIT_DESCRIBE"))
+            .about("A task runner")
+            .arg(
+                Arg::new("jobs")
+                    .short('j')
+                    .long("jobs")
+                    .value_name("N")
+                    .help("Number of parallel jobs")
+                    .default_value("1")
+                    .value_parser(value_parser!(String))
+            )
+            .arg(
+                Arg::new("verbose")
+                    .short('v')
+                    .long("verbose")
+                    .help("Verbose output")
+                    .action(clap::ArgAction::SetTrue)
+            )
+            .arg(
+                Arg::new("quiet")
+                    .short('q')
+                    .long("quiet")
+                    .help("Quiet output")
+                    .action(clap::ArgAction::SetTrue)
+            )
+            .arg(
+                Arg::new("dry-run")
+                    .long("dry-run")
+                    .help("Show what would be done without executing")
+                    .action(clap::ArgAction::SetTrue)
+            )
+            .arg(
+                Arg::new("force")
+                    .long("force")
+                    .help("Force execution even if up-to-date")
+                    .action(clap::ArgAction::SetTrue)
+            )
+            .arg(
+                Arg::new("no-deps")
+                    .long("no-deps")
+                    .help("Don't run dependencies")
+                    .action(clap::ArgAction::SetTrue)
+            )
+            .after_help(ottofile_not_found_message())
+            .allow_external_subcommands(true)
     }
 
     fn inject_graph_meta_task(&mut self) {
@@ -811,61 +852,6 @@ impl Parser {
         };
 
         self.config_spec.tasks.insert("graph".to_string(), graph_task);
-    }
-
-    fn inject_graph_meta_task_into_tasks(tasks: &mut TaskSpecs) {
-        use crate::cfg::param::{ParamType, Nargs};
-
-        // Add graph meta-task to the configuration
-        let graph_task = TaskSpec {
-            name: "graph".to_string(),
-            help: Some("[built-in] Visualize the task dependency graph".to_string()),
-            after: vec![],
-            before: vec![],
-            input: vec![],
-            output: vec![],
-            envs: HashMap::new(),
-            params: {
-                let mut params = HashMap::new();
-
-                // Add --format parameter
-                params.insert("format".to_string(), ParamSpec {
-                    name: "format".to_string(),
-                    short: Some('f'),
-                    long: Some("format".to_string()),
-                    param_type: ParamType::OPT,
-                    dest: None,
-                    metavar: None,
-                    default: Some("ascii".to_string()),
-                    constant: Value::Empty,
-                    choices: vec!["ascii".to_string(), "dot".to_string(), "svg".to_string(), "png".to_string(), "pdf".to_string()],
-                    nargs: Nargs::One,
-                    help: Some("Output format".to_string()),
-                    value: Value::Empty,
-                });
-
-                // Add --output parameter
-                params.insert("output".to_string(), ParamSpec {
-                    name: "output".to_string(),
-                    short: None,
-                    long: Some("output".to_string()),
-                    param_type: ParamType::OPT,
-                    dest: None,
-                    metavar: None,
-                    default: None,
-                    constant: Value::Empty,
-                    choices: vec![],
-                    nargs: Nargs::One,
-                    help: Some("Output file path".to_string()),
-                    value: Value::Empty,
-                });
-
-                params
-            },
-            action: "# Built-in graph command".to_string(),
-        };
-
-        tasks.insert("graph".to_string(), graph_task);
     }
 
     fn find_ottofile(path: &Path) -> Result<Option<PathBuf>> {
