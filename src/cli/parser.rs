@@ -333,7 +333,41 @@ impl Parser {
     pub fn parse_all_tasks(&mut self) -> Result<(Vec<Task>, String, Option<PathBuf>)> {
         // Load config if not already loaded
         if self.config_spec.tasks.is_empty() {
-            let ottofile_value = env::var("OTTOFILE").unwrap_or_else(|_| "./".to_owned());
+            // Parse command line arguments to extract ottofile path (similar to main parse method)
+            let default_otto_spec = OttoSpec::default();
+            let otto_cmd = Self::otto_command(&default_otto_spec);
+
+            // Try to parse with allow_external_subcommands to capture ottofile flag
+            let matches = match otto_cmd.try_get_matches_from(&self.args) {
+                Ok(m) => m,
+                Err(_) => {
+                    // If parsing fails, fall back to environment variable
+                    let ottofile_value = env::var("OTTOFILE").unwrap_or_else(|_| "./".to_owned());
+                    let ottofile_path = Self::divine_ottofile(ottofile_value)?;
+                    let (config_spec, hash, ottofile) = Self::load_config_from_path(ottofile_path)?;
+
+                    self.config_spec = config_spec;
+                    self.hash = hash;
+                    self.ottofile = ottofile;
+
+                    // Get all task names (excluding graph)
+                    let all_task_names: Vec<String> = self.config_spec.tasks.keys()
+                        .filter(|name| *name != "graph")
+                        .cloned()
+                        .collect();
+
+                    // Process all tasks
+                    let tasks = self.process_tasks_with_filter(&all_task_names)?;
+
+                    return Ok((tasks, self.hash.clone(), self.ottofile.clone()));
+                }
+            };
+
+            // Extract ottofile path from parsed arguments
+            let ottofile_value = matches.get_one::<String>("ottofile")
+                .map(|s| s.clone())
+                .unwrap_or_else(|| env::var("OTTOFILE").unwrap_or_else(|_| "./".to_owned()));
+
             let ottofile_path = Self::divine_ottofile(ottofile_value)?;
             let (config_spec, hash, ottofile) = Self::load_config_from_path(ottofile_path)?;
 
