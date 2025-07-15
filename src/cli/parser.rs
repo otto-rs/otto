@@ -346,6 +346,27 @@ impl Parser {
         // Stage 2: Extract remaining arguments manually from original args
         let remaining_args = self.extract_remaining_args(&matches)?;
 
+        // Check for help command before processing tasks
+        if !remaining_args.is_empty() && remaining_args[0] == "help" {
+            if remaining_args.len() == 1 {
+                // "otto help" - show general help
+                let mut help_cmd = Self::help_command(&self.config_spec.otto, &self.config_spec.tasks);
+                help_cmd.print_help()?;
+                std::process::exit(0);
+            } else {
+                // "otto help <task>" - show task-specific help
+                let task_name = &remaining_args[1];
+                if let Some(task) = self.config_spec.tasks.get(task_name) {
+                    let mut task_cmd = Self::task_to_command(task);
+                    task_cmd.print_help()?;
+                    std::process::exit(0);
+                } else {
+                    eprintln!("Task '{}' not found", task_name);
+                    std::process::exit(1);
+                }
+            }
+        }
+
         // Include both configured tasks AND built-in meta-tasks like "graph"
         let mut task_names: Vec<&str> = self.config_spec.tasks.keys().map(String::as_str).collect();
         task_names.push("graph"); // Always include graph as a built-in task name
@@ -455,8 +476,8 @@ impl Parser {
                 continue; // Already handled
             }
 
-            // Check if this is a task name
-            if task_names.contains(&arg.as_str()) {
+            // Check if this is a task name or help command
+            if task_names.contains(&arg.as_str()) || arg == "help" {
                 in_task_args = true;
             }
 
