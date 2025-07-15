@@ -209,12 +209,23 @@ impl Parser {
     pub fn parse(&mut self) -> Result<(Vec<Task>, String, Option<PathBuf>)> {
         // Check for top-level help first, before any parsing
         if self.args.iter().any(|arg| arg == "--help" || arg == "-h") {
-            // Load config for top-level help
-            let ottofile_value = self.args.iter()
-                .position(|arg| arg == "-o" || arg == "--ottofile")
-                .and_then(|i| self.args.get(i + 1))
-                .cloned()
-                .unwrap_or_else(|| env::var("OTTOFILE").unwrap_or_else(|_| "./".to_owned()));
+            // Load config for top-level help using Clap's argument parsing
+            let default_otto_spec = OttoSpec::default();
+            let otto_cmd = Self::otto_command(&default_otto_spec);
+
+            let ottofile_value = match otto_cmd.try_get_matches_from(&self.args) {
+                Ok(matches) => matches.get_one::<String>("ottofile")
+                    .map(|s| s.clone())
+                    .unwrap_or_else(|| "./".to_owned()),
+                Err(_) => {
+                    // Fall back to manual parsing if Clap fails
+                    self.args.iter()
+                        .position(|arg| arg == "-o" || arg == "--ottofile")
+                        .and_then(|i| self.args.get(i + 1))
+                        .cloned()
+                        .unwrap_or_else(|| env::var("OTTOFILE").unwrap_or_else(|_| "./".to_owned()))
+                }
+            };
 
             let ottofile_path = Self::divine_ottofile(ottofile_value.clone());
             match ottofile_path {
@@ -245,11 +256,22 @@ impl Parser {
         for i in 1..self.args.len() {
             if (self.args[i] == "--help" || self.args[i] == "-h") && i > 1 {
                 // Check if previous arg is a task name (we'll need to load config first)
-                let ottofile_value = self.args.iter()
-                    .position(|arg| arg == "-o" || arg == "--ottofile")
-                    .and_then(|i| self.args.get(i + 1))
-                    .cloned()
-                    .unwrap_or_else(|| env::var("OTTOFILE").unwrap_or_else(|_| "./".to_owned()));
+                let default_otto_spec = OttoSpec::default();
+                let otto_cmd = Self::otto_command(&default_otto_spec);
+
+                let ottofile_value = match otto_cmd.try_get_matches_from(&self.args) {
+                    Ok(matches) => matches.get_one::<String>("ottofile")
+                        .map(|s| s.clone())
+                        .unwrap_or_else(|| "./".to_owned()),
+                    Err(_) => {
+                        // Fall back to manual parsing if Clap fails
+                        self.args.iter()
+                            .position(|arg| arg == "-o" || arg == "--ottofile")
+                            .and_then(|i| self.args.get(i + 1))
+                            .cloned()
+                            .unwrap_or_else(|| env::var("OTTOFILE").unwrap_or_else(|_| "./".to_owned()))
+                    }
+                };
 
                 let ottofile_path = Self::divine_ottofile(ottofile_value)?;
                 let (config_spec, _hash, _ottofile) = Self::load_config_from_path(ottofile_path)?;
@@ -296,7 +318,7 @@ impl Parser {
         // Extract ottofile path and load config
         let ottofile_value = matches.get_one::<String>("ottofile")
             .map(|s| s.clone())
-            .unwrap_or_else(|| env::var("OTTOFILE").unwrap_or_else(|_| "./".to_owned()));
+            .expect("ottofile should have a value from flag, env var, or default");
 
         let ottofile_path = Self::divine_ottofile(ottofile_value)?;
         let (config_spec, hash, ottofile) = Self::load_config_from_path(ottofile_path)?;
@@ -341,8 +363,8 @@ impl Parser {
             let matches = match otto_cmd.try_get_matches_from(&self.args) {
                 Ok(m) => m,
                 Err(_) => {
-                    // If parsing fails, fall back to environment variable
-                    let ottofile_value = env::var("OTTOFILE").unwrap_or_else(|_| "./".to_owned());
+                    // If parsing fails, fall back to default value
+                    let ottofile_value = "./".to_owned();
                     let ottofile_path = Self::divine_ottofile(ottofile_value)?;
                     let (config_spec, hash, ottofile) = Self::load_config_from_path(ottofile_path)?;
 
@@ -363,10 +385,10 @@ impl Parser {
                 }
             };
 
-            // Extract ottofile path from parsed arguments
+            // Extract ottofile path from parsed arguments (Clap handles env var automatically)
             let ottofile_value = matches.get_one::<String>("ottofile")
                 .map(|s| s.clone())
-                .unwrap_or_else(|| env::var("OTTOFILE").unwrap_or_else(|_| "./".to_owned()));
+                .expect("ottofile should have a value from flag, env var, or default");
 
             let ottofile_path = Self::divine_ottofile(ottofile_value)?;
             let (config_spec, hash, ottofile) = Self::load_config_from_path(ottofile_path)?;
@@ -539,6 +561,7 @@ impl Parser {
                     .value_name("PATH")
                     .help("path to the ottofile")
                     .default_value(".") // Use a static default
+                    .env("OTTOFILE") // Tie to OTTOFILE environment variable
                     .value_parser(value_parser!(String))
             )
             .arg(
