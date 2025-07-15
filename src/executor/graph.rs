@@ -330,26 +330,41 @@ impl DagVisualizer {
         output.push_str("│           Otto Task DAG             │\n");
         output.push_str("└─────────────────────────────────────┘\n\n");
 
-        // Find root tasks (no dependencies)
-        let root_tasks: Vec<_> = dag.raw_nodes()
+        // Find leaf tasks (tasks that nothing depends on - the top-level tasks you'd run)
+        let all_task_names: std::collections::HashSet<String> = dag.raw_nodes()
             .iter()
-            .filter(|node| node.weight.task_deps.is_empty())
+            .map(|node| node.weight.name.clone())
             .collect();
 
-        if root_tasks.is_empty() {
-            output.push_str("No root tasks found (possible circular dependencies)\n");
+        let leaf_tasks: Vec<_> = dag.raw_nodes()
+            .iter()
+            .filter(|node| {
+                // A task is a leaf if no other task depends on it
+                !all_task_names.iter().any(|other_task_name| {
+                    dag.raw_nodes()
+                        .iter()
+                        .any(|other_node|
+                            other_node.weight.name == *other_task_name &&
+                            other_node.weight.task_deps.contains(&node.weight.name)
+                        )
+                })
+            })
+            .collect();
+
+        if leaf_tasks.is_empty() {
+            output.push_str("No leaf tasks found (possible circular dependencies)\n");
             return Ok(output);
         }
 
-        for (i, root) in root_tasks.iter().enumerate() {
-            let is_last_root = i == root_tasks.len() - 1;
+        for (i, leaf) in leaf_tasks.iter().enumerate() {
+            let is_last_leaf = i == leaf_tasks.len() - 1;
             self.render_ascii_subtree(
                 &mut output,
-                &root.weight,
+                &leaf.weight,
                 dag,
                 0,
                 &mut std::collections::HashSet::new(),
-                is_last_root
+                is_last_leaf
             )?;
         }
 
@@ -492,21 +507,24 @@ impl DagVisualizer {
         }
         output.push('\n');
 
-        // Find tasks that depend on this one
-        let dependents: Vec<_> = dag.raw_nodes()
-            .iter()
-            .filter(|node| node.weight.task_deps.contains(&task.name))
+        // Find tasks that this task depends on
+        let dependencies: Vec<_> = task.task_deps.iter()
+            .filter_map(|dep_name| {
+                dag.raw_nodes()
+                    .iter()
+                    .find(|node| node.weight.name == *dep_name)
+            })
             .collect();
 
-        for (i, dependent) in dependents.iter().enumerate() {
-            let is_last_dependent = i == dependents.len() - 1;
+        for (i, dependency) in dependencies.iter().enumerate() {
+            let is_last_dependency = i == dependencies.len() - 1;
             self.render_ascii_subtree(
                 output,
-                &dependent.weight,
+                &dependency.weight,
                 dag,
                 depth + 1,
                 visited,
-                is_last_dependent
+                is_last_dependency
             )?;
         }
 
