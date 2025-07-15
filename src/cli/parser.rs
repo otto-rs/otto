@@ -702,8 +702,20 @@ impl Parser {
 
         // Add tasks as subcommands
         if !tasks.is_empty() {
-            for task_spec in tasks.values() {
+            // Collect all tasks except graph, sort them alphabetically
+            let mut regular_tasks: Vec<_> = tasks.iter()
+                .filter(|(name, _)| *name != "graph")
+                .collect();
+            regular_tasks.sort_by_key(|(name, _)| name.as_str());
+
+            // Add regular tasks first
+            for (_, task_spec) in regular_tasks {
                 cmd = cmd.subcommand(Self::task_to_command(task_spec));
+            }
+
+            // Add graph task at the end if it exists
+            if let Some(graph_task) = tasks.get("graph") {
+                cmd = cmd.subcommand(Self::task_to_command(graph_task));
             }
         } else {
             cmd = cmd.after_help("ERROR: No ottofile found in this directory or any parent directory!\n\nOtto looks for one of the following files:\n  otto.yml\n  .otto.yml\n  otto.yaml\n  .otto.yaml\n  Ottofile\n  OTTOFILE");
@@ -718,7 +730,7 @@ impl Parser {
         // Add graph meta-task to the configuration
         let graph_task = TaskSpec {
             name: "graph".to_string(),
-            help: Some("Visualize the task dependency graph".to_string()),
+            help: Some("[built-in] Visualize the task dependency graph".to_string()),
             after: vec![],
             before: vec![],
             input: vec![],
@@ -773,7 +785,7 @@ impl Parser {
         // Add graph meta-task to the configuration
         let graph_task = TaskSpec {
             name: "graph".to_string(),
-            help: Some("Visualize the task dependency graph".to_string()),
+            help: Some("[built-in] Visualize the task dependency graph".to_string()),
             after: vec![],
             before: vec![],
             input: vec![],
