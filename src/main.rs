@@ -31,26 +31,45 @@ fn setup_logging() -> Result<(), Report> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Report> {
+async fn main() {
     // Setup logging first
-    setup_logging()?;
+    if let Err(e) = setup_logging() {
+        eprintln!("Failed to setup logging: {}", e);
+        std::process::exit(1);
+    }
     info!("Starting otto");
 
     let args: Vec<String> = env::args().collect();
 
     // Create parser and parse arguments
-    let mut parser = Parser::new(args)?;
-    let (tasks, hash, ottofile_path) = parser.parse()?;
+    let mut parser = match Parser::new(args) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let (tasks, hash, ottofile_path) = match parser.parse() {
+        Ok(result) => result,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    };
 
     // Execute tasks
-    execute_tasks(tasks, hash, ottofile_path).await
+    if let Err(e) = execute_tasks(tasks, hash, ottofile_path).await {
+        eprintln!("{}", e);
+        std::process::exit(1);
+    }
 }
 
 async fn execute_tasks(
     tasks: Vec<otto::cli::parser::Task>,
     _hash: String,
     _ottofile_path: Option<std::path::PathBuf>
-) -> Result<()> {
+) -> Result<(), Report> {
     if tasks.is_empty() {
         println!("No tasks to execute");
         return Ok(());

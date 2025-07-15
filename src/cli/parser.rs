@@ -36,12 +36,25 @@ fn calculate_hash(action: &String) -> String {
     hex::encode(&result)[..8].to_string()
 }
 
+fn ottofile_not_found_message() -> String {
+    use colored::Colorize;
+
+    let file_list = OTTOFILES.iter()
+        .map(|f| format!("  {}", f.bright_yellow()))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!("{}\n\nOtto looks for one of the following files:\n{}",
+        "ERROR: No ottofile found in this directory or any parent directory!".red().bold(),
+        file_list)
+}
+
 #[derive(Debug)]
 pub struct OttofileNotFound;
 
 impl std::fmt::Display for OttofileNotFound {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "No ottofile found in this directory or any parent directory!")
+        write!(f, "{}", ottofile_not_found_message())
     }
 }
 
@@ -718,7 +731,7 @@ impl Parser {
                 cmd = cmd.subcommand(Self::task_to_command(graph_task));
             }
         } else {
-            cmd = cmd.after_help("ERROR: No ottofile found in this directory or any parent directory!\n\nOtto looks for one of the following files:\n  otto.yml\n  .otto.yml\n  otto.yaml\n  .otto.yaml\n  Ottofile\n  OTTOFILE");
+            cmd = cmd.after_help(ottofile_not_found_message());
         }
 
         cmd
@@ -872,7 +885,7 @@ impl Parser {
             let config_spec: ConfigSpec = serde_yaml::from_str(&content)?;
             Ok((config_spec, hash, Some(ottofile)))
         } else {
-            Err(eyre!("No ottofile found in this directory or any parent directory!"))
+            Err(eyre!("{}", ottofile_not_found_message()))
         }
     }
 }
