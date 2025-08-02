@@ -238,7 +238,9 @@ where
 
                 if param_spec.long.is_some() || param_spec.short.is_some() {
                     if let Some(ref value) = param_spec.default {
-                        if value == "true" || value == "false" {
+                        // Case-insensitive boolean detection
+                        let lower_value = value.to_lowercase();
+                        if lower_value == "true" || lower_value == "false" {
                             param_spec.param_type = ParamType::FLG;
                         }
                     }
@@ -251,4 +253,252 @@ where
         }
     }
     deserializer.deserialize_map(ParamMap)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_boolean_flag_detection_true_default() {
+        use crate::cfg::task::TaskSpec;
+
+        let yaml = r#"
+        name: test_task
+        params:
+          -v|--verbose:
+            default: true
+            help: Enable verbose output
+        "#;
+
+        let task_spec: TaskSpec = serde_yaml::from_str(yaml).unwrap();
+        let verbose = task_spec.params.get("verbose").unwrap();
+
+        assert_eq!(verbose.param_type, ParamType::FLG);
+        assert_eq!(verbose.short, Some('v'));
+        assert_eq!(verbose.long, Some("verbose".to_string()));
+        assert_eq!(verbose.default, Some("true".to_string()));
+        assert_eq!(verbose.name, "verbose");
+    }
+
+    #[test]
+    fn test_boolean_flag_detection_false_default() {
+        use crate::cfg::task::TaskSpec;
+
+        let yaml = r#"
+        name: test_task
+        params:
+          --debug:
+            default: false
+            help: Enable debug mode
+        "#;
+
+        let task_spec: TaskSpec = serde_yaml::from_str(yaml).unwrap();
+        let debug = task_spec.params.get("debug").unwrap();
+
+        assert_eq!(debug.param_type, ParamType::FLG);
+        assert_eq!(debug.short, None);
+        assert_eq!(debug.long, Some("debug".to_string()));
+        assert_eq!(debug.default, Some("false".to_string()));
+        assert_eq!(debug.name, "debug");
+    }
+
+    #[test]
+    fn test_boolean_flag_case_insensitive() {
+        use crate::cfg::task::TaskSpec;
+
+        let yaml = r#"
+        name: test_task
+        params:
+          --enable:
+            default: TRUE
+            help: Enable feature
+        "#;
+
+        let task_spec: TaskSpec = serde_yaml::from_str(yaml).unwrap();
+        let enable = task_spec.params.get("enable").unwrap();
+
+        assert_eq!(enable.param_type, ParamType::FLG);
+        assert_eq!(enable.default, Some("TRUE".to_string()));
+    }
+
+    #[test]
+    fn test_argument_flag_with_choices() {
+        use crate::cfg::task::TaskSpec;
+
+        let yaml = r#"
+        name: test_task
+        params:
+          -e|--env:
+            default: development
+            choices: [development, staging, production]
+            help: Target environment
+        "#;
+
+        let task_spec: TaskSpec = serde_yaml::from_str(yaml).unwrap();
+        let env = task_spec.params.get("env").unwrap();
+
+        assert_eq!(env.param_type, ParamType::OPT);
+        assert_eq!(env.short, Some('e'));
+        assert_eq!(env.long, Some("env".to_string()));
+        assert_eq!(env.choices, vec!["development", "staging", "production"]);
+        assert_eq!(env.default, Some("development".to_string()));
+        assert_eq!(env.name, "env");
+    }
+
+    #[test]
+    fn test_argument_flag_no_default() {
+        use crate::cfg::task::TaskSpec;
+
+        let yaml = r#"
+        name: test_task
+        params:
+          -c|--config:
+            help: Path to config file
+        "#;
+
+        let task_spec: TaskSpec = serde_yaml::from_str(yaml).unwrap();
+        let config = task_spec.params.get("config").unwrap();
+
+        assert_eq!(config.param_type, ParamType::OPT);
+        assert_eq!(config.short, Some('c'));
+        assert_eq!(config.long, Some("config".to_string()));
+        assert_eq!(config.default, None);
+        assert!(config.choices.is_empty());
+    }
+
+    #[test]
+    fn test_positional_parameter() {
+        use crate::cfg::task::TaskSpec;
+
+        let yaml = r#"
+        name: test_task
+        params:
+          filename:
+            help: Input filename
+        "#;
+
+        let task_spec: TaskSpec = serde_yaml::from_str(yaml).unwrap();
+        let filename = task_spec.params.get("filename").unwrap();
+
+        assert_eq!(filename.param_type, ParamType::POS);
+        assert_eq!(filename.short, None);
+        assert_eq!(filename.long, None);
+        assert_eq!(filename.name, "filename");
+    }
+
+    #[test]
+    fn test_positional_parameter_with_metavar() {
+        use crate::cfg::task::TaskSpec;
+
+        let yaml = r#"
+        name: test_task
+        params:
+          input_file:
+            help: Input file path
+            metavar: FILE
+        "#;
+
+        let task_spec: TaskSpec = serde_yaml::from_str(yaml).unwrap();
+        let input_file = task_spec.params.get("input_file").unwrap();
+
+        assert_eq!(input_file.param_type, ParamType::POS);
+        assert_eq!(input_file.metavar, Some("FILE".to_string()));
+    }
+
+    #[test]
+    fn test_mixed_parameters() {
+        use crate::cfg::task::TaskSpec;
+
+        let yaml = r#"
+        name: test_task
+        params:
+          -v|--verbose:
+            default: false
+            help: Enable verbose output
+          -e|--env:
+            default: development
+            choices: [development, staging, production]
+            help: Target environment
+          --timeout:
+            default: 30
+            help: Timeout in seconds
+          input_file:
+            help: Input file path
+        "#;
+
+        let task_spec: TaskSpec = serde_yaml::from_str(yaml).unwrap();
+
+        // Boolean flag
+        let verbose = task_spec.params.get("verbose").unwrap();
+        assert_eq!(verbose.param_type, ParamType::FLG);
+        assert_eq!(verbose.short, Some('v'));
+        assert_eq!(verbose.long, Some("verbose".to_string()));
+
+        // Argument flag with choices
+        let env = task_spec.params.get("env").unwrap();
+        assert_eq!(env.param_type, ParamType::OPT);
+        assert_eq!(env.choices.len(), 3);
+
+        // Argument flag without choices
+        let timeout = task_spec.params.get("timeout").unwrap();
+        assert_eq!(timeout.param_type, ParamType::OPT);
+        assert!(timeout.choices.is_empty());
+
+        // Positional parameter
+        let input_file = task_spec.params.get("input_file").unwrap();
+        assert_eq!(input_file.param_type, ParamType::POS);
+    }
+
+    #[test]
+    fn test_divine_function_short_only() {
+        let (name, short, long) = divine("-v");
+        assert_eq!(name, "v");
+        assert_eq!(short, Some('v'));
+        assert_eq!(long, None);
+    }
+
+    #[test]
+    fn test_divine_function_long_only() {
+        let (name, short, long) = divine("--verbose");
+        assert_eq!(name, "verbose");
+        assert_eq!(short, None);
+        assert_eq!(long, Some("verbose".to_string()));
+    }
+
+    #[test]
+    fn test_divine_function_both() {
+        let (name, short, long) = divine("-v|--verbose");
+        assert_eq!(name, "verbose");
+        assert_eq!(short, Some('v'));
+        assert_eq!(long, Some("verbose".to_string()));
+    }
+
+    #[test]
+    fn test_divine_function_reverse_order() {
+        let (name, short, long) = divine("--verbose|-v");
+        assert_eq!(name, "verbose");
+        assert_eq!(short, Some('v'));
+        assert_eq!(long, Some("verbose".to_string()));
+    }
+
+    #[test]
+    fn test_divine_function_no_flags() {
+        let (name, short, long) = divine("filename");
+        assert_eq!(name, "filename");
+        assert_eq!(short, None);
+        assert_eq!(long, None);
+    }
+
+    #[test]
+    fn test_value_display() {
+        assert_eq!(Value::Empty.to_string(), "Value::Empty");
+        assert_eq!(Value::Item("test".to_string()).to_string(), "Value::Item(test)");
+        assert_eq!(Value::List(vec!["a".to_string(), "b".to_string()]).to_string(), "Value::List([a, b])");
+
+        let mut dict = HashMap::new();
+        dict.insert("key".to_string(), "value".to_string());
+        assert_eq!(Value::Dict(dict).to_string(), "Value::Dict({key: value})");
+    }
 }

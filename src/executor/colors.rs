@@ -47,7 +47,7 @@ pub fn get_task_color_combination(task_name: &str) -> (Color, Color) {
             }
         }
     }
-    
+
     // Fallback to hash-based assignment
     let mut hasher = DefaultHasher::new();
     task_name.hash(&mut hasher);
@@ -70,11 +70,11 @@ pub fn get_task_color_with_context(task_name: &str, all_task_names: &[String]) -
         let hash = hasher.finish();
         return COLOR_COMBINATIONS[(hash as usize) % COLOR_COMBINATIONS.len()].0;
     }
-    
+
     // Create a sorted list of all task names for consistent ordering
     let mut sorted_names = all_task_names.to_vec();
     sorted_names.sort();
-    
+
     // Find the position of this task in the sorted list
     if let Some(position) = sorted_names.iter().position(|name| name == task_name) {
         COLOR_COMBINATIONS[position % COLOR_COMBINATIONS.len()].0
@@ -139,12 +139,12 @@ mod tests {
         let color1 = get_task_color("build");
         let color2 = get_task_color("build");
         assert_eq!(color1, color2);
-        
+
         // Different task names should potentially get different colors
         let _color_build = get_task_color("build");
         let _color_test = get_task_color("test");
         // Note: They might be the same due to hash collision, but that's ok
-        
+
         // Test that we're cycling through our expected range
         for i in 0..16 {
             let task_name = format!("task_{}", i);
@@ -157,11 +157,11 @@ mod tests {
     #[test]
     fn test_colorize_functions() {
         let task_name = "test_task";
-        
+
         // These should not panic and should return strings
         let colored_name = colorize_task_name(task_name);
         let colored_prefix = colorize_task_prefix(task_name);
-        
+
         assert!(colored_name.contains("test_task"));
         // The colored prefix contains ANSI escape codes, so we need to check for the task name
         // and the brackets separately, or check that it contains the task name
@@ -169,4 +169,4 @@ mod tests {
         assert!(colored_prefix.contains("["));
         assert!(colored_prefix.contains("]"));
     }
-} 
+}

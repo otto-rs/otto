@@ -2,4 +2,4 @@ This is the first data file.
 It contains sample text data.
 Line 3 of file1.txt
 Line 4 of file1.txt
-Final line of file1.txt 
+Final line of file1.txt

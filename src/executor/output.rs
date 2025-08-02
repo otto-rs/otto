@@ -60,7 +60,7 @@ impl TeeWriter {
     pub async fn write(&mut self, data: &[u8]) -> Result<()> {
         // Write to file (no colors)
         self.file.write_all(data).await?;
-        
+
         // Write to terminal with colored task name prefix
         let colored_prefix = colorize_task_prefix(&self.task_name);
         let terminal_output = format!("{} {}", colored_prefix, String::from_utf8_lossy(data));
@@ -69,14 +69,14 @@ impl TeeWriter {
         } else {
             print!("{}", terminal_output);
         }
-        
+
         // Ensure terminal output is flushed
         if self.is_stderr {
             io::stderr().flush()?;
         } else {
             io::stdout().flush()?;
         }
-        
+
         Ok(())
     }
 }
@@ -152,7 +152,7 @@ impl TaskStreams {
 
             // Write to both file and terminal
             writer.write(line.as_bytes()).await?;
-            
+
             // Broadcast for real-time monitoring
             let _ = self.output_tx.send(output);
 
@@ -189,13 +189,13 @@ mod tests {
     async fn test_output_processing() {
         let temp_dir = tempfile::tempdir().unwrap();
         let output_dir = PathBuf::from(temp_dir.path());
-        
+
         let streams = TaskStreams::new("test_task", &output_dir).await.unwrap();
-        
+
         // Create a test reader with some output
         let test_output = "line 1\nline 2\nline 3\n";
         let mut rx = streams.output_tx.subscribe();
-        
+
         // Process the output
         let mut cursor = std::io::Cursor::new(test_output);
         streams.process_output(
@@ -208,7 +208,7 @@ mod tests {
         let contents = streams.read_output(OutputType::Stdout).await.unwrap();
         assert_eq!(contents.len(), 3);
         assert_eq!(contents[0], "line 1");
-        
+
         // Verify broadcast channel
         let received = rx.try_recv().unwrap();
         assert_eq!(received.task_name, "test_task");
@@ -219,34 +219,34 @@ mod tests {
     async fn test_multiple_streams() {
         let temp_dir = tempfile::tempdir().unwrap();
         let output_dir = PathBuf::from(temp_dir.path());
-        
+
         let streams = TaskStreams::new("test_task", &output_dir).await.unwrap();
-        
+
         // Write to both stdout and stderr
         let stdout_data = "stdout line\n";
         let stderr_data = "stderr line\n";
-        
+
         let mut stdout_cursor = std::io::Cursor::new(stdout_data);
         let mut stderr_cursor = std::io::Cursor::new(stderr_data);
-        
+
         // Process both streams
         streams.process_output(
             "test_task".to_string(),
             OutputType::Stdout,
             &mut stdout_cursor
         ).await.unwrap();
-        
+
         streams.process_output(
             "test_task".to_string(),
             OutputType::Stderr,
             &mut stderr_cursor
         ).await.unwrap();
-        
+
         // Verify separate files
         let stdout_contents = streams.read_output(OutputType::Stdout).await.unwrap();
         let stderr_contents = streams.read_output(OutputType::Stderr).await.unwrap();
-        
+
         assert_eq!(stdout_contents[0], "stdout line");
         assert_eq!(stderr_contents[0], "stderr line");
     }
-} 
+}

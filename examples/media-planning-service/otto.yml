@@ -75,10 +75,10 @@ tasks:
       #!/bin/bash
       LATEST_S3_DUMP_FILE=$(aws s3api list-objects-v2 --bucket "tatari-pg-dumps" --prefix 'media_planning_service' --query 'sort_by(Contents, &LastModified)[-1].Key' --output=text)
       DUMP_CHECK="${LOCAL_DUMP_FILE}-${LATEST_S3_DUMP_FILE}.check"
-      
+
       echo "LATEST_S3_DUMP_FILE: $LATEST_S3_DUMP_FILE"
       echo "Downloading the latest pgdump from S3.."
-      
+
       if [ -f "$DUMP_CHECK" ]; then
         echo "  dump file already exists"
       else
@@ -151,4 +151,4 @@ tasks:
       rm -rf *.egg-info
       rm -rf .coverage
       find . -name '*.pyc' -delete
-      find . -name '__pycache__' -delete 
+      find . -name '__pycache__' -delete

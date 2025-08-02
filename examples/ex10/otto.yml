@@ -118,4 +118,4 @@ tasks:
     action: |
       echo "=== Demo Complete ==="
       echo "Built and deployed: $FULL_VERSION"
-      echo "Package available at: ${USER_HOME}/deployed-apps" 
+      echo "Package available at: ${USER_HOME}/deployed-apps"

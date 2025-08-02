@@ -1,6 +1,6 @@
 ---
-description: 
-globs: 
+description:
+globs:
 alwaysApply: false
 ---
 # Otto Execution Engine Guide
@@ -44,7 +44,7 @@ Otto supports multiple dependency types:
 - Configurable concurrency limits (`-j` flag)
 - Task type classification for optimal scheduling:
   - **IOBound**: Shell commands, file operations
-  - **CPUBound**: Compilation, data processing  
+  - **CPUBound**: Compilation, data processing
   - **NetworkBound**: Downloads, API calls
 - Semaphore-based resource management
 

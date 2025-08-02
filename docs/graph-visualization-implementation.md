@@ -485,20 +485,20 @@ digraph otto_dag {
   fontname="Helvetica";
   rankdir="TB";
   bgcolor="white";
-  
+
   node [
     shape="box",
     style="rounded,filled",
     fontname="Helvetica",
     fontsize="12"
   ];
-  
+
   task_0 [label="task1", fillcolor="lightgray"];
   task_1 [label="task2", fillcolor="lightgray"];
   task_2 [label="task3", fillcolor="lightgray"];
   task_3 [label="task4", fillcolor="lightgray"];
   task_4 [label="final", fillcolor="lightgray"];
-  
+
   task_0 -> task_2 [label="depends", color="black"];
   task_1 -> task_3 [label="depends", color="black"];
   task_2 -> task_4 [label="depends", color="black"];
@@ -597,24 +597,24 @@ fn determine_output_format(&self) -> Result<(String, std::path::PathBuf)> {
 #[test]
 fn test_ascii_generation() -> Result<()> {
     let mut dag = DAG::new();
-    
+
     let task1 = create_test_task("setup", vec![]);
     let task2 = create_test_task("build", vec!["setup"]);
     let task3 = create_test_task("test", vec!["build"]);
-    
+
     dag.add_node(task1);
     dag.add_node(task2);
     dag.add_node(task3);
-    
+
     let visualizer = DagVisualizer::with_defaults();
     let ascii = visualizer.generate_ascii(&dag)?;
-    
+
     assert!(ascii.contains("Otto Task DAG"));
     assert!(ascii.contains("setup"));
     assert!(ascii.contains("build"));
     assert!(ascii.contains("test"));
     assert!(ascii.contains("Legend"));
-    
+
     Ok(())
 }
 ```
@@ -663,4 +663,4 @@ Otto's graph visualization system demonstrates a well-architected approach to mu
 4. **Comprehensive Error Handling**: Graceful fallbacks and helpful error messages
 5. **Extensible Design**: Easy to add new formats and features
 
-The combination of custom ASCII rendering and Graphviz integration provides both immediate terminal feedback and publication-quality output, making it suitable for both development workflows and documentation generation. 
+The combination of custom ASCII rendering and Graphviz integration provides both immediate terminal feedback and publication-quality output, making it suitable for both development workflows and documentation generation.

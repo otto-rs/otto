@@ -55,4 +55,4 @@ dep: ## Install deps
 
 fmt:
 	@echo "==> Fixing source code with gofmt..."
-	gofmt -s -w ./main.go ./meta.go ./cmd 
+	gofmt -s -w ./main.go ./meta.go ./cmd

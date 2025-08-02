@@ -16,6 +16,7 @@ use sha2::{Digest, Sha256};
 use glob;
 
 use crate::cfg::config::{ConfigSpec, ParamSpec, TaskSpec, Value};
+use crate::cfg::param::ParamType;
 use crate::cfg::env as env_eval;
 
 pub type DAG<T> = Dag<T, (), u32>;
@@ -581,17 +582,62 @@ impl Parser {
             let mut task = Task::from_task_with_cwd_and_global_envs(task_spec, &self.cwd, &global_envs);
 
             // Find the partition for this task's arguments
-            if let Some(task_args) = self.pargs.iter().find(|args| !args.is_empty() && args[0] == *task_name) {
-                if task_args.len() > 1 {
-                    // Parse task arguments using clap
-                    let task_command = Self::task_to_command(task_spec);
-                    let matches = task_command.get_matches_from(task_args);
+            let task_args = self.pargs.iter().find(|args| !args.is_empty() && args[0] == *task_name);
 
-                    for param_spec in task_spec.params.values() {
-                        if let Some(value) = matches.get_one::<String>(param_spec.name.as_str()) {
-                            task.values.insert(param_spec.name.clone(), Value::Item(value.to_string()));
-                            // Also add to environment variables
-                            task.envs.insert(param_spec.name.clone(), value.to_string());
+            if task_args.is_some() && task_args.unwrap().len() > 1 {
+                // Parse task arguments using clap
+                let task_command = Self::task_to_command(task_spec);
+                let matches = task_command.get_matches_from(task_args.unwrap());
+
+                for param_spec in task_spec.params.values() {
+                    match param_spec.param_type {
+                        ParamType::FLG => {
+                            // Boolean flag - use get_flag()
+                            let flag_value = matches.get_flag(param_spec.name.as_str());
+                            let value_str = if flag_value { "true" } else { "false" };
+
+                            task.values.insert(param_spec.name.clone(), Value::Item(value_str.to_string()));
+                            // Convert hyphens to underscores for bash compatibility
+                            let env_name = param_spec.name.replace('-', "_");
+                            task.envs.insert(env_name, value_str.to_string());
+                        }
+                        ParamType::OPT | ParamType::POS => {
+                            // Argument with value - use get_one::<String>()
+                            if let Some(value) = matches.get_one::<String>(param_spec.name.as_str()) {
+                                task.values.insert(param_spec.name.clone(), Value::Item(value.to_string()));
+                                // Convert hyphens to underscores for bash compatibility
+                                let env_name = param_spec.name.replace('-', "_");
+                                task.envs.insert(env_name, value.to_string());
+                            } else if let Some(ref default) = param_spec.default {
+                                // Apply default value if not provided
+                                task.values.insert(param_spec.name.clone(), Value::Item(default.clone()));
+                                // Convert hyphens to underscores for bash compatibility
+                                let env_name = param_spec.name.replace('-', "_");
+                                task.envs.insert(env_name, default.clone());
+                            }
+                        }
+                    }
+                }
+            } else {
+                // No arguments provided - apply defaults for all parameters
+                for param_spec in task_spec.params.values() {
+                    match param_spec.param_type {
+                        ParamType::FLG => {
+                            // Boolean flag defaults to false (or the specified default)
+                            let default_value = param_spec.default.as_deref().unwrap_or("false");
+                            task.values.insert(param_spec.name.clone(), Value::Item(default_value.to_string()));
+                            // Convert hyphens to underscores for bash compatibility
+                            let env_name = param_spec.name.replace('-', "_");
+                            task.envs.insert(env_name, default_value.to_string());
+                        }
+                        ParamType::OPT | ParamType::POS => {
+                            // Apply default value if specified
+                            if let Some(ref default) = param_spec.default {
+                                task.values.insert(param_spec.name.clone(), Value::Item(default.clone()));
+                                // Convert hyphens to underscores for bash compatibility
+                                let env_name = param_spec.name.replace('-', "_");
+                                task.envs.insert(env_name, default.clone());
+                            }
                         }
                     }
                 }
@@ -676,7 +722,38 @@ impl Parser {
             arg = arg.help(help.clone());
         }
 
-        arg.value_parser(value_parser!(String))
+        // Handle different parameter types
+        match param_spec.param_type {
+            ParamType::FLG => {
+                // Boolean flag - no value required
+                arg = arg.action(clap::ArgAction::SetTrue);
+            }
+            ParamType::OPT | ParamType::POS => {
+                // Argument with value
+                arg = arg.value_parser(value_parser!(String));
+
+                // Add default value if specified
+                if let Some(ref default) = param_spec.default {
+                    arg = arg.default_value(default.clone());
+                }
+
+                // Add choices validation if specified
+                if !param_spec.choices.is_empty() {
+                    let choices: Vec<String> = param_spec.choices.iter().cloned().collect();
+                    arg = arg.value_parser(clap::builder::PossibleValuesParser::new(choices));
+                }
+            }
+        }
+
+        // Handle positional arguments
+        if param_spec.param_type == ParamType::POS {
+            let value_name = param_spec.metavar.as_deref()
+                .unwrap_or_else(|| param_spec.name.as_str())
+                .to_string();
+            arg = arg.value_name(value_name);
+        }
+
+        arg
     }
 
     fn build_help_command(&self) -> Command {
@@ -976,5 +1053,184 @@ mod tests {
         ];
 
         assert_eq!(partitions(&args, task_names), expected);
+    }
+
+    // New tests for flag functionality
+    use crate::cfg::param::{ParamSpec, ParamType, Value, Nargs};
+    use crate::cfg::task::TaskSpec;
+    use clap::Command;
+
+    fn create_test_param_spec(
+        name: &str,
+        param_type: ParamType,
+        short: Option<char>,
+        long: Option<&str>
+    ) -> ParamSpec {
+        let default = match param_type {
+            ParamType::FLG => Some("false".to_string()),
+            _ => None,
+        };
+
+        ParamSpec {
+            name: name.to_string(),
+            short,
+            long: long.map(|s| s.to_string()),
+            param_type,
+            dest: None,
+            metavar: None,
+            default,
+            constant: Value::Empty,
+            choices: vec![],
+            nargs: Nargs::default(),
+            help: Some(format!("Help for {}", name)),
+            value: Value::Empty,
+        }
+    }
+
+    #[test]
+    fn test_param_to_arg_boolean_flag() {
+        let param = create_test_param_spec("verbose", ParamType::FLG, Some('v'), Some("verbose"));
+        let arg = Parser::param_to_arg(&param);
+
+        // Test that the argument is configured correctly for boolean flags
+        let cmd = Command::new("test").arg(arg.clone());
+        let matches = cmd.try_get_matches_from(vec!["test", "--verbose"]).unwrap();
+
+        assert!(matches.get_flag("verbose"));
+
+        // Test without flag
+        let cmd2 = Command::new("test").arg(arg);
+        let matches = cmd2.try_get_matches_from(vec!["test"]).unwrap();
+        assert!(!matches.get_flag("verbose"));
+    }
+
+    #[test]
+    fn test_param_to_arg_boolean_flag_short() {
+        let param = create_test_param_spec("debug", ParamType::FLG, Some('d'), Some("debug"));
+        let arg = Parser::param_to_arg(&param);
+
+        // Test short form
+        let cmd = Command::new("test").arg(arg.clone());
+        let matches = cmd.try_get_matches_from(vec!["test", "-d"]).unwrap();
+        assert!(matches.get_flag("debug"));
+
+        // Test long form
+        let cmd2 = Command::new("test").arg(arg);
+        let matches = cmd2.try_get_matches_from(vec!["test", "--debug"]).unwrap();
+        assert!(matches.get_flag("debug"));
+    }
+
+    #[test]
+    fn test_param_to_arg_string_argument() {
+        let mut param = create_test_param_spec("env", ParamType::OPT, Some('e'), Some("env"));
+        param.default = Some("development".to_string());
+
+        let arg = Parser::param_to_arg(&param);
+
+        // Test with explicit value
+        let cmd = Command::new("test").arg(arg.clone());
+        let matches = cmd.try_get_matches_from(vec!["test", "--env", "production"]).unwrap();
+        assert_eq!(matches.get_one::<String>("env").unwrap(), "production");
+
+        // Test with default value
+        let cmd2 = Command::new("test").arg(arg);
+        let matches = cmd2.try_get_matches_from(vec!["test"]).unwrap();
+        assert_eq!(matches.get_one::<String>("env").unwrap(), "development");
+    }
+
+    #[test]
+    fn test_param_to_arg_with_choices() {
+        let mut param = create_test_param_spec("format", ParamType::OPT, Some('f'), Some("format"));
+        param.choices = vec!["json".to_string(), "yaml".to_string(), "xml".to_string()];
+        param.default = Some("json".to_string());
+
+        let arg = Parser::param_to_arg(&param);
+
+        // Test valid choice
+        let cmd = Command::new("test").arg(arg.clone());
+        let matches = cmd.try_get_matches_from(vec!["test", "--format", "yaml"]).unwrap();
+        assert_eq!(matches.get_one::<String>("format").unwrap(), "yaml");
+
+        // Test invalid choice should fail
+        let cmd2 = Command::new("test").arg(arg);
+        let result = cmd2.try_get_matches_from(vec!["test", "--format", "invalid"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_param_to_arg_positional() {
+        let mut param = create_test_param_spec("filename", ParamType::POS, None, None);
+        param.metavar = Some("FILE".to_string());
+
+        let arg = Parser::param_to_arg(&param);
+        let cmd = Command::new("test").arg(arg);
+
+        let matches = cmd.try_get_matches_from(vec!["test", "input.txt"]).unwrap();
+        assert_eq!(matches.get_one::<String>("filename").unwrap(), "input.txt");
+    }
+
+    #[test]
+    fn test_task_to_command_mixed_parameters() {
+        let mut task_spec = TaskSpec::default();
+        task_spec.name = "build".to_string();
+        task_spec.help = Some("Build the project".to_string());
+
+        // Add boolean flag
+        let verbose_param = create_test_param_spec("verbose", ParamType::FLG, Some('v'), Some("verbose"));
+        task_spec.params.insert("verbose".to_string(), verbose_param);
+
+        // Add argument flag
+        let mut env_param = create_test_param_spec("env", ParamType::OPT, Some('e'), Some("env"));
+        env_param.default = Some("development".to_string());
+        env_param.choices = vec!["development".to_string(), "staging".to_string(), "production".to_string()];
+        task_spec.params.insert("env".to_string(), env_param);
+
+        // Add positional argument
+        let filename_param = create_test_param_spec("filename", ParamType::POS, None, None);
+        task_spec.params.insert("filename".to_string(), filename_param);
+
+        let cmd = Parser::task_to_command(&task_spec);
+
+        // Test with all parameters
+        let matches = cmd.try_get_matches_from(vec![
+            "build",
+            "--verbose",
+            "--env", "production",
+            "input.txt"
+        ]).unwrap();
+
+        assert!(matches.get_flag("verbose"));
+        assert_eq!(matches.get_one::<String>("env").unwrap(), "production");
+        assert_eq!(matches.get_one::<String>("filename").unwrap(), "input.txt");
+    }
+
+    #[test]
+    fn test_task_to_command_boolean_flags_only() {
+        let mut task_spec = TaskSpec::default();
+        task_spec.name = "test".to_string();
+
+        // Add multiple boolean flags
+        let verbose_param = create_test_param_spec("verbose", ParamType::FLG, Some('v'), Some("verbose"));
+        task_spec.params.insert("verbose".to_string(), verbose_param);
+
+        let coverage_param = create_test_param_spec("coverage", ParamType::FLG, None, Some("coverage"));
+        task_spec.params.insert("coverage".to_string(), coverage_param);
+
+        let watch_param = create_test_param_spec("watch", ParamType::FLG, Some('w'), Some("watch"));
+        task_spec.params.insert("watch".to_string(), watch_param);
+
+        // Test with all flags
+        let cmd = Parser::task_to_command(&task_spec);
+        let matches = cmd.try_get_matches_from(vec!["test", "-v", "--coverage", "-w"]).unwrap();
+        assert!(matches.get_flag("verbose"));
+        assert!(matches.get_flag("coverage"));
+        assert!(matches.get_flag("watch"));
+
+        // Test with no flags
+        let cmd2 = Parser::task_to_command(&task_spec);
+        let matches = cmd2.try_get_matches_from(vec!["test"]).unwrap();
+        assert!(!matches.get_flag("verbose"));
+        assert!(!matches.get_flag("coverage"));
+        assert!(!matches.get_flag("watch"));
     }
 }

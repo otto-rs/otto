@@ -21,7 +21,7 @@ pub fn evaluate_envs(envs: &HashMap<String, String>, working_dir: Option<&std::p
 
         for var_name in pending {
             let raw_value = envs.get(&var_name).unwrap();
-            
+
             match evaluate_single_env_value(raw_value, &current_env, working_dir) {
                 Ok(resolved_value) => {
                     evaluated.insert(var_name.clone(), resolved_value.clone());
@@ -106,7 +106,7 @@ fn execute_shell_command(command_str: &str, working_dir: Option<&std::path::Path
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(eyre!("Command '{}' failed with exit code {}: {}", 
+        return Err(eyre!("Command '{}' failed with exit code {}: {}",
                          command_str, output.status.code().unwrap_or(-1), stderr));
     }
 
@@ -185,15 +185,15 @@ mod tests {
     fn test_evaluate_envs_simple() {
         let mut envs = HashMap::new();
         envs.insert("GREETING".to_string(), "Hello ${TEST_USER}".to_string());
-        
+
         // Set a test-specific environment variable
         unsafe {
             env::set_var("TEST_USER", "testuser");
         }
-        
+
         let result = evaluate_envs(&envs, None).unwrap();
         assert_eq!(result.get("GREETING").unwrap(), "Hello testuser");
-        
+
         // Clean up our test variable
         unsafe {
             env::remove_var("TEST_USER");
@@ -204,7 +204,7 @@ mod tests {
     fn test_evaluate_envs_with_shell_command() {
         let mut envs = HashMap::new();
         envs.insert("ECHO_TEST".to_string(), "$(echo hello world)".to_string());
-        
+
         let result = evaluate_envs(&envs, None).unwrap();
         assert_eq!(result.get("ECHO_TEST").unwrap(), "hello world");
     }
@@ -215,10 +215,10 @@ mod tests {
         envs.insert("BASE".to_string(), "myapp".to_string());
         envs.insert("VERSION".to_string(), "$(echo 1.0.0)".to_string());
         envs.insert("FULL_NAME".to_string(), "${BASE}-${VERSION}".to_string());
-        
+
         let result = evaluate_envs(&envs, None).unwrap();
         assert_eq!(result.get("BASE").unwrap(), "myapp");
         assert_eq!(result.get("VERSION").unwrap(), "1.0.0");
         assert_eq!(result.get("FULL_NAME").unwrap(), "myapp-1.0.0");
     }
-} 
+}

@@ -322,7 +322,7 @@ impl Workspace {
         self.project.join("builtins.sh")
     }
 
-    /// Get path for python builtin functions  
+    /// Get path for python builtin functions
     pub fn python_builtins(&self) -> PathBuf {
         self.project.join("builtins.py")
     }

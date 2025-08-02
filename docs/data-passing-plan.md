@@ -16,7 +16,7 @@ We're implementing a comprehensive action processing system for Otto that handle
   - Hash calculation of complete generated script content (8-character hex)
 
 ### 2. Language Processors
-- **Status**: ✅ Implemented and working  
+- **Status**: ✅ Implemented and working
 - **Bash Processor**:
   - Generates bash prologue with `declare -A OTTO_INPUT/OUTPUT`, parameter parsing with `getopts`
   - Environment variable exports
@@ -93,7 +93,7 @@ echo "${greeting:-hello}"
 
 ### 2. Directory Structure Problems
 **Issue**: Creating unnecessary subdirectories
-- ❌ Creating `inputs/` and `outputs/` subdirectories 
+- ❌ Creating `inputs/` and `outputs/` subdirectories
 - ❌ Output file in wrong location (`outputs/hello.output.json` instead of `hello.output.json`)
 - ❌ Input directory created even when no dependencies exist
 
@@ -101,7 +101,7 @@ echo "${greeting:-hello}"
 ```
 ~/.otto/otto-553a8582/1749515023/tasks/hello/
 ├── inputs/          # ❌ Shouldn't exist if no dependencies
-├── outputs/         # ❌ Shouldn't exist  
+├── outputs/         # ❌ Shouldn't exist
 │   └── hello.output.json  # ❌ Should be at task level
 ├── script.sh
 ├── stderr.log
@@ -131,7 +131,7 @@ echo "${greeting:-hello}"
         │   └── stdout.log
         └── world/
             ├── hello.input.json -> ../hello/hello.output.json  # Symlink to dependency
-            ├── script.sh -> ../../.cache/<script-content-hash>.sh  
+            ├── script.sh -> ../../.cache/<script-content-hash>.sh
             ├── world.output.json
             ├── stderr.log
             └── stdout.log
@@ -259,7 +259,7 @@ echo "${greeting:-hello}"
 - **Current Issues**: Script formatting problems
 - **Next**: Fix shebang placement, spacing, export organization
 
-### `src/executor/workspace.rs`  
+### `src/executor/workspace.rs`
 - **Role**: File path management, directory structure
 - **Current Issues**: Wrong directory methods for inputs/outputs
 - **Next**: Update methods to match target structure, add caching support
@@ -292,7 +292,7 @@ echo "${greeting:-hello}"
 - Existing examples and tests expect current structure
 - Need careful migration to avoid breaking existing functionality
 
-### 2. Cross-Platform Compatibility  
+### 2. Cross-Platform Compatibility
 - Symlink creation may behave differently on Windows
 - File permissions for cached scripts
 
@@ -331,7 +331,7 @@ echo "${greeting:-hello}"
 
 **Overall Progress**: ~70% complete
 - ✅ Core functionality working
-- ✅ Language detection working  
+- ✅ Language detection working
 - ✅ JSON handling working
 - ✅ Integration working
 - 🟡 Script formatting partially fixed
@@ -344,4 +344,4 @@ echo "${greeting:-hello}"
 2. Update workspace methods for correct directory structure
 3. Fix scheduler to use correct paths and implement caching
 4. Update tests to match new structure
-5. Verify end-to-end functionality 
+5. Verify end-to-end functionality

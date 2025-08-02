@@ -33,4 +33,4 @@ fn test_help_epilogue_not_present_when_ottofile_exists() {
         .stdout(predicate::str::contains("otto").and(
             predicate::str::contains("ERROR: No ottofile found").not()
         ));
-} 
+}

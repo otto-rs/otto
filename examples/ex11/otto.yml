@@ -18,12 +18,12 @@ tasks:
     action: |
       # Generate timestamp (all digits format: YYYYMMDDHHMMSS)
       timestamp=$(date +%Y%m%d%H%M%S)
-      
+
       echo "[$APP_NAME] Generating timestamp in $GENERATOR_MODE mode"
       echo "Timestamp created: $timestamp"
       echo "Format: $OUTPUT_FORMAT"
       echo "Log level: $LOG_LEVEL"
-      
+
       # Set the timestamp in Otto output for the next task
       otto_set_output "timestamp" "$timestamp"
       otto_set_output "format" "$OUTPUT_FORMAT"
@@ -41,13 +41,13 @@ tasks:
       received_timestamp=$(otto_get_input "generate.timestamp")
       received_format=$(otto_get_input "generate.format")
       received_app=$(otto_get_input "generate.app")
-      
+
       echo "[$received_app] Consuming timestamp in $CONSUMER_MODE mode"
       echo "Received timestamp: $received_timestamp"
       echo "Received format: $received_format"
       echo "Processing in timezone: $TIMEZONE"
       echo "Log level: $LOG_LEVEL"
-      
+
       # Parse the timestamp for validation
       if [[ ${#received_timestamp} -eq 14 ]]; then
         year=${received_timestamp:0:4}
@@ -56,10 +56,10 @@ tasks:
         hour=${received_timestamp:8:2}
         minute=${received_timestamp:10:2}
         second=${received_timestamp:12:2}
-        
+
         echo "Parsed timestamp: $year-$month-$day $hour:$minute:$second $TIMEZONE"
         echo "Validation: PASSED"
-        
+
         # Output validation results
         otto_set_output "validation_status" "PASSED"
         otto_set_output "parsed_date" "$year-$month-$day"
@@ -67,4 +67,4 @@ tasks:
       else
         echo "Validation: FAILED - Invalid timestamp format"
         otto_set_output "validation_status" "FAILED"
-      fi 
+      fi

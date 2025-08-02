@@ -6,4 +6,4 @@ process:
     - output
   options:
     parallel: false
-    verbose: true 
+    verbose: true

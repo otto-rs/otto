@@ -4,7 +4,7 @@
 otto:
   api: 1
   jobs: 4
-  # Environment variables  
+  # Environment variables
   envs:
     # Go environment setup
     HOME: "${HOME}"
@@ -27,7 +27,7 @@ tasks:
     help: "Build the Go binary"
     action: |
       export GOPATH="${HOME}/go"
-      export GOMODCACHE="${HOME}/go/pkg/mod"  
+      export GOMODCACHE="${HOME}/go/pkg/mod"
       mkdir -p dist
       go build -o dist/devs cmd/devs/main.go
 
@@ -81,4 +81,4 @@ tasks:
     help: "Clean build artifacts"
     action: |
       rm -rf dist/
-      rm -rf .coverage 
+      rm -rf .coverage

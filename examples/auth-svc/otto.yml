@@ -59,17 +59,17 @@ tasks:
       #!/bin/bash
       # Create separate directories for public and private keys
       mkdir -p ${CERTS_DIR}/public ${CERTS_DIR}/private
-      
+
       # Generate active.pem
       # Generate active.pem private key and extract active.pem public key
       openssl genpkey -algorithm RSA -out ${CERTS_DIR}/private/active.pem -pkeyopt rsa_keygen_bits:2048
       openssl rsa -in ${CERTS_DIR}/private/active.pem -pubout -out ${CERTS_DIR}/public/active.pem
-      
+
       # Generate on_deck.pem
       # Generate on_deck.pem private key and extract on_deck.pem public key
       openssl genpkey -algorithm RSA -out ${CERTS_DIR}/private/on_deck.pem -pkeyopt rsa_keygen_bits:2048
       openssl rsa -in ${CERTS_DIR}/private/on_deck.pem -pubout -out ${CERTS_DIR}/public/on_deck.pem
-      
+
       echo "Private keys stored in ${CERTS_DIR}/private/"
       echo "Public keys stored in ${CERTS_DIR}/public/"
 
@@ -82,4 +82,4 @@ tasks:
       rm -rf *.egg-info
       rm -rf .coverage
       find . -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
-      find . -name '*.pyc' -type f -delete 
+      find . -name '*.pyc' -type f -delete

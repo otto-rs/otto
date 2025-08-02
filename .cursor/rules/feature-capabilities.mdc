@@ -1,6 +1,6 @@
 ---
-description: 
-globs: 
+description:
+globs:
 alwaysApply: false
 ---
 # Otto Feature Capabilities Reference
@@ -36,7 +36,7 @@ tasks:
   build:
     help: "Build the application"
     before: [deps, setup]           # Task dependencies
-    after: [test]                   # Reverse dependencies  
+    after: [test]                   # Reverse dependencies
     input: [src/**/*.rs, Cargo.toml] # File dependencies
     output: [target/debug/app]      # Output files
     envs:                           # Environment variables

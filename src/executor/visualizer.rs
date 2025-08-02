@@ -57,7 +57,7 @@ impl OutputVisualizer {
     /// Start the visualization loop
     pub async fn run(&mut self) -> Result<()> {
         info!("Starting output visualizer");
-        
+
         while let Ok(output) = self.output_rx.recv().await {
             self.process_output(output).await?;
         }
@@ -68,7 +68,7 @@ impl OutputVisualizer {
     /// Process a new output line
     async fn process_output(&self, output: TaskOutput) -> Result<()> {
         let mut buffers = self.output_buffers.lock().await;
-        
+
         let buffer = buffers
             .entry(output.task_name.clone())
             .or_insert_with(Vec::new);
@@ -190,4 +190,4 @@ mod tests {
         assert_eq!(outputs[0].content, "output 2");
         assert_eq!(outputs[1].content, "output 3");
     }
-} 
+}

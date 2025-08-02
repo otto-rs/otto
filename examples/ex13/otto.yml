@@ -74,10 +74,10 @@ tasks:
 
   notify:
     before:
-    - cleanup  
+    - cleanup
     action: |
       #!/bin/bash
       echo "Sending notifications..."
       echo "Slack notification sent"
       echo "Email notification sent"
-    help: "Send notifications" 
+    help: "Send notifications"

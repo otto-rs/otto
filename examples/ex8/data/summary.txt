@@ -1,4 +1,4 @@
 Data Summary:
 - Contains various text files
 - Used for demonstrating file dependencies
-- Shows how Otto tracks input files 
+- Shows how Otto tracks input files

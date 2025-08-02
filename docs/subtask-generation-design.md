@@ -97,7 +97,7 @@ data:
   modules:
     - name: "requests"
       path: "src/requests.py"
-    - name: "urllib"  
+    - name: "urllib"
       path: "src/urllib.py"
 
 tasks:
@@ -173,7 +173,7 @@ tasks:
 ### Core Components
 
 1. **Task Creator Functions**: Return `impl Iterator<Item = TaskSpec>`
-2. **Task Registry**: Maps names to creator functions  
+2. **Task Registry**: Maps names to creator functions
 3. **Loading Pipeline**: Calls creators, flattens iterators, handles naming
 4. **Template Engine**: Handles variable substitution in YAML
 5. **Data Sources**: External data loading (JSON, YAML, command output)
@@ -203,13 +203,13 @@ data:
   modules:
     - name: "requests"
       path: "src/requests.py"
-  
+
   # External files
   configs: !include "configs.json"
-  
+
   # Command output (future)
   files: !command "find src -name '*.rs'"
-  
+
   # Directory scanning (future)
   test_files: !glob "tests/**/*_test.rs"
 ```
@@ -263,7 +263,7 @@ data:
       url: "https://staging.example.com"
       config: "staging.json"
     - name: "prod"
-      url: "https://prod.example.com"  
+      url: "https://prod.example.com"
       config: "prod.json"
 
 tasks:
@@ -310,4 +310,4 @@ tasks:
 
 The recommended approach uses `for_each` with direct field templating to achieve PyDoit-style sub-task generation while maintaining YAML's declarative nature. This provides the closest equivalent to PyDoit's elegance within Otto's architectural constraints.
 
-The key insight is that we can't replicate PyDoit's runtime code execution, but we can capture its conceptual elegance through contextual YAML interpretation and template expansion. 
+The key insight is that we can't replicate PyDoit's runtime code execution, but we can capture its conceptual elegance through contextual YAML interpretation and template expansion.

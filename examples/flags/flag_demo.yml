@@ -1,0 +1,58 @@
+otto:
+  api: 1
+  tasks: [demo]
+
+tasks:
+  demo:
+    help: Demonstrates all types of flags in Otto
+    params:
+      # Boolean flags (no values)
+      -v|--verbose:
+        default: false
+        help: Enable verbose output
+      --debug:
+        default: false
+        help: Enable debug mode
+      --dry-run:
+        default: false
+        help: Show what would be done without executing
+
+      # Argument flags (with values)
+      -e|--env:
+        default: development
+        choices: [development, staging, production]
+        help: Target environment
+      -p|--port:
+        default: 3000
+        help: Port number for the server
+      --timeout:
+        default: 30
+        help: Timeout in seconds
+      --format:
+        choices: [json, yaml, xml, csv]
+        default: json
+        help: Output format
+
+      # Positional argument
+      input_file:
+        help: Input file to process
+        metavar: FILE
+
+    action: |
+      #!/bin/bash
+      echo "=== Flag Demo ==="
+      echo "Boolean flags:"
+      echo "  Verbose: ${verbose}"
+      echo "  Debug: ${debug}"
+      echo "  Dry run: ${dry_run}"
+      echo ""
+      echo "Argument flags:"
+      echo "  Environment: ${env}"
+      echo "  Port: ${port}"
+      echo "  Timeout: ${timeout}"
+      echo "  Format: ${format}"
+      echo ""
+      echo "Positional argument:"
+      echo "  Input file: ${input_file:-'(not provided)'}"
+      echo ""
+      echo "Command completed successfully!"

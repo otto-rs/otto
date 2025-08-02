@@ -3,7 +3,7 @@
 This example demonstrates:
 
 1. **File Dependencies**: Tasks that depend on input files using the `input` field
-2. **Task Dependencies**: Tasks that depend on other tasks using the `before` field  
+2. **Task Dependencies**: Tasks that depend on other tasks using the `before` field
 3. **Combined Dependencies**: Tasks that have both file and task dependencies
 4. **Glob Patterns**: File dependencies using wildcards like `*.txt` and `**/*.log`
 
@@ -20,4 +20,4 @@ Run the tasks to see file dependencies in action:
 ```bash
 otto -o examples/ex8/otto.yml process
 otto -o examples/ex8/otto.yml check_logs
-``` 
+```

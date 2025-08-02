@@ -108,9 +108,9 @@ fn partitions(args: &Vec<String>, task_names: &[&str]) -> Vec<Vec<String>> {
 ```
 Input: ["build", "--release=true", "test", "--verbose", "deploy", "--env=staging"]
 Task names: ["build", "test", "deploy"]
-Partitions: 
+Partitions:
   - ["build", "--release=true"]
-  - ["test", "--verbose"] 
+  - ["test", "--verbose"]
   - ["deploy", "--env=staging"]
 ```
 
@@ -498,7 +498,7 @@ fn inject_graph_meta_task(&mut self) {
         envs: HashMap::new(),
         params: {
             let mut params = HashMap::new();
-            
+
             // Add --format parameter
             params.insert("format".to_string(), ParamSpec {
                 name: "format".to_string(),
@@ -514,7 +514,7 @@ fn inject_graph_meta_task(&mut self) {
                 help: Some("Output format".to_string()),
                 value: crate::cfg::param::Value::Empty,
             });
-            
+
             // Add --output parameter
             params.insert("output".to_string(), ParamSpec {
                 name: "output".to_string(),
@@ -530,13 +530,13 @@ fn inject_graph_meta_task(&mut self) {
                 help: Some("Output file path".to_string()),
                 value: crate::cfg::param::Value::Empty,
             });
-            
+
             params
         },
         action: "# Built-in graph command".to_string(),
         timeout: None,
     };
-    
+
     self.config_spec.tasks.insert("graph".to_string(), graph_task);
 }
 ```
@@ -600,14 +600,14 @@ fn test_multi_task_parsing() -> Result<()> {
         "task2".to_string(),
         "--param2=value2".to_string(),
     ];
-    
+
     let mut parser = Parser::new(args)?;
     let (otto, tasks, _hash, _ottofile) = parser.parse()?;
-    
+
     assert_eq!(otto.tasks.len(), 2);
     assert_eq!(otto.tasks[0], "task1");
     assert_eq!(otto.tasks[1], "task2");
-    
+
     Ok(())
 }
 ```
@@ -628,14 +628,14 @@ fn test_multiple_tasks_complex_args() {
         "deploy".to_string(),
         "--environment=staging".to_string(),
     ];
-    
+
     let task_names = &["build", "test", "deploy"];
     let expected = vec![
         vec!["build", "--release", "--target=x86_64-unknown-linux-gnu"],
         vec!["test", "--verbose", "--filter=integration"],
         vec!["deploy", "--environment=staging"]
     ];
-    
+
     assert_eq!(partitions(&args, task_names), expected);
 }
 ```
@@ -747,4 +747,4 @@ This design provided a solid foundation for Otto's CLI parsing needs and demonst
 - `Parser::collect_transitive_deps()`: Transitive dependency resolution
 - `Parser::inject_graph_meta_task()`: Built-in task injection
 
-This implementation represents a sophisticated solution to the challenge of parsing complex command lines with dynamic task definitions, providing a robust foundation for Otto's CLI interface. 
+This implementation represents a sophisticated solution to the challenge of parsing complex command lines with dynamic task definitions, providing a robust foundation for Otto's CLI interface.
