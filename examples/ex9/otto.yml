@@ -8,7 +8,7 @@ tasks:
     help: Compile source to object file
     input: ["src.c"]
     output: ["src.o"]
-    action: |
+    bash: |
       echo "Compiling src.c to src.o..."
       gcc -c src.c -o src.o
       echo "Compilation complete"
@@ -18,7 +18,7 @@ tasks:
     before: [compile]
     input: ["src.o"]
     output: ["myapp"]
-    action: |
+    bash: |
       echo "Linking src.o to myapp..."
       gcc src.o -o myapp
       echo "Linking complete"
@@ -26,13 +26,13 @@ tasks:
   build:
     help: Full build process
     before: [link]
-    action: |
+    bash: |
       echo "Build process complete!"
       echo "Executable created: myapp"
 
   clean:
     help: Clean build artifacts
-    action: |
+    bash: |
       echo "Cleaning build artifacts..."
       rm -f src.o myapp
       echo "Clean complete"

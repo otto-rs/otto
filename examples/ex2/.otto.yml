@@ -5,7 +5,7 @@ otto:
   - sometask
 tasks:
   sometask:
-    action: |
+    bash: |
       echo "Running sometask with parameters:"
       echo "  --opt1: ${opt1:-'(not provided)'}"
       echo "  --opt2: ${opt2}"

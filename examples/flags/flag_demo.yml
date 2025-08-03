@@ -38,8 +38,7 @@ tasks:
         help: Input file to process
         metavar: FILE
 
-    action: |
-      #!/bin/bash
+    bash: |
       echo "=== Flag Demo ==="
       echo "Boolean flags:"
       echo "  Verbose: ${verbose}"

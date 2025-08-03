@@ -11,6 +11,7 @@ use otto::executor::{
     TaskScheduler, Workspace,
     workspace::ExecutionContext,
 };
+use otto::cfg::task::ActionSpec;
 
 #[tokio::test]
 async fn test_task_execution_with_output() -> Result<()> {
@@ -24,7 +25,7 @@ async fn test_task_execution_with_output() -> Result<()> {
         vec![],
         HashMap::new(),
         HashMap::new(),
-        "echo hello".to_string(),
+        ActionSpec::Bash("echo hello".to_string()),
     );
 
     let workspace = Workspace::new(work_dir).await?;
@@ -49,7 +50,7 @@ async fn test_task_dependencies() -> Result<()> {
         vec![],
         HashMap::new(),
         HashMap::new(),
-        "echo task1".to_string(),
+        ActionSpec::Bash("echo task1".to_string()),
     );
 
     let task2_spec = Task::new(
@@ -59,7 +60,7 @@ async fn test_task_dependencies() -> Result<()> {
         vec![],
         HashMap::new(),
         HashMap::new(),
-        "echo task2".to_string(),
+        ActionSpec::Bash("echo task2".to_string()),
     );
 
     let task3_spec = Task::new(
@@ -69,7 +70,7 @@ async fn test_task_dependencies() -> Result<()> {
         vec![],
         HashMap::new(),
         HashMap::new(),
-        "echo task3".to_string(),
+        ActionSpec::Bash("echo task3".to_string()),
     );
 
     let tasks = vec![task1_spec, task2_spec, task3_spec];
@@ -101,7 +102,7 @@ async fn test_task_failure() -> Result<()> {
         vec![],
         HashMap::new(),
         HashMap::new(),
-        "exit 1".to_string(),
+        ActionSpec::Bash("exit 1".to_string()),
     );
 
     let workspace = Workspace::new(work_dir).await?;
@@ -127,7 +128,7 @@ async fn test_output_capture() -> Result<()> {
         vec![],
         HashMap::new(),
         HashMap::new(),
-        "echo 'hello world'".to_string(),
+        ActionSpec::Bash("echo 'hello world'".to_string()),
     );
 
     let workspace = Workspace::new(work_dir).await?;
@@ -153,7 +154,7 @@ async fn test_dependency_ordering() -> Result<()> {
         vec![],
         HashMap::new(),
         HashMap::new(),
-        format!("echo 'task1' >> {}", output_file.display()),
+        ActionSpec::Bash(format!("echo 'task1' >> {}", output_file.display())),
     );
 
     let task2_spec = Task::new(
@@ -163,7 +164,7 @@ async fn test_dependency_ordering() -> Result<()> {
         vec![],
         HashMap::new(),
         HashMap::new(),
-        format!("echo 'task2' >> {}", output_file.display()),
+        ActionSpec::Bash(format!("echo 'task2' >> {}", output_file.display())),
     );
 
     let task3_spec = Task::new(
@@ -173,7 +174,7 @@ async fn test_dependency_ordering() -> Result<()> {
         vec![],
         HashMap::new(),
         HashMap::new(),
-        format!("echo 'task3' >> {}", output_file.display()),
+        ActionSpec::Bash(format!("echo 'task3' >> {}", output_file.display())),
     );
 
     let task4_spec = Task::new(
@@ -183,7 +184,7 @@ async fn test_dependency_ordering() -> Result<()> {
         vec![],
         HashMap::new(),
         HashMap::new(),
-        format!("echo 'task4' >> {}", output_file.display()),
+        ActionSpec::Bash(format!("echo 'task4' >> {}", output_file.display())),
     );
 
     let tasks = vec![task1_spec, task2_spec, task3_spec, task4_spec];
@@ -224,7 +225,7 @@ async fn test_parallel_execution() -> Result<()> {
         vec![],
         HashMap::new(),
         HashMap::new(),
-        "sleep 0.5 && echo 'parallel1'".to_string(),
+        ActionSpec::Bash("sleep 0.5 && echo 'parallel1'".to_string()),
     );
 
     let task2_spec = Task::new(
@@ -234,7 +235,7 @@ async fn test_parallel_execution() -> Result<()> {
         vec![],
         HashMap::new(),
         HashMap::new(),
-        "sleep 0.5 && echo 'parallel2'".to_string(),
+        ActionSpec::Bash("sleep 0.5 && echo 'parallel2'".to_string()),
     );
 
     let tasks = vec![task1_spec, task2_spec];

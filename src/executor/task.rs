@@ -5,7 +5,7 @@ use sha2::{Sha256, Digest};
 use hex;
 use daggy::Dag;
 
-use crate::cfg::task::TaskSpec;
+use crate::cfg::task::{TaskSpec, ActionSpec};
 use crate::cfg::config::Value;
 use crate::cfg::env as env_eval;
 
@@ -19,7 +19,7 @@ pub struct Task {
     pub output_deps: Vec<String>,
     pub envs: HashMap<String, String>,
     pub values: HashMap<String, Value>,
-    pub action: String,
+    pub action: ActionSpec,
     pub hash: String,
 }
 
@@ -32,7 +32,7 @@ impl Task {
         output_deps: Vec<String>,
         envs: HashMap<String, String>,
         values: HashMap<String, Value>,
-        action: String,
+        action: ActionSpec,
     ) -> Self {
         let hash = calculate_hash(&action);
         Self {
@@ -84,7 +84,13 @@ impl Task {
         // Note: We do NOT add after tasks here since they depend on us, not vice versa
         // The after dependencies will be handled during DAG construction
         let values = HashMap::new();
-        let action = task_spec.action.trim().to_string();  // Trim whitespace from script content
+        let action = task_spec.action.as_ref()
+            .ok_or_else(|| eyre::eyre!("Task must have an action"))
+            .unwrap_or_else(|e| {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            })
+            .clone();
         Self::new(name, task_deps, file_deps, output_deps, evaluated_envs, values, action)
     }
 
@@ -156,9 +162,14 @@ impl Task {
     }
 }
 
-fn calculate_hash(action: &String) -> String {
+fn calculate_hash(action: &ActionSpec) -> String {
+    let content = match action {
+        ActionSpec::Bash(script) => format!("bash:{}", script),
+        ActionSpec::Python(script) => format!("python:{}", script),
+    };
+
     let mut hasher = Sha256::new();
-    hasher.update(action.as_bytes());
+    hasher.update(content.as_bytes());
     let result = hasher.finalize();
     hex::encode(result)[..8].to_string()
 }

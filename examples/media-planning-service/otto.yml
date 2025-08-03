@@ -19,60 +19,52 @@ tasks:
   # Development setup
   dev:
     help: "Install development dependencies using Poetry"
-    action: |
-      #!/bin/bash
+    bash: |
       poetry install
 
   # Testing tasks
   test:
     help: "Run all tests"
     before: [dev]
-    action: |
-      #!/bin/bash
+    bash: |
       poetry run pytest
 
   unit-test:
     help: "Run unit tests with coverage and JUnit XML output"
     before: [dev]
-    action: |
-      #!/bin/bash
+    bash: |
       poetry run pytest --junitxml=pytest.xml --cov=media_planning_service tests/unit --log-cli-level=CRITICAL
 
   integration-test:
     help: "Run integration tests (continues on failure)"
     before: [dev]
-    action: |
-      #!/bin/bash
+    bash: |
       poetry run pytest tests/integration -s || true
 
   # Code quality tasks
   type-check:
     help: "Run type checking with mypy"
     before: [dev]
-    action: |
-      #!/bin/bash
+    bash: |
       poetry run mypy
 
   lint:
     help: "Run linting with pre-commit hooks"
     before: [dev]
-    action: |
-      #!/bin/bash
+    bash: |
       poetry run pre-commit run --all-files
 
   # Server tasks
   run-rest:
     help: "Run the REST API server with auto-reload"
     before: [dev]
-    action: |
-      #!/bin/bash
+    bash: |
       poetry run uvicorn media_planning_service.rest.app:app --reload
 
   # Database operations
   get-postgres-dump:
     help: "Download the latest PostgreSQL dump from S3"
-    action: |
-      #!/bin/bash
+    bash: |
       LATEST_S3_DUMP_FILE=$(aws s3api list-objects-v2 --bucket "tatari-pg-dumps" --prefix 'media_planning_service' --query 'sort_by(Contents, &LastModified)[-1].Key' --output=text)
       DUMP_CHECK="${LOCAL_DUMP_FILE}-${LATEST_S3_DUMP_FILE}.check"
 
@@ -89,8 +81,7 @@ tasks:
   # Docker Compose operations
   docker-compose-build:
     help: "Build Docker Compose services"
-    action: |
-      #!/bin/bash
+    bash: |
       docker compose up --build -d
 
   docker-compose:
@@ -99,14 +90,12 @@ tasks:
 
   docker-compose-down:
     help: "Stop Docker Compose services"
-    action: |
-      #!/bin/bash
+    bash: |
       docker compose -f docker-compose.yaml down
 
   docker-compose-with-farnsworth-build:
     help: "Build Docker Compose services with Farnsworth"
-    action: |
-      #!/bin/bash
+    bash: |
       docker compose -f docker-compose.yaml -f docker-compose.farnsworth.yaml up --build -d
 
   docker-compose-with-farnsworth:
@@ -115,14 +104,12 @@ tasks:
 
   docker-compose-with-farnsworth-down:
     help: "Stop Docker Compose services with Farnsworth"
-    action: |
-      #!/bin/bash
+    bash: |
       docker compose -f docker-compose.yaml -f docker-compose.farnsworth.yaml down
 
   docker-compose-clean:
     help: "Clean Docker containers and volumes for media-planning-service"
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Deleting media-planning-service volumes and containers..."
       docker ps -a | grep 'media-planning-service' | awk -F ' ' '{print $1}' | xargs -I {} sh -c "docker rm -f {}" || true
       docker volume list | grep 'media-planning-service' | awk -F ' ' '{print $2}' | xargs -I {} sh -c "docker volume rm -f {}" || true
@@ -130,23 +117,20 @@ tasks:
   # Database access
   psql:
     help: "Connect to PostgreSQL database in Docker container"
-    action: |
-      #!/bin/bash
+    bash: |
       docker exec -it media-planning-service-db-1 psql -U tatari media_planning_service
 
   # Development cleanup
   dev-clean:
     help: "Clean development-specific files"
-    action: |
-      #!/bin/bash
+    bash: |
       rm -f ${LOCAL_DUMP_FILE}-*.check
 
   # Main cleanup task
   clean:
     help: "Clean build artifacts and caches"
     before: [dev-clean]
-    action: |
-      #!/bin/bash
+    bash: |
       rm -rf build/ dist/ .venv/ .mypy_cache/ .pytest_cache/
       rm -rf *.egg-info
       rm -rf .coverage

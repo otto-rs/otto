@@ -6,11 +6,12 @@ use hex;
 
 use super::workspace::Workspace;
 use super::task::Task;
+use crate::cfg::task::ActionSpec;
 
 /// Processed action with script type encoded in the enum variant
 pub enum ProcessedAction {
     Bash { path: PathBuf, script: String, hash: String },
-    Python3 { path: PathBuf, script: String, hash: String },
+    Python { path: PathBuf, script: String, hash: String },
 }
 
 /// Main coordinator for action processing
@@ -27,54 +28,34 @@ impl ActionProcessor {
         })
     }
 
-    pub fn process(&self, user_action: &str, task: &Task) -> Result<ProcessedAction> {
-        let trimmed_action = user_action.trim_start();
-
-        // Detect script language from shebang
-        if trimmed_action.starts_with("#!/usr/bin/env bash") || trimmed_action.starts_with("#!/bin/bash") {
-            let processor = BashProcessor::new(self.workspace.clone(), &self.task_name);
-            processor.create_builtins()?;
-            let script = self.build_script(&processor, user_action, task)?;
-            let path = self.write_script(&processor, &script)?;
-            let hash = self.calculate_hash(&script)?;
-            Ok(ProcessedAction::Bash { path, script, hash })
-        } else if trimmed_action.starts_with("#!/usr/bin/env python3") || trimmed_action.starts_with("#!/usr/bin/python3") {
-            let processor = PythonProcessor::new(self.workspace.clone(), &self.task_name);
-            processor.create_builtins()?;
-            let script = self.build_script(&processor, user_action, task)?;
-            let path = self.write_script(&processor, &script)?;
-            let hash = self.calculate_hash(&script)?;
-            Ok(ProcessedAction::Python3 { path, script, hash })
-        } else {
-            // Default to bash if no shebang is detected (for backward compatibility)
-            let processor = BashProcessor::new(self.workspace.clone(), &self.task_name);
-            processor.create_builtins()?;
-            let script = self.build_script(&processor, user_action, task)?;
-            let path = self.write_script(&processor, &script)?;
-            let hash = self.calculate_hash(&script)?;
-            Ok(ProcessedAction::Bash { path, script, hash })
+    pub fn process(&self, action_spec: &ActionSpec, task: &Task) -> Result<ProcessedAction> {
+        match action_spec {
+            ActionSpec::Bash(user_script) => {
+                let processor = BashProcessor::new(self.workspace.clone(), &self.task_name);
+                processor.create_builtins()?;
+                let script = self.build_script(&processor, user_script, task)?;
+                let path = self.write_script(&processor, &script)?;
+                let hash = self.calculate_hash(&script)?;
+                Ok(ProcessedAction::Bash { path, script, hash })
+            }
+            ActionSpec::Python(user_script) => {
+                let processor = PythonProcessor::new(self.workspace.clone(), &self.task_name);
+                processor.create_builtins()?;
+                let script = self.build_script(&processor, user_script, task)?;
+                let path = self.write_script(&processor, &script)?;
+                let hash = self.calculate_hash(&script)?;
+                Ok(ProcessedAction::Python { path, script, hash })
+            }
         }
     }
 
     fn build_script<T: ScriptProcessor>(&self, processor: &T, user_action: &str, task: &Task) -> Result<String> {
-        // Extract shebang from user action if present
-        let lines: Vec<&str> = user_action.lines().collect();
-        let (shebang, user_content) = if lines.first().map_or(false, |line| line.starts_with("#!")) {
-            (lines[0], lines[1..].join("\n"))
-        } else {
-            ("", user_action.to_string())
-        };
-
+        // Remove shebang extraction logic - user_action is now clean
         let prologue = processor.generate_prologue(&task.task_deps, task)?;
         let epilogue = processor.generate_epilogue()?;
 
-        // Build script with shebang first, then prologue, user content, epilogue
-        let script = if shebang.is_empty() {
-            format!("{}\n{}\n{}", prologue, user_content, epilogue)
-        } else {
-            format!("{}\n{}\n{}\n{}", shebang, prologue, user_content, epilogue)
-        };
-
+        // Build script: prologue + user content + epilogue
+        let script = format!("{}\n{}\n{}", prologue, user_action, epilogue);
         Ok(script)
     }
 
@@ -257,7 +238,8 @@ impl ScriptProcessor for BashProcessor {
         let input_section = self.generate_bash_input_section(dependencies);
         let param_section = self.generate_bash_param_section(task);
 
-        let prologue = format!(r#"# Otto-generated bash prologue
+        let prologue = format!(r#"#!/bin/bash
+# Otto-generated bash prologue
 set -euo pipefail
 
 declare -A OTTO_INPUT
@@ -502,7 +484,8 @@ impl ScriptProcessor for PythonProcessor {
         let input_section = self.generate_python_input_section(dependencies);
         let param_section = self.generate_python_param_section(task);
 
-        let prologue = format!(r#"# Otto-generated python prologue
+        let prologue = format!(r#"#!/usr/bin/env python3
+# Otto-generated python prologue
 import json
 import os
 import glob
@@ -675,7 +658,7 @@ mod tests {
             vec![],
             task_envs,
             task_values,
-            "#!/usr/bin/env bash\necho \"${greeting} world\"".to_string(),
+            ActionSpec::Bash("echo \"${greeting} world\"".to_string()),
         );
 
         // Process the action
@@ -731,15 +714,15 @@ mod tests {
             vec![],
             task_envs,
             task_values,
-            "#!/usr/bin/env python3\nprint(f\"Hello {name}\")".to_string(),
+            ActionSpec::Python("print(f\"Hello {name}\")".to_string()),
         );
 
         // Process the action
         let result = processor.process(&task.action, &task)?;
 
-        // Verify the result - now should properly detect Python3
+        // Verify the result - now should properly detect Python
         match result {
-            ProcessedAction::Python3 { path, script, hash } => {
+            ProcessedAction::Python { path, script, hash } => {
                 assert!(path.exists());
                 assert!(script.contains("OTTO_INPUT = {}"));
                 assert!(script.contains("OTTO_OUTPUT = {}"));
@@ -759,7 +742,7 @@ mod tests {
                 let expected_hash = hex::encode(hasher.finalize())[..8].to_string();
                 assert_eq!(hash, expected_hash, "Hash should match generated script content");
             },
-            _ => panic!("Expected Python3 variant"),
+            _ => panic!("Expected Python variant"),
         }
 
         Ok(())
@@ -787,7 +770,7 @@ mod tests {
             vec![],
             task_envs,
             task_values,
-            "echo \"${message} from default bash\"".to_string(), // No shebang
+            ActionSpec::Bash("echo \"${message} from default bash\"".to_string()),
         );
 
         // Process the action

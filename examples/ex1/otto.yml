@@ -5,8 +5,7 @@ otto:
   - punch
 tasks:
   punch:
-    action: |
-      #!/bin/bash
+    bash: |
       echo "${arg:-donkey}"
     help: punch task help
   hello:
@@ -17,8 +16,7 @@ tasks:
         - help
         default: hello
         help: default="hello"; override greeting
-    action: |
-      #!/bin/bash
+    bash: |
       sleep 1
       echo "${greeting:-hello}"
     help: hello task help
@@ -29,7 +27,6 @@ tasks:
       -n|--name:
         default: world
         help: default="world"; override name
-    action: |
-      #!/bin/bash
+    bash: |
       echo "${name:-world}"
     help: world task help

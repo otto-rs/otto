@@ -5,7 +5,7 @@ use tokio::time::timeout;
 use eyre::Result;
 
 use otto::cfg::config::ConfigSpec;
-use otto::cfg::task::TaskSpec;
+use otto::cfg::task::{TaskSpec, ActionSpec};
 use otto::Task;
 use otto::executor::scheduler::{TaskScheduler, TaskStatus};
 use otto::executor::workspace::{Workspace, ExecutionContext};
@@ -63,7 +63,7 @@ impl TestFixture {
         Task::from_task_with_cwd(
             &TaskSpec {
                 name: name.to_string(),
-                action: action.to_string(),
+                action: Some(ActionSpec::Bash(action.to_string())),
                 before: vec![],
                 after: vec![],
                 input: inputs.iter().map(|s| s.to_string()).collect(),
@@ -80,7 +80,7 @@ impl TestFixture {
         Task::from_task_with_cwd(
             &TaskSpec {
                 name: name.to_string(),
-                action: action.to_string(),
+                action: Some(ActionSpec::Bash(action.to_string())),
                 before: before.iter().map(|s| s.to_string()).collect(),
                 after: vec![],
                 input: inputs.iter().map(|s| s.to_string()).collect(),
@@ -139,8 +139,7 @@ tasks:
       - "Makefile"
     output:
       - "build/app"
-    action: |
-      #!/bin/bash
+    bash: |
       mkdir -p build
       echo "Compiling C files..."
       gcc -o build/app src/*.c
@@ -153,8 +152,7 @@ tasks:
       - "build/app"
     output:
       - "test_results.log"
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Running tests..."
       if [ -f build/app ]; then
         echo "Test: Binary exists - PASS" > test_results.log
@@ -173,8 +171,7 @@ tasks:
       - "test_results.log"
     output:
       - "dist/package.tar.gz"
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Creating package..."
       mkdir -p dist
       tar -czf dist/package.tar.gz build/app test_results.log
@@ -280,7 +277,7 @@ async fn test_file_dependencies_error_handling() -> Result<()> {
     let task = Task::from_task_with_cwd(
         &TaskSpec {
             name: "fail_task".to_string(),
-            action: "echo 'This will run because input is missing'".to_string(),
+            action: Some(ActionSpec::Bash("echo 'This will run because input is missing'".to_string())),
             before: vec![],
             after: vec![],
             input: vec![missing_input.to_string_lossy().to_string()],
@@ -323,7 +320,7 @@ async fn test_file_dependencies_error_handling() -> Result<()> {
     let task_readonly = Task::from_task_with_cwd(
         &TaskSpec {
             name: "readonly_task".to_string(),
-            action: format!("echo 'test' > {}", readonly_output.display()).to_string(),
+            action: Some(ActionSpec::Bash(format!("echo 'test' > {}", readonly_output.display()))),
             before: vec![],
             after: vec![],
             input: vec![],
@@ -398,8 +395,8 @@ async fn test_mixed_task_and_file_dependencies() -> Result<()> {
     let preprocess_task = Task::from_task_with_cwd(
         &TaskSpec {
             name: "preprocess".to_string(),
-            action: format!(r#"echo '{{"status": "processed", "config": ' > {}; cat {} >> {}; echo '}}' >> {}"#,
-                            processed_file.display(), config_file.display(), processed_file.display(), processed_file.display()).to_string(),
+            action: Some(ActionSpec::Bash(format!(r#"echo '{{"status": "processed", "config": ' > {}; cat {} >> {}; echo '}}' >> {}"#,
+                            processed_file.display(), config_file.display(), processed_file.display(), processed_file.display()))),
             before: vec![],
             after: vec![],
             input: vec![
@@ -417,8 +414,8 @@ async fn test_mixed_task_and_file_dependencies() -> Result<()> {
     let analyze_task = Task::from_task_with_cwd(
         &TaskSpec {
             name: "analyze".to_string(),
-            action: format!("echo '<html><body>Analysis complete: ' > {}; cat {} >> {}; echo '</body></html>' >> {}",
-                            report_file.display(), processed_file.display(), report_file.display(), report_file.display()).to_string(),
+            action: Some(ActionSpec::Bash(format!("echo '<html><body>Analysis complete: ' > {}; cat {} >> {}; echo '</body></html>' >> {}",
+                            report_file.display(), processed_file.display(), report_file.display(), report_file.display()))),
             before: vec!["preprocess".to_string()],
             after: vec![],
             input: vec![processed_file.to_string_lossy().to_string()],
@@ -486,7 +483,7 @@ async fn test_file_dependencies_incremental_detection() -> Result<()> {
     let task = Task::from_task_with_cwd(
         &TaskSpec {
             name: "compile".to_string(),
-            action: "gcc -c main.c -o main.o".to_string(),
+            action: Some(ActionSpec::Bash("gcc -c main.c -o main.o".to_string())),
             before: vec![],
             after: vec![],
             input: vec!["main.c".to_string(), "main.h".to_string()],
@@ -583,11 +580,11 @@ async fn test_file_dependencies_multiple_files() -> Result<()> {
     let task = Task::from_task_with_cwd(
         &TaskSpec {
             name: "combine".to_string(),
-            action: format!(
+            action: Some(ActionSpec::Bash(format!(
                 "cat {} {} {} > {} && echo 'Files: 3' > {}",
                 input1.display(), input2.display(), input3.display(),
                 output1.display(), output2.display()
-            ),
+            ))),
             before: vec![],
             after: vec![],
             input: vec!["file1.txt".to_string(), "file2.txt".to_string(), "file3.txt".to_string()],
@@ -712,7 +709,7 @@ async fn test_file_dependencies_task_skipping() -> Result<()> {
     let task = Task::from_task_with_cwd(
         &TaskSpec {
             name: "generate".to_string(),
-            action: "echo 'This should not run!' && exit 1".to_string(), // Will fail if executed
+            action: Some(ActionSpec::Bash("echo 'This should not run!' && exit 1".to_string())), // Will fail if executed
             before: vec![],
             after: vec![],
             input: vec!["config.txt".to_string()],
@@ -766,7 +763,7 @@ async fn test_file_dependencies_modification_detection() -> Result<()> {
     let task = Task::from_task_with_cwd(
         &TaskSpec {
             name: "process_configs".to_string(),
-            action: "echo 'processing'".to_string(),
+            action: Some(ActionSpec::Bash("echo 'processing'".to_string())),
             before: vec![],
             after: vec![],
             input: vec!["old_config.txt".to_string(), "new_config.txt".to_string()],

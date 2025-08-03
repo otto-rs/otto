@@ -15,7 +15,7 @@ tasks:
       # Task-specific environment variables
       GENERATOR_MODE: "production"
       OUTPUT_FORMAT: "digits"
-    action: |
+    bash: |
       # Generate timestamp (all digits format: YYYYMMDDHHMMSS)
       timestamp=$(date +%Y%m%d%H%M%S)
 
@@ -36,7 +36,7 @@ tasks:
       # Different task-specific environment variables
       CONSUMER_MODE: "validate"
       TIMEZONE: "UTC"
-    action: |
+    bash: |
       # Get the timestamp from the previous task
       received_timestamp=$(otto_get_input "generate.timestamp")
       received_format=$(otto_get_input "generate.format")

@@ -24,8 +24,7 @@ tasks:
       --dry-run:
         default: false
         help: Show what would be done
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Verbose: ${verbose}"
       echo "Force: ${force}"
       echo "Dry run: ${dry_run}"
@@ -74,8 +73,7 @@ tasks:
       -f|--force:
         default: false
         help: Force rebuild
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Verbose: ${verbose}"
       echo "Force: ${force}"
     "#;
@@ -123,8 +121,7 @@ tasks:
       -p|--port:
         default: 8080
         help: Port number
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Environment: ${env}"
       echo "Timeout: ${timeout}"
       echo "Port: ${port}"
@@ -179,8 +176,7 @@ tasks:
       -w|--workers:
         default: 4
         help: Number of workers
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Port: ${port}"
       echo "Host: ${host}"
       echo "Workers: ${workers}"
@@ -245,8 +241,7 @@ tasks:
       --timeout:
         default: 5000
         help: Test timeout in milliseconds
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Verbose: ${verbose}"
       echo "Coverage: ${coverage}"
       echo "Watch: ${watch}"
@@ -317,8 +312,7 @@ tasks:
         default: development
         choices: [development, staging, production]
         help: Target environment
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Building..."
     "#;
 

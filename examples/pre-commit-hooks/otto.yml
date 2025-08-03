@@ -13,38 +13,33 @@ tasks:
   # Development setup
   dev:
     help: "Install development dependencies using Poetry"
-    action: |
-      #!/bin/bash
+    bash: |
       poetry install
 
   # Testing tasks
   unit-test:
     help: "Run unit tests with pytest"
     before: [dev]
-    action: |
-      #!/bin/bash
+    bash: |
       poetry run pytest tests/python
 
   # Code quality tasks
   type-check:
     help: "Run type checking with mypy"
     before: [dev]
-    action: |
-      #!/bin/bash
+    bash: |
       poetry run mypy
 
   lint:
     help: "Run linting with pre-commit hooks"
     before: [dev]
-    action: |
-      #!/bin/bash
+    bash: |
       poetry run pre-commit run --all-files
 
   # Cleanup task
   clean:
     help: "Clean build artifacts and caches"
-    action: |
-      #!/bin/bash
+    bash: |
       rm -rf build/ dist/ .venv/ .mypy_cache/ .pytest_cache/
       rm -rf *.egg-info
       rm -rf .coverage

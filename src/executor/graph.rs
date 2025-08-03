@@ -590,6 +590,7 @@ impl DagVisualizer {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use crate::cfg::task::ActionSpec;
 
     fn create_test_task(name: &str, deps: Vec<&str>) -> Task {
         Task::new(
@@ -599,7 +600,7 @@ mod tests {
             vec![],
             HashMap::new(),
             HashMap::new(),
-            format!("echo 'Running {}'", name),
+            ActionSpec::Bash(format!("echo 'Running {}'", name)),
         )
     }
 

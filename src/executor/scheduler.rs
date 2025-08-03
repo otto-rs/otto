@@ -325,7 +325,7 @@ impl TaskScheduler {
             // Extract script path and determine interpreter
             let (script_path, interpreter) = match processed_action {
                 ProcessedAction::Bash { path, .. } => (path, "bash"),
-                ProcessedAction::Python3 { path, .. } => (path, "python3"),
+                ProcessedAction::Python { path, .. } => (path, "python3"),
             };
 
             // Setup command environment
@@ -544,6 +544,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use tempfile::TempDir;
+    use crate::cfg::task::ActionSpec;
 
     #[tokio::test]
     async fn test_task_execution() -> Result<()> {
@@ -557,7 +558,7 @@ mod tests {
             vec![],
             HashMap::new(),
             HashMap::new(),
-            "echo hello".to_string(),
+            ActionSpec::Bash("echo hello".to_string()),
         );
 
         let workspace = Workspace::new(work_dir).await?;
@@ -584,7 +585,7 @@ mod tests {
                 vec![],
                 HashMap::new(),
                 HashMap::new(),
-                "echo task1".to_string(),
+                ActionSpec::Bash("echo task1".to_string()),
             ),
             Task::new(
                 "task2".to_string(),
@@ -593,7 +594,7 @@ mod tests {
                 vec![],
                 HashMap::new(),
                 HashMap::new(),
-                "echo task2".to_string(),
+                ActionSpec::Bash("echo task2".to_string()),
             ),
         ];
 
@@ -624,7 +625,7 @@ mod tests {
                 vec![],
                 HashMap::new(),
                 HashMap::new(),
-                "exit 1".to_string(),
+                ActionSpec::Bash("exit 1".to_string()),
             ),
             Task::new(
                 "task2".to_string(),
@@ -633,7 +634,7 @@ mod tests {
                 vec![],
                 HashMap::new(),
                 HashMap::new(),
-                "echo task2".to_string(),
+                ActionSpec::Bash("echo task2".to_string()),
             ),
         ];
 
@@ -665,7 +666,7 @@ mod tests {
             vec![output_file.to_string_lossy().to_string()],
             HashMap::new(),
             HashMap::new(),
-            format!("cp {} {}", input_file.display(), output_file.display()),
+            ActionSpec::Bash(format!("cp {} {}", input_file.display(), output_file.display())),
         );
 
         let workspace = Workspace::new(work_dir.clone()).await?;
@@ -736,7 +737,7 @@ mod tests {
             vec![output_file.to_string_lossy().to_string()],
             HashMap::new(),
             HashMap::new(),
-            format!("touch {}", output_file.display()),
+            ActionSpec::Bash(format!("touch {}", output_file.display())),
         );
 
         let workspace = Workspace::new(work_dir.clone()).await?;
@@ -782,9 +783,9 @@ mod tests {
             ],
             HashMap::new(),
             HashMap::new(),
-            format!("cat {} {} {} > {} && cp {} {}",
+            ActionSpec::Bash(format!("cat {} {} {} > {} && cp {} {}",
                 input1.display(), input2.display(), input3.display(),
-                output1.display(), output1.display(), output2.display()),
+                output1.display(), output1.display(), output2.display())),
         );
 
         let workspace = Workspace::new(work_dir.clone()).await?;
@@ -833,7 +834,7 @@ mod tests {
             vec![intermediate_file.to_string_lossy().to_string()],
             HashMap::new(),
             HashMap::new(),
-            format!("cp {} {}", input_file.display(), intermediate_file.display()),
+            ActionSpec::Bash(format!("cp {} {}", input_file.display(), intermediate_file.display())),
         );
 
         let task2 = Task::new(
@@ -843,7 +844,7 @@ mod tests {
             vec![output_file.to_string_lossy().to_string()],
             HashMap::new(),
             HashMap::new(),
-            format!("cp {} {}", intermediate_file.display(), output_file.display()),
+            ActionSpec::Bash(format!("cp {} {}", intermediate_file.display(), output_file.display())),
         );
 
         let workspace = Workspace::new(work_dir.clone()).await?;
@@ -893,7 +894,7 @@ mod tests {
             vec![output_file.to_string_lossy().to_string()],
             HashMap::new(),
             HashMap::new(),
-            format!("cp {} {}", input_file.display(), output_file.display()),
+            ActionSpec::Bash(format!("cp {} {}", input_file.display(), output_file.display())),
         );
 
         let workspace = Workspace::new(work_dir).await?;
@@ -921,7 +922,7 @@ mod tests {
             vec![], // No output files
             HashMap::new(),
             HashMap::new(),
-            "echo 'no file dependencies'".to_string(),
+            ActionSpec::Bash("echo 'no file dependencies'".to_string()),
         );
 
         let workspace = Workspace::new(work_dir).await?;
@@ -955,7 +956,7 @@ mod tests {
             vec![output_file.to_string_lossy().to_string()],
             HashMap::new(),
             HashMap::new(),
-            format!("find {} -name '*.txt' | wc -l > {}", src_dir.display(), output_file.display()),
+            ActionSpec::Bash(format!("find {} -name '*.txt' | wc -l > {}", src_dir.display(), output_file.display())),
         );
 
         let workspace = Workspace::new(work_dir).await?;
@@ -991,7 +992,7 @@ mod tests {
             vec![output_file.to_string_lossy().to_string()],
             HashMap::new(),
             HashMap::new(),
-            format!("cat input_*.txt > {}", output_file.display()),
+            ActionSpec::Bash(format!("cat input_*.txt > {}", output_file.display())),
         );
 
         let workspace = Workspace::new(work_dir).await?;
@@ -1028,7 +1029,7 @@ mod tests {
             vec![file_a.to_string_lossy().to_string()], // Same file as input and output
             HashMap::new(),
             HashMap::new(),
-            format!("echo 'modified' >> {}", file_a.display()),
+            ActionSpec::Bash(format!("echo 'modified' >> {}", file_a.display())),
         );
 
         let workspace = Workspace::new(work_dir).await?;
@@ -1061,7 +1062,7 @@ mod tests {
             vec![output_file.to_string_lossy().to_string()],
             HashMap::new(),
             HashMap::new(),
-            format!("cp {} {}", input_file.display(), output_file.display()),
+            ActionSpec::Bash(format!("cp {} {}", input_file.display(), output_file.display())),
         );
 
         let workspace = Workspace::new(work_dir.clone()).await?;

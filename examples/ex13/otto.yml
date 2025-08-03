@@ -9,8 +9,7 @@ otto:
 
 tasks:
   build:
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Building the project..."
       sleep 1
       echo "Build completed successfully!"
@@ -19,8 +18,7 @@ tasks:
   test:
     before:
     - build
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Running tests..."
       sleep 2
       echo "All tests passed!"
@@ -30,8 +28,7 @@ tasks:
   deploy:
     before:
     - test
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Deploying to production..."
       sleep 1
       echo "Deployment successful!"
@@ -40,16 +37,14 @@ tasks:
   cleanup:
     before:
     - deploy
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Cleaning up temporary files..."
       sleep 1
       echo "Cleanup completed!"
     help: "Clean up temporary files"
 
   lint:
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Running linter..."
       echo "Found 3 style issues"
       echo "Auto-fixing..."
@@ -57,16 +52,14 @@ tasks:
     help: "Run code linter"
 
   format:
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Formatting code..."
       sleep 1
       echo "Code formatted successfully!"
     help: "Format code"
 
   docs:
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Generating documentation..."
       sleep 2
       echo "Documentation generated!"
@@ -75,8 +68,7 @@ tasks:
   notify:
     before:
     - cleanup
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Sending notifications..."
       echo "Slack notification sent"
       echo "Email notification sent"
