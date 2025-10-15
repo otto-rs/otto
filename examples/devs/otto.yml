@@ -25,7 +25,7 @@ tasks:
   # Build the Go binary
   build:
     help: "Build the Go binary"
-    action: |
+    bash: |
       export GOPATH="${HOME}/go"
       export GOMODCACHE="${HOME}/go/pkg/mod"
       mkdir -p dist
@@ -35,13 +35,13 @@ tasks:
   run:
     help: "Run the built binary"
     before: [build]
-    action: |
+    bash: |
       ./dist/devs 2> err.log
 
   # Testing related tasks
   unit-test:
     help: "Run unit tests with coverage"
-    action: |
+    bash: |
       export GOPATH="${HOME}/go"
       export GOMODCACHE="${HOME}/go/pkg/mod"
       go test -cover -coverprofile=coverage.txt ./...
@@ -53,13 +53,13 @@ tasks:
   coverage:
     help: "Generate HTML coverage report"
     before: [unit-test]
-    action: |
+    bash: |
       go tool cover -html=coverage.txt
 
   # Code quality tasks
   fmt:
     help: "Format Go source code"
-    action: |
+    bash: |
       SRC=$(find . -type f -name '*.go' -not -path "./vendor/*")
       if [ -n "$SRC" ]; then
         gofmt -l -w $SRC
@@ -69,7 +69,7 @@ tasks:
 
   type-check:
     help: "Run static analysis"
-    action: |
+    bash: |
       go run honnef.co/go/tools/cmd/staticcheck@v0.5.1 ./...
 
   lint:
@@ -79,6 +79,6 @@ tasks:
   # Cleanup
   clean:
     help: "Clean build artifacts"
-    action: |
+    bash: |
       rm -rf dist/
       rm -rf .coverage

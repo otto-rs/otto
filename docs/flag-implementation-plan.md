@@ -396,8 +396,7 @@ tasks:
       -f|--force:
         default: false
         help: Force rebuild
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Verbose: ${verbose}"
       echo "Force: ${force}"
     "#;
@@ -444,8 +443,7 @@ tasks:
       --timeout:
         default: 30
         help: Timeout in seconds
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Environment: ${env}"
       echo "Timeout: ${timeout}"
     "#;
@@ -500,8 +498,7 @@ tasks:
         choices: [spec, json, junit]
         default: spec
         help: Test reporter format
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Verbose: ${verbose}"
       echo "Coverage: ${coverage}"
       echo "Pattern: ${pattern}"
@@ -557,8 +554,7 @@ tasks:
       --host:
         default: localhost
         help: Host address
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Verbose: ${verbose}"
       echo "Port: ${port}"
       echo "Host: ${host}"

@@ -9,7 +9,7 @@ otto:
 tasks:
   task1:
     help: First parallel task
-    action: |
+    bash: |
       echo "Task1 step 1"
       sleep 2
       echo "Task1 step 2"
@@ -18,7 +18,7 @@ tasks:
 
   task2:
     help: Second parallel task
-    action: |
+    bash: |
       echo "Task2 step 1"
       sleep 3
       echo "Task2 complete"
@@ -26,7 +26,7 @@ tasks:
   task3:
     help: Task dependent on task1
     before: ["task1"]
-    action: |
+    bash: |
       echo "Task3 step 1"
       sleep 1
       echo "Task3 complete"
@@ -34,7 +34,7 @@ tasks:
   task4:
     help: Task dependent on task2
     before: ["task2"]
-    action: |
+    bash: |
       echo "Task4 step 1"
       sleep 1
       echo "Task4 complete"
@@ -42,6 +42,6 @@ tasks:
   final:
     help: Final task that depends on task3 and task4
     before: ["task3", "task4"]
-    action: |
+    bash: |
       echo "Starting final task"
       echo "All tasks completed!"

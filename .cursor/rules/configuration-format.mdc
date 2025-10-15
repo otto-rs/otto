@@ -36,11 +36,17 @@ tasks:
         default: hello
         choices: [hello, hi]
         help: Greeting text
-    action: |                # Shell script (supports multi-line)
-      #!/bin/bash
+    bash: |                  # Bash script (auto-adds #!/bin/bash shebang)
       echo "${greeting}"
+    # Alternative: python: |  # Python script (auto-adds #!/usr/bin/env python3 shebang)
+    #   print(f"Hello {greeting}")
     timeout: 30              # Task timeout in seconds
 ```
+
+**Script Types:**
+- `bash:` - Bash scripts (automatically adds `#!/bin/bash` shebang)
+- `python:` - Python scripts (automatically adds `#!/usr/bin/env python3` shebang)
+- `action:` - Legacy format (still supported for backward compatibility, uses shebang to detect script type)
 
 ## Key Features
 

@@ -14,8 +14,7 @@ tasks:
     - config.json
     after:
     - cleanup  # count_lines runs before cleanup
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Counting lines in input files..."
       total=0
       for file in data/*.txt; do
@@ -37,8 +36,7 @@ tasks:
     - data/summary.txt
     after:
     - cleanup  # summarize runs before cleanup
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Creating summary..."
       echo "README content:"
       cat README.md
@@ -58,8 +56,7 @@ tasks:
     - process_config.yml
     after:
     - report  # process runs before report
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Processing results..."
       echo "Line count result: $(cat line_count.txt)"
       echo "Summary result: $(cat summary_output.txt)"
@@ -72,8 +69,7 @@ tasks:
     input:
     - logs/*.log
     - logs/**/*.log
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Checking log files..."
       find logs -name "*.log" -type f | while read logfile; do
         echo "Log: $logfile ($(wc -l < "$logfile") lines)"
@@ -82,8 +78,7 @@ tasks:
 
   # Cleanup task that runs after count_lines and summarize (via after deps)
   cleanup:
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Cleaning up temporary files..."
       echo "Files to clean: line_count.txt, summary_output.txt"
       # Don't actually delete in demo
@@ -92,8 +87,7 @@ tasks:
 
   # Report task that runs after process (via after dep)
   report:
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Generating final report..."
       echo "=== OTTO TASK EXECUTION REPORT ==="
       echo "Execution completed at $(date)"

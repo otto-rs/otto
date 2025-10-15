@@ -3,43 +3,43 @@ description: Demonstrates complex task dependencies and concurrent execution
 
 tasks:
   start:
-    action: echo "Starting the workflow"
+    bash: echo "Starting the workflow"
 
   task1:
     before: [start]
-    action: |
+    bash: |
       echo "Task 1 executing"
       sleep 2
       echo "Task 1 complete"
 
   task2:
     before: [start]
-    action: |
+    bash: |
       echo "Task 2 executing"
       sleep 3
       echo "Task 2 complete"
 
   task3:
     before: [task1]
-    action: |
+    bash: |
       echo "Task 3 executing (depends on task1)"
       sleep 1
       echo "Task 3 complete"
 
   task4:
     before: [task2]
-    action: |
+    bash: |
       echo "Task 4 executing (depends on task2)"
       sleep 1
       echo "Task 4 complete"
 
   combine:
     before: [task3, task4]
-    action: |
+    bash: |
       echo "Combine task executing (depends on task3 and task4)"
       sleep 1
       echo "Combine complete"
 
   done:
     before: [combine]
-    action: echo "All tasks completed successfully!"
+    bash: echo "All tasks completed successfully!"

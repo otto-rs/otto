@@ -17,7 +17,7 @@ otto:
 tasks:
   info:
     help: "Show environment information"
-    action: |
+    bash: |
       echo "=== Environment Variables Demo ==="
       echo "Project: $PROJECT_NAME"
       echo "Version: $VERSION"
@@ -34,7 +34,7 @@ tasks:
     envs:
       # Task-specific environment variables
       SETUP_MSG: "Setting up ${PROJECT_NAME} v${VERSION}"
-    action: |
+    bash: |
       echo "$SETUP_MSG"
       mkdir -p "$BUILD_DIR" "$DIST_DIR"
       echo "Directories created: $BUILD_DIR, $DIST_DIR"
@@ -50,7 +50,7 @@ tasks:
       - "src/*.txt"  # Demo input files
     output:
       - "${BUILD_DIR}/${PROJECT_NAME}"
-    action: |
+    bash: |
       echo "Building $PROJECT_NAME with flags: $COMPILER_FLAGS"
       echo "Output will be: $BUILD_OUTPUT"
       # Simulate build process
@@ -65,7 +65,7 @@ tasks:
     envs:
       TEST_ENV: "testing"
       TEST_OUTPUT: "${BUILD_DIR}/test-results.log"
-    action: |
+    bash: |
       echo "Testing in $TEST_ENV environment"
       echo "Running: ${BUILD_DIR}/${PROJECT_NAME}"
       "${BUILD_DIR}/${PROJECT_NAME}" > "$TEST_OUTPUT"
@@ -82,7 +82,7 @@ tasks:
       - "${BUILD_DIR}/test-results.log"
     output:
       - "${DIST_DIR}/${PACKAGE_NAME}"
-    action: |
+    bash: |
       echo "Creating package: $PACKAGE_NAME"
       tar -czf "$PACKAGE_PATH" -C "$BUILD_DIR" .
       echo "Package created: $PACKAGE_PATH"
@@ -95,7 +95,7 @@ tasks:
     envs:
       DEPLOY_TARGET: "${USER_HOME}/deployed-apps"
       DEPLOY_PATH: "${DEPLOY_TARGET}/${PACKAGE_NAME}"
-    action: |
+    bash: |
       echo "Deploying to: $DEPLOY_TARGET"
       mkdir -p "$DEPLOY_TARGET"
       cp "${DIST_DIR}/${PACKAGE_NAME}" "$DEPLOY_PATH"
@@ -107,7 +107,7 @@ tasks:
     help: "Clean build artifacts"
     envs:
       CLEAN_DIRS: "${BUILD_DIR} ${DIST_DIR}"
-    action: |
+    bash: |
       echo "Cleaning directories: $CLEAN_DIRS"
       rm -rf $CLEAN_DIRS
       echo "Clean complete"
@@ -115,7 +115,7 @@ tasks:
   demo:
     help: "Run complete demo workflow"
     before: ["deploy"]
-    action: |
+    bash: |
       echo "=== Demo Complete ==="
       echo "Built and deployed: $FULL_VERSION"
       echo "Package available at: ${USER_HOME}/deployed-apps"

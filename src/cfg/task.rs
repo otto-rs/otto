@@ -11,41 +11,101 @@ use crate::cfg::param::{deserialize_param_map, ParamSpecs};
 
 pub type TaskSpecs = HashMap<String, TaskSpec>;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TaskSpec {
-    #[serde(skip_deserializing)]
     pub name: String,
-
-    #[serde(default)]
     pub help: Option<String>,
-
-    #[serde(default)]
     pub after: Vec<String>,
-
-    #[serde(default)]
     pub before: Vec<String>,
-
-    #[serde(default)]
     pub input: Vec<String>,
-
-    #[serde(default)]
     pub output: Vec<String>,
-
-    #[serde(default)]
     pub envs: HashMap<String, String>,
-
-    #[serde(default, deserialize_with = "deserialize_param_map")]
     pub params: ParamSpecs,
-
-    #[serde(default, deserialize_with = "deserialize_script")]
     pub action: String,
 }
 
-fn deserialize_script<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
+// Helper struct for deserialization that accepts bash:, python:, or action: fields
+#[derive(Debug, Deserialize)]
+struct TaskSpecHelper {
+    #[serde(default)]
+    help: Option<String>,
+
+    #[serde(default)]
+    after: Vec<String>,
+
+    #[serde(default)]
+    before: Vec<String>,
+
+    #[serde(default)]
+    input: Vec<String>,
+
+    #[serde(default)]
+    output: Vec<String>,
+
+    #[serde(default)]
+    envs: HashMap<String, String>,
+
+    #[serde(default, deserialize_with = "deserialize_param_map")]
+    params: ParamSpecs,
+
+    // Support for new bash: field
+    #[serde(default)]
+    bash: Option<String>,
+
+    // Support for new python: field
+    #[serde(default)]
+    python: Option<String>,
+
+    // Legacy support for action: field (deprecated)
+    #[serde(default)]
+    action: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for TaskSpec {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let helper = TaskSpecHelper::deserialize(deserializer)?;
+
+        // Determine which script field was provided and add appropriate shebang
+        let action = if let Some(bash_script) = helper.bash {
+            let bash_script = deserialize_script_string(&bash_script);
+            // Add bash shebang if not present
+            if bash_script.trim_start().starts_with("#!") {
+                bash_script
+            } else {
+                format!("#!/bin/bash\n{}", bash_script)
+            }
+        } else if let Some(python_script) = helper.python {
+            let python_script = deserialize_script_string(&python_script);
+            // Add python shebang if not present
+            if python_script.trim_start().starts_with("#!") {
+                python_script
+            } else {
+                format!("#!/usr/bin/env python3\n{}", python_script)
+            }
+        } else if let Some(action_script) = helper.action {
+            deserialize_script_string(&action_script)
+        } else {
+            String::new()
+        };
+
+        Ok(TaskSpec {
+            name: String::new(), // Will be set by deserialize_task_map
+            help: helper.help,
+            after: helper.after,
+            before: helper.before,
+            input: helper.input,
+            output: helper.output,
+            envs: helper.envs,
+            params: helper.params,
+            action,
+        })
+    }
+}
+
+fn deserialize_script_string(s: &str) -> String {
     // For block scalars, preserve the exact content but trim any common indentation
     let lines: Vec<&str> = s.lines().collect();
 
@@ -69,8 +129,9 @@ where
 
     // Join lines and trim any leading/trailing empty lines
     let result = dedented.join("\n");
-    Ok(result.trim_start().trim_end().to_string())
+    result.trim_start().trim_end().to_string()
 }
+
 
 impl TaskSpec {
     #[must_use]

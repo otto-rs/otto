@@ -4,7 +4,7 @@ otto:
   tasks:
     example1:
       name: rename_task
-      action: |
+      bash: |
         #!/bin/bash
         echo "action1"
       help: example1 task
@@ -19,7 +19,7 @@ otto:
     example3:
       foreach: something
       yield:
-        action: |
+        bash: |
           #!/bin/bash
           echo "some-code"
       help: example3 task

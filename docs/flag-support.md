@@ -48,8 +48,7 @@ tasks:
       --dry-run:
         default: false
         help: Show what would be done without executing
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Verbose: ${verbose}"
       echo "Force: ${force}"
       echo "Dry run: ${dry_run}"
@@ -85,8 +84,7 @@ tasks:
       --port:
         default: 8080
         help: Server port number
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Environment: ${env}"
       echo "Config: ${config:-'not provided'}"
       echo "Timeout: ${timeout}"
@@ -134,8 +132,7 @@ tasks:
         default: 5000
         help: Test timeout in milliseconds
 
-    action: |
-      #!/bin/bash
+    bash: |
       echo "=== Test Configuration ==="
       echo "Verbose: ${verbose}"
       echo "Coverage: ${coverage}"
@@ -183,8 +180,7 @@ tasks:
         choices: [gzip, bzip2, xz, none]
         default: gzip
         help: Compression method
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Creating ${format} package with ${compression} compression"
 ```
 
@@ -212,8 +208,7 @@ tasks:
         choices: [debug, info, warn, error]
         default: info
         help: Set logging verbosity
-    action: |
-      #!/bin/bash
+    bash: |
       echo "Starting server on ${host}:${port}"
       echo "Log level: ${log_level}"
       if [ "${daemon}" = "true" ]; then

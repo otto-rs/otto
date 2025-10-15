@@ -26,7 +26,7 @@ otto:
           - help
           default: hello
           help: default="hello"; override greeting
-      action: |
+      bash: |
         #!/bin/bash
         echo "${greeting:-hello}"
       help: hello task help
@@ -37,7 +37,7 @@ otto:
         -n|--name:
           default: world
           help: default="world"; override name
-      action: |
+      bash: |
         #!/bin/bash
         echo "$name"
       help: world task help
