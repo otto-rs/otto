@@ -1,10 +1,10 @@
+use eyre::{Result, eyre};
 use std::collections::HashMap;
+use std::env;
 use std::path::Path;
 use std::process::Command;
-use std::env;
-use eyre::{eyre, Result};
 
-use super::task::{Task, DAG};
+use super::task::{DAG, Task};
 use crate::cli::Parser;
 
 /// Graph visualization options
@@ -76,18 +76,19 @@ impl DagVisualizer {
     /// Execute the graph command with the given task parameters
     pub async fn execute_command(task: &crate::cli::parser::Task) -> Result<()> {
         // Parse graph command arguments
-        let format = task.values.get("format")
+        let format = task
+            .values
+            .get("format")
             .and_then(|v| match v {
                 crate::cfg::config::Value::Item(s) => Some(s.as_str()),
                 _ => None,
             })
             .unwrap_or("ascii");
 
-        let output_path = task.values.get("output")
-            .and_then(|v| match v {
-                crate::cfg::config::Value::Item(s) => Some(std::path::PathBuf::from(s)),
-                _ => None,
-            });
+        let output_path = task.values.get("output").and_then(|v| match v {
+            crate::cfg::config::Value::Item(s) => Some(std::path::PathBuf::from(s)),
+            _ => None,
+        });
 
         let graph_format = match format {
             "ascii" => GraphFormat::Ascii,
@@ -118,7 +119,7 @@ impl DagVisualizer {
         let visualizer = DagVisualizer::new(options);
         let result = visualizer.visualize(&dag)?;
 
-        println!("{}", result);
+        println!("{result}");
 
         Ok(())
     }
@@ -126,8 +127,9 @@ impl DagVisualizer {
     /// Create a DAG from a collection of tasks
     pub fn from_tasks(tasks: Vec<crate::cli::parser::Task>) -> Result<DAG<Task>> {
         // Convert parser tasks to executor tasks
-        let executor_tasks: Vec<Task> = tasks.into_iter()
-            .filter(|task| task.name != "graph")  // Exclude graph task itself
+        let executor_tasks: Vec<Task> = tasks
+            .into_iter()
+            .filter(|task| task.name != "graph") // Exclude graph task itself
             .map(|parser_task| {
                 Task::new(
                     parser_task.name,
@@ -138,7 +140,8 @@ impl DagVisualizer {
                     parser_task.values,
                     parser_task.action,
                 )
-            }).collect();
+            })
+            .collect();
 
         Self::create_dag_from_tasks(executor_tasks)
     }
@@ -172,9 +175,8 @@ impl DagVisualizer {
 
         // Now add all the edges
         for (dep_index, current_index, task_name) in edges_to_add {
-            dag.add_edge(dep_index, current_index, ()).map_err(|e| {
-                eyre!("Failed to add edge to {}: {:?}", task_name, e)
-            })?;
+            dag.add_edge(dep_index, current_index, ())
+                .map_err(|e| eyre!("Failed to add edge to {}: {:?}", task_name, e))?;
         }
 
         Ok(dag)
@@ -185,9 +187,7 @@ impl DagVisualizer {
         match self.options.format {
             GraphFormat::Ascii => self.generate_ascii(dag),
             GraphFormat::Dot => self.generate_dot(dag),
-            GraphFormat::Svg | GraphFormat::Png | GraphFormat::Pdf | GraphFormat::Auto => {
-                self.generate_image(dag)
-            }
+            GraphFormat::Svg | GraphFormat::Png | GraphFormat::Pdf | GraphFormat::Auto => self.generate_image(dag),
         }
     }
 
@@ -219,7 +219,7 @@ impl DagVisualizer {
 
         // Run graphviz to generate image
         let output = Command::new("dot")
-            .arg(&format!("-T{}", format))
+            .arg(format!("-T{format}"))
             .arg(&dot_file)
             .arg("-o")
             .arg(&output_path)
@@ -276,7 +276,7 @@ impl DagVisualizer {
         // Add task nodes
         for (idx, node) in dag.raw_nodes().iter().enumerate() {
             let task = &node.weight;
-            let node_id = format!("task_{}", idx);
+            let node_id = format!("task_{idx}");
             task_to_id.insert(task.name.clone(), node_id.clone());
 
             let label = self.create_node_label(task);
@@ -290,8 +290,7 @@ impl DagVisualizer {
             };
 
             dot.push_str(&format!(
-                "  {} [label=\"{}\", fillcolor=\"{}\"];\n",
-                node_id, escaped_label, color
+                "  {node_id} [label=\"{escaped_label}\", fillcolor=\"{color}\"];\n"
             ));
         }
 
@@ -304,8 +303,7 @@ impl DagVisualizer {
                 for dep_name in &task.task_deps {
                     if let Some(source_id) = task_to_id.get(dep_name) {
                         dot.push_str(&format!(
-                            "  {} -> {} [label=\"depends\", color=\"black\"];\n",
-                            source_id, target_id
+                            "  {source_id} -> {target_id} [label=\"depends\", color=\"black\"];\n"
                         ));
                     }
                 }
@@ -331,22 +329,19 @@ impl DagVisualizer {
         output.push_str("└─────────────────────────────────────┘\n\n");
 
         // Find leaf tasks (tasks that nothing depends on - the top-level tasks you'd run)
-        let all_task_names: std::collections::HashSet<String> = dag.raw_nodes()
-            .iter()
-            .map(|node| node.weight.name.clone())
-            .collect();
+        let all_task_names: std::collections::HashSet<String> =
+            dag.raw_nodes().iter().map(|node| node.weight.name.clone()).collect();
 
-        let leaf_tasks: Vec<_> = dag.raw_nodes()
+        let leaf_tasks: Vec<_> = dag
+            .raw_nodes()
             .iter()
             .filter(|node| {
                 // A task is a leaf if no other task depends on it
                 !all_task_names.iter().any(|other_task_name| {
-                    dag.raw_nodes()
-                        .iter()
-                        .any(|other_node|
-                            other_node.weight.name == *other_task_name &&
-                            other_node.weight.task_deps.contains(&node.weight.name)
-                        )
+                    dag.raw_nodes().iter().any(|other_node| {
+                        other_node.weight.name == *other_task_name
+                            && other_node.weight.task_deps.contains(&node.weight.name)
+                    })
                 })
             })
             .collect();
@@ -358,13 +353,13 @@ impl DagVisualizer {
 
         for (i, leaf) in leaf_tasks.iter().enumerate() {
             let is_last_leaf = i == leaf_tasks.len() - 1;
-            self.render_ascii_subtree(
+            Self::render_ascii_subtree(
                 &mut output,
                 &leaf.weight,
                 dag,
                 0,
                 &mut std::collections::HashSet::new(),
-                is_last_leaf
+                is_last_leaf,
             )?;
         }
 
@@ -384,7 +379,7 @@ impl DagVisualizer {
             NodeStyle::Simple => task.name.clone(),
             NodeStyle::Compact => {
                 format!("{}\n[{}]", task.name, &task.hash[..6])
-            },
+            }
             NodeStyle::Detailed => {
                 let mut label = task.name.clone();
 
@@ -413,8 +408,8 @@ impl DagVisualizer {
             .replace('\n', "\\n")
             .replace('\r', "\\r")
             .replace('\t', "\\t")
-            .replace('$', "\\$")  // Escape dollar signs to prevent variable expansion
-            .replace('{', "\\{")  // Escape braces
+            .replace('$', "\\$") // Escape dollar signs to prevent variable expansion
+            .replace('{', "\\{") // Escape braces
             .replace('}', "\\}")
     }
 
@@ -424,51 +419,47 @@ impl DagVisualizer {
         dot: &mut String,
         dag: &DAG<Task>,
         task_to_id: &HashMap<String, String>,
-        file_nodes: &mut std::collections::HashSet<String>
+        file_nodes: &mut std::collections::HashSet<String>,
     ) -> Result<()> {
         dot.push_str("  \n  // File dependencies\n");
 
         for node in dag.raw_nodes() {
             let task = &node.weight;
             if let Some(task_id) = task_to_id.get(&task.name) {
-
                 // Add input file nodes
                 for file_dep in &task.file_deps {
-                    let file_id = format!("file_{}",
-                        file_dep.replace(['/', '.', '*', '-', '$', '{', '}'], "_"));
+                    let file_id = format!("file_{}", file_dep.replace(['/', '.', '*', '-', '$', '{', '}'], "_"));
 
                     if !file_nodes.contains(&file_id) {
                         let escaped_label = self.escape_dot_string(file_dep);
                         dot.push_str(&format!(
-                            "  {} [label=\"{}\", shape=\"ellipse\", fillcolor=\"lightgreen\"];\n",
-                            file_id, escaped_label
+                            "  {file_id} [label=\"{escaped_label}\", shape=\"ellipse\", fillcolor=\"lightgreen\"];\n"
                         ));
                         file_nodes.insert(file_id.clone());
                     }
 
                     dot.push_str(&format!(
-                        "  {} -> {} [label=\"input\", color=\"green\", style=\"dashed\"];\n",
-                        file_id, task_id
+                        "  {file_id} -> {task_id} [label=\"input\", color=\"green\", style=\"dashed\"];\n"
                     ));
                 }
 
                 // Add output file nodes
                 for output_dep in &task.output_deps {
-                    let file_id = format!("output_{}",
-                        output_dep.replace(['/', '.', '*', '-', '$', '{', '}'], "_"));
+                    let file_id = format!(
+                        "output_{}",
+                        output_dep.replace(['/', '.', '*', '-', '$', '{', '}'], "_")
+                    );
 
                     if !file_nodes.contains(&file_id) {
                         let escaped_label = self.escape_dot_string(output_dep);
                         dot.push_str(&format!(
-                            "  {} [label=\"{}\", shape=\"ellipse\", fillcolor=\"lightyellow\"];\n",
-                            file_id, escaped_label
+                            "  {file_id} [label=\"{escaped_label}\", shape=\"ellipse\", fillcolor=\"lightyellow\"];\n"
                         ));
                         file_nodes.insert(file_id.clone());
                     }
 
                     dot.push_str(&format!(
-                        "  {} -> {} [label=\"output\", color=\"orange\", style=\"dashed\"];\n",
-                        task_id, file_id
+                        "  {task_id} -> {file_id} [label=\"output\", color=\"orange\", style=\"dashed\"];\n"
                     ));
                 }
             }
@@ -479,13 +470,12 @@ impl DagVisualizer {
 
     /// Render ASCII subtree recursively
     fn render_ascii_subtree(
-        &self,
         output: &mut String,
         task: &Task,
         dag: &DAG<Task>,
         depth: usize,
         visited: &mut std::collections::HashSet<String>,
-        is_last: bool
+        is_last: bool,
     ) -> Result<()> {
         let indent = "  ".repeat(depth);
         let connector = if is_last { "└─" } else { "├─" };
@@ -508,24 +498,15 @@ impl DagVisualizer {
         output.push('\n');
 
         // Find tasks that this task depends on
-        let dependencies: Vec<_> = task.task_deps.iter()
-            .filter_map(|dep_name| {
-                dag.raw_nodes()
-                    .iter()
-                    .find(|node| node.weight.name == *dep_name)
-            })
+        let dependencies: Vec<_> = task
+            .task_deps
+            .iter()
+            .filter_map(|dep_name| dag.raw_nodes().iter().find(|node| node.weight.name == *dep_name))
             .collect();
 
         for (i, dependency) in dependencies.iter().enumerate() {
             let is_last_dependency = i == dependencies.len() - 1;
-            self.render_ascii_subtree(
-                output,
-                &dependency.weight,
-                dag,
-                depth + 1,
-                visited,
-                is_last_dependency
-            )?;
+            Self::render_ascii_subtree(output, &dependency.weight, dag, depth + 1, visited, is_last_dependency)?;
         }
 
         visited.remove(&task.name);
@@ -558,14 +539,14 @@ impl DagVisualizer {
                 } else {
                     ("svg", "svg") // default
                 }
-            },
+            }
             _ => return Err(eyre!("Invalid format for image generation")),
         };
 
         let output_path = if let Some(ref path) = self.options.output_path {
             path.clone()
         } else {
-            std::env::current_dir()?.join(format!("otto_graph.{}", extension))
+            std::env::current_dir()?.join(format!("otto_graph.{extension}"))
         };
 
         Ok((format.to_string(), output_path))
@@ -599,7 +580,7 @@ mod tests {
             vec![],
             HashMap::new(),
             HashMap::new(),
-            format!("echo 'Running {}'", name),
+            format!("echo 'Running {name}'"),
         )
     }
 

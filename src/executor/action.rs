@@ -1,16 +1,24 @@
+use eyre::Result;
+use hex;
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::Arc;
-use eyre::Result;
-use sha2::{Sha256, Digest};
-use hex;
 
-use super::workspace::Workspace;
 use super::task::Task;
+use super::workspace::Workspace;
 
 /// Processed action with script type encoded in the enum variant
 pub enum ProcessedAction {
-    Bash { path: PathBuf, script: String, hash: String },
-    Python3 { path: PathBuf, script: String, hash: String },
+    Bash {
+        path: PathBuf,
+        script: String,
+        hash: String,
+    },
+    Python3 {
+        path: PathBuf,
+        script: String,
+        hash: String,
+    },
 }
 
 /// Main coordinator for action processing
@@ -38,7 +46,9 @@ impl ActionProcessor {
             let path = self.write_script(&processor, &script)?;
             let hash = self.calculate_hash(&script)?;
             Ok(ProcessedAction::Bash { path, script, hash })
-        } else if trimmed_action.starts_with("#!/usr/bin/env python3") || trimmed_action.starts_with("#!/usr/bin/python3") {
+        } else if trimmed_action.starts_with("#!/usr/bin/env python3")
+            || trimmed_action.starts_with("#!/usr/bin/python3")
+        {
             let processor = PythonProcessor::new(self.workspace.clone(), &self.task_name);
             processor.create_builtins()?;
             let script = self.build_script(&processor, user_action, task)?;
@@ -59,7 +69,7 @@ impl ActionProcessor {
     fn build_script<T: ScriptProcessor>(&self, processor: &T, user_action: &str, task: &Task) -> Result<String> {
         // Extract shebang from user action if present
         let lines: Vec<&str> = user_action.lines().collect();
-        let (shebang, user_content) = if lines.first().map_or(false, |line| line.starts_with("#!")) {
+        let (shebang, user_content) = if lines.first().is_some_and(|line| line.starts_with("#!")) {
             (lines[0], lines[1..].join("\n"))
         } else {
             ("", user_action.to_string())
@@ -70,9 +80,9 @@ impl ActionProcessor {
 
         // Build script with shebang first, then prologue, user content, epilogue
         let script = if shebang.is_empty() {
-            format!("{}\n{}\n{}", prologue, user_content, epilogue)
+            format!("{prologue}\n{user_content}\n{epilogue}")
         } else {
-            format!("{}\n{}\n{}\n{}", shebang, prologue, user_content, epilogue)
+            format!("{shebang}\n{prologue}\n{user_content}\n{epilogue}")
         };
 
         Ok(script)
@@ -83,7 +93,10 @@ impl ActionProcessor {
         let hash = self.calculate_hash(script)?;
 
         // Write to cache directory
-        let cache_file = self.workspace.cache_dir().join(format!("{}.{}", hash, processor.get_file_extension()));
+        let cache_file = self
+            .workspace
+            .cache_dir()
+            .join(format!("{}.{}", hash, processor.get_file_extension()));
 
         // Ensure cache directory exists
         std::fs::create_dir_all(self.workspace.cache_dir())?;
@@ -103,7 +116,9 @@ impl ActionProcessor {
         }
 
         // Create symlink in task directory
-        let script_path = self.workspace.task_script_file(&self.task_name, processor.get_file_extension());
+        let script_path = self
+            .workspace
+            .task_script_file(&self.task_name, processor.get_file_extension());
 
         // Ensure task directory exists
         if let Some(parent) = script_path.parent() {
@@ -196,7 +211,7 @@ impl BashProcessor {
         // Export only actual environment variables from YAML (not CLI parameters)
         for (key, value) in &yaml_envs {
             // Allow shell expansion by properly quoting the value and preserving case
-            env_exports.push(format!("export {}=\"{}\"", key, value));
+            env_exports.push(format!("export {key}=\"{value}\""));
         }
 
         env_exports.push(String::new()); // Add blank line after section
@@ -215,7 +230,7 @@ impl BashProcessor {
 
         // Use builtins functions for deserialization
         for dep in dependencies {
-            input_section.push(format!("otto_deserialize_input \"{}\"", dep));
+            input_section.push(format!("otto_deserialize_input \"{dep}\""));
         }
 
         input_section.push(String::new()); // Add blank line after section
@@ -239,11 +254,11 @@ impl BashProcessor {
                 crate::cfg::param::Value::List(l) => l.join(" "),
                 crate::cfg::param::Value::Dict(d) => {
                     // Convert dict to space-separated key=value pairs
-                    d.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join(" ")
+                    d.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" ")
                 }
                 crate::cfg::param::Value::Empty => String::new(),
             };
-            param_section.push(format!("{}=\"{}\"", param_name, value_str));
+            param_section.push(format!("{param_name}=\"{value_str}\""));
         }
 
         param_section.push(String::new()); // Add blank line after section
@@ -257,7 +272,8 @@ impl ScriptProcessor for BashProcessor {
         let input_section = self.generate_bash_input_section(dependencies);
         let param_section = self.generate_bash_param_section(task);
 
-        let prologue = format!(r#"# Otto-generated bash prologue
+        let prologue = format!(
+            r#"# Otto-generated bash prologue
 set -euo pipefail
 
 declare -A OTTO_INPUT
@@ -271,21 +287,21 @@ source "$(dirname "$0")/builtins.sh"
 
 {env_section}
 {input_section}
-{param_section}"#,
-            env_section = env_section,
-            input_section = input_section,
-            param_section = param_section
+{param_section}"#
         );
         Ok(prologue)
     }
 
     fn generate_epilogue(&self) -> Result<String> {
-        let epilogue = format!(r#"
+        let epilogue = format!(
+            r#"
 # Output Serialization
 ################################################################################
 # Serialize OTTO_OUTPUT to output.{}.json using builtins
 otto_serialize_output "{}"
-"#, self.task_name, self.task_name);
+"#,
+            self.task_name, self.task_name
+        );
         Ok(epilogue)
     }
 
@@ -460,7 +476,7 @@ impl PythonProcessor {
 
         // Use builtins functions for deserialization
         for dep in dependencies {
-            input_section.push(format!("otto_deserialize_input(\"{}\")", dep));
+            input_section.push(format!("otto_deserialize_input(\"{dep}\")"));
         }
 
         input_section.push(String::new()); // Add blank line after section
@@ -484,11 +500,11 @@ impl PythonProcessor {
                 crate::cfg::param::Value::List(l) => l.join(" "),
                 crate::cfg::param::Value::Dict(d) => {
                     // Convert dict to space-separated key=value pairs
-                    d.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join(" ")
+                    d.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" ")
                 }
                 crate::cfg::param::Value::Empty => String::new(),
             };
-            param_section.push(format!("{} = '{}'", param_name, value_str));
+            param_section.push(format!("{param_name} = '{value_str}'"));
         }
 
         param_section.push(String::new()); // Add blank line after section
@@ -502,7 +518,8 @@ impl ScriptProcessor for PythonProcessor {
         let input_section = self.generate_python_input_section(dependencies);
         let param_section = self.generate_python_param_section(task);
 
-        let prologue = format!(r#"# Otto-generated python prologue
+        let prologue = format!(
+            r#"# Otto-generated python prologue
 import json
 import os
 import glob
@@ -529,21 +546,21 @@ OTTO_OUTPUT = {{}}
 
 {env_section}
 {input_section}
-{param_section}"#,
-            env_section = env_section,
-            input_section = input_section,
-            param_section = param_section
+{param_section}"#
         );
         Ok(prologue)
     }
 
     fn generate_epilogue(&self) -> Result<String> {
-        let epilogue = format!(r#"
+        let epilogue = format!(
+            r#"
 # Output Serialization
 ################################################################################
 # Serialize OTTO_OUTPUT to output.{}.json using builtins
 otto_serialize_output("{}")
-"#, self.task_name, self.task_name);
+"#,
+            self.task_name, self.task_name
+        );
         Ok(epilogue)
     }
 
@@ -647,11 +664,11 @@ def otto_set_output(key, value):
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cfg::param::Value;
+    use hex;
+    use sha2::Digest;
     use std::collections::HashMap;
     use tempfile::TempDir;
-    use crate::cfg::param::Value;
-    use sha2::Digest;
-    use hex;
 
     #[tokio::test]
     async fn test_bash_action_processing() -> Result<()> {
@@ -695,14 +712,17 @@ mod tests {
 
                 // Verify hash is calculated correctly from the generated script
                 assert_eq!(hash.len(), 8, "Hash should be 8 characters");
-                assert!(hash.chars().all(|c| c.is_ascii_hexdigit()), "Hash should be hexadecimal");
+                assert!(
+                    hash.chars().all(|c| c.is_ascii_hexdigit()),
+                    "Hash should be hexadecimal"
+                );
 
                 // Verify hash matches the script content
                 let mut hasher = sha2::Sha256::new();
                 hasher.update(script.as_bytes());
                 let expected_hash = hex::encode(hasher.finalize())[..8].to_string();
                 assert_eq!(hash, expected_hash, "Hash should match generated script content");
-            },
+            }
             _ => panic!("Expected Bash variant"),
         }
 
@@ -751,14 +771,17 @@ mod tests {
 
                 // Verify hash is calculated correctly from the generated script
                 assert_eq!(hash.len(), 8, "Hash should be 8 characters");
-                assert!(hash.chars().all(|c| c.is_ascii_hexdigit()), "Hash should be hexadecimal");
+                assert!(
+                    hash.chars().all(|c| c.is_ascii_hexdigit()),
+                    "Hash should be hexadecimal"
+                );
 
                 // Verify hash matches the script content
                 let mut hasher = sha2::Sha256::new();
                 hasher.update(script.as_bytes());
                 let expected_hash = hex::encode(hasher.finalize())[..8].to_string();
                 assert_eq!(hash, expected_hash, "Hash should match generated script content");
-            },
+            }
             _ => panic!("Expected Python3 variant"),
         }
 
@@ -806,14 +829,17 @@ mod tests {
 
                 // Verify hash is calculated correctly from the generated script
                 assert_eq!(hash.len(), 8, "Hash should be 8 characters");
-                assert!(hash.chars().all(|c| c.is_ascii_hexdigit()), "Hash should be hexadecimal");
+                assert!(
+                    hash.chars().all(|c| c.is_ascii_hexdigit()),
+                    "Hash should be hexadecimal"
+                );
 
                 // Verify hash matches the script content
                 let mut hasher = sha2::Sha256::new();
                 hasher.update(script.as_bytes());
                 let expected_hash = hex::encode(hasher.finalize())[..8].to_string();
                 assert_eq!(hash, expected_hash, "Hash should match generated script content");
-            },
+            }
             _ => panic!("Expected Bash variant (default fallback)"),
         }
 

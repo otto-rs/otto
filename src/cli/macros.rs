@@ -58,13 +58,7 @@ macro_rules! str_vec_or_str {
 }
 
 macro_rules! str_opt_str {
-    ($value:ident) => {{
-        if let Some(s) = $value.as_str() {
-            Some(s)
-        } else {
-            None
-        }
-    }};
+    ($value:ident) => {{ if let Some(s) = $value.as_str() { Some(s) } else { None } }};
 }
 
 macro_rules! str_str {
@@ -88,13 +82,7 @@ macro_rules! str_bool {
 }
 
 macro_rules! str_opt_bool {
-    ($value:ident) => {{
-        if let Some(b) = $value.as_bool() {
-            Some(b)
-        } else {
-            None
-        }
-    }};
+    ($value:ident) => {{ if let Some(b) = $value.as_bool() { Some(b) } else { None } }};
 }
 
 macro_rules! str_i64 {
@@ -108,13 +96,7 @@ macro_rules! str_i64 {
 }
 
 macro_rules! str_opt_i64 {
-    ($value:ident) => {{
-        if let Some(i) = $value.as_i64() {
-            Some(i)
-        } else {
-            None
-        }
-    }};
+    ($value:ident) => {{ if let Some(i) = $value.as_i64() { Some(i) } else { None } }};
 }
 
 macro_rules! str_u64 {
@@ -128,13 +110,7 @@ macro_rules! str_u64 {
 }
 
 macro_rules! str_opt_u64 {
-    ($value:ident) => {{
-        if let Some(u) = $value.as_u64() {
-            Some(u)
-        } else {
-            None
-        }
-    }};
+    ($value:ident) => {{ if let Some(u) = $value.as_u64() { Some(u) } else { None } }};
 }
 
 macro_rules! str_f64 {
@@ -148,13 +124,7 @@ macro_rules! str_f64 {
 }
 
 macro_rules! str_opt_f64 {
-    ($value:ident) => {{
-        if let Some(f) = $value.as_f64() {
-            Some(f)
-        } else {
-            None
-        }
-    }};
+    ($value:ident) => {{ if let Some(f) = $value.as_f64() { Some(f) } else { None } }};
 }
 
 macro_rules! str_vec {

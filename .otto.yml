@@ -1,0 +1,243 @@
+otto:
+  api: 1
+  tasks:
+    - dev
+  envs:
+    VERSION: "$(git describe --tags --always --dirty 2>/dev/null || echo 'dev')"
+    GIT_SHA: "$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
+
+tasks:
+  # Development Setup
+  dev:
+    help: "Setup development environment (check Rust installation)"
+    bash: |
+      echo "🦀 Otto Development Environment"
+      echo ""
+      echo "Rust version:"
+      rustc --version
+      echo ""
+      echo "Cargo version:"
+      cargo --version
+      echo ""
+      echo "✅ Development environment ready!"
+      echo ""
+      echo "Quick commands:"
+      echo "  cargo build          - Build debug"
+      echo "  cargo test           - Run tests"
+      echo "  cargo clippy         - Lint"
+      echo "  cargo fmt            - Format"
+      echo ""
+      echo "Otto tasks:"
+      echo "  otto ci              - Full CI pipeline"
+      echo "  otto quick           - Fast validation"
+      echo "  otto test-suite      - All tests with details"
+
+  # Testing (only meaningful aggregations)
+  test-suite:
+    help: "Run all tests with verbose output and timing"
+    bash: |
+      echo "=== Running Unit Tests ==="
+      cargo test --lib -- --nocapture
+      echo ""
+      echo "=== Running Integration Tests ==="
+      cargo test --test '*' -- --nocapture
+      echo ""
+      echo "✅ All tests passed!"
+
+  test-parallel:
+    help: "Run tests in parallel with custom job count"
+    bash: |
+      echo "Running tests with parallel execution..."
+      cargo test -- --test-threads=4
+
+  # Examples - These actually add value
+  run-examples:
+    help: "Run all example tasks (ex1-ex13)"
+    bash: |
+      echo "Running example tasks..."
+      for dir in examples/ex{1..13}; do
+        if [ -d "$dir" ]; then
+          echo ""
+          echo "=== Running $dir ==="
+          cd "$dir"
+          if [ -f "otto.yml" ] || [ -f "otto.yaml" ] || [ -f ".otto.yml" ]; then
+            cargo run --quiet --manifest-path=../../Cargo.toml -- $(basename $(pwd -P)) 2>&1 | head -20
+          fi
+          cd ../..
+        fi
+      done
+
+  validate-examples:
+    help: "Validate all example ottofiles parse correctly"
+    bash: |
+      echo "Validating example ottofiles..."
+      failed=0
+      for dir in examples/*/; do
+        if [ -f "$dir/otto.yml" ] || [ -f "$dir/otto.yaml" ] || [ -f "$dir/.otto.yml" ]; then
+          echo -n "Checking $(basename $dir)... "
+          if cargo run --quiet --manifest-path=./Cargo.toml -- -o "$dir" --help > /dev/null 2>&1; then
+            echo "✅"
+          else
+            echo "❌"
+            failed=$((failed + 1))
+          fi
+        fi
+      done
+      if [ $failed -eq 0 ]; then
+        echo ""
+        echo "✅ All examples valid!"
+      else
+        echo ""
+        echo "❌ $failed example(s) failed validation"
+        exit 1
+      fi
+
+  # CI - This actually combines multiple checks
+  ci:
+    help: "Full CI pipeline (build + test + clippy + fmt-check)"
+    bash: |
+      echo "=== Building ==="
+      cargo build || exit 1
+      echo ""
+      echo "=== Running Tests ==="
+      cargo test || exit 1
+      echo ""
+      echo "=== Running Clippy ==="
+      cargo clippy -- -D warnings || exit 1
+      echo ""
+      echo "=== Checking Format ==="
+      cargo fmt -- --check || exit 1
+      echo ""
+      echo "✅ All CI checks passed!"
+
+  quick:
+    help: "Quick validation (check + unit tests + fmt-check)"
+    bash: |
+      echo "=== Quick Check ==="
+      cargo check || exit 1
+      echo ""
+      echo "=== Unit Tests ==="
+      cargo test --lib || exit 1
+      echo ""
+      echo "=== Format Check ==="
+      cargo fmt -- --check || exit 1
+      echo ""
+      echo "✅ Quick checks passed!"
+
+  pre-commit:
+    help: "Pre-commit checks (format, clippy, quick test)"
+    bash: |
+      echo "=== Formatting Code ==="
+      cargo fmt
+      echo ""
+      echo "=== Running Clippy ==="
+      cargo clippy -- -D warnings || exit 1
+      echo ""
+      echo "=== Running Tests ==="
+      cargo test || exit 1
+      echo ""
+      echo "✅ Ready to commit!"
+
+  # Release - Combines multiple steps
+  release-check:
+    help: "Verify everything is ready for release"
+    bash: |
+      echo "=== Running Full CI ==="
+      cargo build || exit 1
+      cargo test || exit 1
+      cargo clippy -- -D warnings || exit 1
+      cargo fmt -- --check || exit 1
+      echo ""
+      echo "=== Building Documentation ==="
+      cargo doc --no-deps || exit 1
+      echo ""
+      echo "=== Release Checklist ==="
+      echo "✅ CI checks passed"
+      echo "✅ Documentation built"
+      echo ""
+      echo "Current version: $(grep '^version =' Cargo.toml | cut -d'"' -f2)"
+      echo "Git tag: $(git describe --tags --always)"
+      echo ""
+      echo "To release:"
+      echo "  1. Update version in Cargo.toml"
+      echo "  2. Commit changes"
+      echo "  3. Tag: git tag v<version>"
+      echo "  4. Push: git push && git push --tags"
+      echo "  5. cargo publish"
+
+  # Testing the binary itself
+  test-binary:
+    help: "Test the built binary works correctly"
+    bash: |
+      echo "Building release binary..."
+      cargo build --release --quiet
+      echo ""
+      echo "=== Testing Binary ==="
+      echo ""
+      echo "Version:"
+      ./target/release/otto --version
+      echo ""
+      echo "Help (first 20 lines):"
+      ./target/release/otto --help | head -20
+      echo ""
+      echo "Graph command:"
+      ./target/release/otto graph | head -30
+      echo ""
+      echo "✅ Binary works!"
+
+  # Complete validation
+  all:
+    help: "Run everything (full validation + examples)"
+    bash: |
+      echo "=== Full CI Pipeline ==="
+      cargo build || exit 1
+      cargo test || exit 1
+      cargo clippy -- -D warnings || exit 1
+      cargo fmt -- --check || exit 1
+      echo ""
+      echo "=== Building Documentation ==="
+      cargo doc --no-deps || exit 1
+      echo ""
+      echo "=== Integration Tests ==="
+      cargo test --test '*' || exit 1
+      echo ""
+      echo "=== Validating Examples ==="
+      otto validate-examples || exit 1
+      echo ""
+      echo "=== Summary ==="
+      echo "✅ Build successful"
+      echo "✅ All tests passed"
+      echo "✅ Clippy checks passed"
+      echo "✅ Format checks passed"
+      echo "✅ Documentation built"
+      echo "✅ Examples validated"
+      echo ""
+      echo "🎉 Everything looks great!"
+
+  # Benchmarking (actually useful since it includes setup/warmup)
+  bench-suite:
+    help: "Run benchmarks with proper setup"
+    bash: |
+      echo "Preparing benchmark environment..."
+      echo "Building optimized binary..."
+      cargo build --release --quiet
+      echo ""
+      echo "Running benchmarks..."
+      cargo bench
+      echo ""
+      echo "✅ Benchmarks complete!"
+      echo ""
+      echo "Results saved in target/criterion/"
+
+  # Cleanup that's actually useful
+  clean-all:
+    help: "Deep clean (cargo clean + remove all otto run artifacts)"
+    bash: |
+      echo "Cleaning cargo artifacts..."
+      cargo clean
+      echo ""
+      echo "Cleaning otto run directories..."
+      rm -rf .otto-run/
+      find examples/ -type d -name ".otto-run" -exec rm -rf {} + 2>/dev/null || true
+      echo ""
+      echo "✅ All cleaned!"

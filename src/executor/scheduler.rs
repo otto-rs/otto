@@ -1,27 +1,27 @@
 use std::{
     collections::HashMap,
+    io::{self, Write},
+    path::Path,
     sync::Arc,
     time::Duration,
-    path::Path,
-    io::{self, Write},
 };
 
-use eyre::{eyre, Result};
+use eyre::{Result, eyre};
+use log::{debug, error, info};
 use tokio::{
+    io::BufReader,
     process::Command,
-    sync::{mpsc, Mutex, Semaphore},
+    sync::{Mutex, Semaphore, mpsc},
     task::JoinHandle,
     time::timeout,
-    io::BufReader,
 };
-use log::{error, info, debug};
 
 use super::task::Task;
 use super::{
-    workspace::{Workspace, ExecutionContext},
-    output::{TaskStreams, OutputType},
     action::{ActionProcessor, ProcessedAction},
-    colors::{set_global_task_order, colorize_task_prefix},
+    colors::{colorize_task_prefix, set_global_task_order},
+    output::{OutputType, TaskStreams},
+    workspace::{ExecutionContext, Workspace},
 };
 
 /// Timeout for output processing after task completion
@@ -42,16 +42,12 @@ pub enum TaskStatus {
     Failed(String),
 }
 
-
-
 /// Task scheduler that manages concurrent execution
 pub struct TaskScheduler {
     /// Task status tracking
     task_statuses: Arc<Mutex<HashMap<String, TaskStatus>>>,
-    /// Semaphore for I/O task limiting
-    io_semaphore: Arc<Semaphore>,
-    /// Semaphore for CPU task limiting
-    cpu_semaphore: Arc<Semaphore>,
+    /// Semaphore for task limiting
+    semaphore: Arc<Semaphore>,
     /// Workspace for path management
     workspace: Arc<Workspace>,
     /// Execution context for metadata
@@ -66,8 +62,7 @@ impl TaskScheduler {
         tasks: Vec<Task>,
         workspace: Arc<Workspace>,
         execution_context: ExecutionContext,
-        io_limit: usize,
-        cpu_limit: usize,
+        max_parallel: usize,
     ) -> Result<Self> {
         let task_statuses = Arc::new(Mutex::new(HashMap::new()));
 
@@ -77,8 +72,7 @@ impl TaskScheduler {
 
         Ok(Self {
             task_statuses,
-            io_semaphore: Arc::new(Semaphore::new(io_limit)),
-            cpu_semaphore: Arc::new(Semaphore::new(cpu_limit)),
+            semaphore: Arc::new(Semaphore::new(max_parallel)),
             workspace,
             execution_context,
             tasks,
@@ -116,7 +110,7 @@ impl TaskScheduler {
         let mut completed_tasks = 0;
         let total_tasks = self.tasks.len();
         let mut active_tasks = std::collections::HashMap::new();
-        let max_concurrent = self.cpu_semaphore.available_permits() + self.io_semaphore.available_permits();
+        let max_concurrent = self.semaphore.available_permits();
 
         // Track completed tasks for dependency checking
         let mut completed_set = std::collections::HashSet::new();
@@ -150,11 +144,16 @@ impl TaskScheduler {
                     }
                     Ok(false) => {
                         // Task can be skipped - outputs are up to date
-                        info!("Skipping task {} - outputs are up to date ({}/{})", task.name, completed_tasks + 1, total_tasks);
+                        info!(
+                            "Skipping task {} - outputs are up to date ({}/{})",
+                            task.name,
+                            completed_tasks + 1,
+                            total_tasks
+                        );
 
                         // Print user-visible skipped message
                         let skipped_msg = format!("{} skipped (up to date)\n", colorize_task_prefix(&task.name));
-                        print!("{}", skipped_msg);
+                        print!("{skipped_msg}");
                         io::stdout().flush().unwrap_or(());
 
                         let mut statuses = self.task_statuses.lock().await;
@@ -164,7 +163,10 @@ impl TaskScheduler {
 
                         // Check if any blocked tasks are now ready due to this "completion"
                         blocked_tasks.retain(|blocked_task| {
-                            let task_deps_completed = blocked_task.task_deps.iter().all(|task_dep| completed_set.contains(task_dep));
+                            let task_deps_completed = blocked_task
+                                .task_deps
+                                .iter()
+                                .all(|task_dep| completed_set.contains(task_dep));
                             if !task_deps_completed {
                                 return true; // Keep the task in blocked list
                             }
@@ -177,7 +179,12 @@ impl TaskScheduler {
                     Err(e) => {
                         error!("Error checking file dependencies for task {}: {}", task.name, e);
                         // On error, default to running the task
-                        info!("Starting task {} (file check failed, defaulting to run) ({}/{})", task.name, completed_tasks + 1, total_tasks);
+                        info!(
+                            "Starting task {} (file check failed, defaulting to run) ({}/{})",
+                            task.name,
+                            completed_tasks + 1,
+                            total_tasks
+                        );
                         let handle = self.execute_task(task.clone(), tx.clone()).await?;
                         let task_name = task.name.clone();
                         active_tasks.insert(task_name.clone(), handle);
@@ -188,11 +195,11 @@ impl TaskScheduler {
             // Wait for any task to complete
             match rx.recv().await {
                 Some(Ok(completed_task)) => {
-                    info!("Task {} completed successfully", completed_task);
+                    info!("Task {completed_task} completed successfully");
 
                     // Print user-visible success message
                     let success_msg = format!("{} finished successfully\n", colorize_task_prefix(&completed_task));
-                    print!("{}", success_msg);
+                    print!("{success_msg}");
                     io::stdout().flush().unwrap_or(());
 
                     let mut statuses = self.task_statuses.lock().await;
@@ -203,7 +210,8 @@ impl TaskScheduler {
 
                     // Check if any blocked tasks are now ready
                     blocked_tasks.retain(|task| {
-                        let task_deps_completed = task.task_deps.iter().all(|task_dep| completed_set.contains(task_dep));
+                        let task_deps_completed =
+                            task.task_deps.iter().all(|task_dep| completed_set.contains(task_dep));
                         if !task_deps_completed {
                             return true; // Keep the task in blocked list
                         }
@@ -223,13 +231,13 @@ impl TaskScheduler {
                     }
                 }
                 Some(Err(e)) => {
-                    error!("Task execution failed: {}", e);
+                    error!("Task execution failed: {e}");
 
                     // Extract task name from error message for user-visible failure message
                     let error_str = e.to_string();
                     if let Some(task_name) = error_str.split_whitespace().nth(1) {
                         let failure_msg = format!("{} failed\n", colorize_task_prefix(task_name));
-                        eprint!("{}", failure_msg);
+                        eprint!("{failure_msg}");
                         io::stderr().flush().unwrap_or(());
                     }
 
@@ -246,12 +254,8 @@ impl TaskScheduler {
     }
 
     /// Execute a single task
-    async fn execute_task(
-        &self,
-        task: Task,
-        tx: mpsc::Sender<Result<String>>,
-    ) -> Result<JoinHandle<Result<()>>> {
-        let semaphore = self.io_semaphore.clone();
+    async fn execute_task(&self, task: Task, tx: mpsc::Sender<Result<String>>) -> Result<JoinHandle<Result<()>>> {
+        let semaphore = self.semaphore.clone();
 
         let task_name = task.name.clone();
         let task_dir = self.workspace.task(&task_name);
@@ -287,7 +291,7 @@ impl TaskScheduler {
                 statuses.insert(task_name.clone(), TaskStatus::Running);
             }
 
-            info!("Starting task {}", task_name);
+            info!("Starting task {task_name}");
 
             // Create task directory only (no subdirectories)
             tokio::fs::create_dir_all(&task_dir).await?;
@@ -331,14 +335,14 @@ impl TaskScheduler {
             // Setup command environment
             let mut cmd = Command::new(interpreter);
             cmd.arg(&script_path)
-               .current_dir(workspace.root())
-               // Inherit current environment by default (no env_clear())
-               .envs(&envs)  // Override with user-specified env vars
-               .env("OTTO_TASK", &task_name)
-               .env("OTTO_TASK_DIR", task_dir.to_string_lossy().to_string())
-               .env("OTTO_WORKSPACE", workspace.root().to_string_lossy().to_string())
-               .env("OTTO_TASKS_DIR", tasks_dir.to_string_lossy().to_string())
-               .env("OTTO_USER", &execution_context.user);
+                .current_dir(workspace.root())
+                // Inherit current environment by default (no env_clear())
+                .envs(&envs) // Override with user-specified env vars
+                .env("OTTO_TASK", &task_name)
+                .env("OTTO_TASK_DIR", task_dir.to_string_lossy().to_string())
+                .env("OTTO_WORKSPACE", workspace.root().to_string_lossy().to_string())
+                .env("OTTO_TASKS_DIR", tasks_dir.to_string_lossy().to_string())
+                .env("OTTO_USER", &execution_context.user);
 
             // Execute without timeout - runs until completion or failure
             let result = async {
@@ -383,13 +387,13 @@ impl TaskScheduler {
                         // Stdout processing completed successfully
                     }
                     Ok(Ok(Err(e))) => {
-                        error!("Stdout processing failed for task {}: {}", task_name, e);
+                        error!("Stdout processing failed for task {task_name}: {e}");
                     }
                     Ok(Err(e)) => {
-                        error!("Stdout processing join failed for task {}: {}", task_name, e);
+                        error!("Stdout processing join failed for task {task_name}: {e}");
                     }
                     Err(_) => {
-                        error!("Stdout processing timed out for task {}", task_name);
+                        error!("Stdout processing timed out for task {task_name}");
                     }
                 }
 
@@ -398,13 +402,13 @@ impl TaskScheduler {
                         // Stderr processing completed successfully
                     }
                     Ok(Ok(Err(e))) => {
-                        error!("Stderr processing failed for task {}: {}", task_name, e);
+                        error!("Stderr processing failed for task {task_name}: {e}");
                     }
                     Ok(Err(e)) => {
-                        error!("Stderr processing join failed for task {}: {}", task_name, e);
+                        error!("Stderr processing join failed for task {task_name}: {e}");
                     }
                     Err(_) => {
-                        error!("Stderr processing timed out for task {}", task_name);
+                        error!("Stderr processing timed out for task {task_name}");
                     }
                 }
 
@@ -413,22 +417,23 @@ impl TaskScheduler {
                 } else {
                     Err(eyre!("Task {} failed with exit code {:?}", task_name, status.code()))
                 }
-            }.await;
+            }
+            .await;
 
             match result {
                 Ok(()) => {
-                    info!("Task {} completed successfully", task_name);
+                    info!("Task {task_name} completed successfully");
                     // Ensure we send the completion message
                     if let Err(e) = tx.send(Ok(task_name.clone())).await {
-                        error!("Failed to send completion notification for task {}: {}", task_name, e);
+                        error!("Failed to send completion notification for task {task_name}: {e}");
                     }
                 }
                 Err(e) => {
-                    error!("Task {} failed: {}", task_name, e);
+                    error!("Task {task_name} failed: {e}");
                     let mut statuses = task_statuses.lock().await;
                     statuses.insert(task_name.clone(), TaskStatus::Failed(e.to_string()));
                     if let Err(send_err) = tx.send(Err(e)).await {
-                        error!("Failed to send error notification for task {}: {}", task_name, send_err);
+                        error!("Failed to send error notification for task {task_name}: {send_err}");
                     }
                 }
             }
@@ -468,7 +473,10 @@ impl TaskScheduler {
         // Check if any output files are missing
         for output_path in output_files {
             if !Path::new(output_path).exists() {
-                debug!("Output file {} does not exist, task {} needs to run", output_path, task.name);
+                debug!(
+                    "Output file {} does not exist, task {} needs to run",
+                    output_path, task.name
+                );
                 return Ok(true);
             }
         }
@@ -478,12 +486,8 @@ impl TaskScheduler {
         let output_timestamps = self.get_file_timestamps(output_files).await?;
 
         // Find the newest input and oldest output
-        let newest_input = input_timestamps.iter()
-            .filter_map(|(_, time)| *time)
-            .max();
-        let oldest_output = output_timestamps.iter()
-            .filter_map(|(_, time)| *time)
-            .min();
+        let newest_input = input_timestamps.iter().filter_map(|(_, time)| *time).max();
+        let oldest_output = output_timestamps.iter().filter_map(|(_, time)| *time).min();
 
         match (newest_input, oldest_output) {
             (Some(input_time), Some(output_time)) => {
@@ -514,22 +518,20 @@ impl TaskScheduler {
             let path = Path::new(file_path);
             let timestamp = if path.exists() {
                 match tokio::fs::metadata(path).await {
-                    Ok(metadata) => {
-                        match metadata.modified() {
-                            Ok(time) => Some(time),
-                            Err(e) => {
-                                debug!("Could not get modification time for {}: {}", file_path, e);
-                                None
-                            }
+                    Ok(metadata) => match metadata.modified() {
+                        Ok(time) => Some(time),
+                        Err(e) => {
+                            debug!("Could not get modification time for {file_path}: {e}");
+                            None
                         }
-                    }
+                    },
                     Err(e) => {
-                        debug!("Could not get metadata for {}: {}", file_path, e);
+                        debug!("Could not get metadata for {file_path}: {e}");
                         None
                     }
                 }
             } else {
-                debug!("File {} does not exist", file_path);
+                debug!("File {file_path} does not exist");
                 None
             };
             timestamps.push((file_path.clone(), timestamp));
@@ -562,7 +564,7 @@ mod tests {
 
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task], Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
+        let scheduler = TaskScheduler::new(vec![task], Arc::new(workspace), ExecutionContext::new(), 2).await?;
         scheduler.execute_all().await?;
 
         let status = scheduler.get_task_status("test").await;
@@ -599,7 +601,7 @@ mod tests {
 
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
+        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), 2).await?;
         scheduler.execute_all().await?;
 
         let task1_status = scheduler.get_task_status("task1").await;
@@ -639,7 +641,7 @@ mod tests {
 
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
+        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), 2).await?;
         let result = scheduler.execute_all().await;
 
         assert!(result.is_err());
@@ -670,7 +672,7 @@ mod tests {
 
         let workspace = Workspace::new(work_dir.clone()).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
+        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2).await?;
 
         // First run should execute (no output file exists)
         let needs_rebuild = scheduler.needs_rebuild(&task).await?;
@@ -686,7 +688,10 @@ mod tests {
 
         // Now the task should not need to run (output newer than input)
         let needs_rebuild_after = scheduler.needs_rebuild(&task).await?;
-        assert!(!needs_rebuild_after, "Task should not need to run when output is newer than inputs");
+        assert!(
+            !needs_rebuild_after,
+            "Task should not need to run when output is newer than inputs"
+        );
 
         Ok(())
     }
@@ -705,13 +710,12 @@ mod tests {
 
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![], Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
+        let scheduler = TaskScheduler::new(vec![], Arc::new(workspace), ExecutionContext::new(), 2).await?;
 
         // Test timestamp retrieval
-        let timestamps = scheduler.get_file_timestamps(&[
-            file1.to_string_lossy().to_string(),
-            file2.to_string_lossy().to_string(),
-        ]).await?;
+        let timestamps = scheduler
+            .get_file_timestamps(&[file1.to_string_lossy().to_string(), file2.to_string_lossy().to_string()])
+            .await?;
 
         assert_eq!(timestamps.len(), 2);
         assert!(timestamps[0].1.is_some(), "Should have timestamp for existing file");
@@ -741,7 +745,7 @@ mod tests {
 
         let workspace = Workspace::new(work_dir.clone()).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
+        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2).await?;
 
         // Should need to rebuild when input file doesn't exist (conservative approach)
         let needs_rebuild = scheduler.needs_rebuild(&task).await?;
@@ -782,14 +786,20 @@ mod tests {
             ],
             HashMap::new(),
             HashMap::new(),
-            format!("cat {} {} {} > {} && cp {} {}",
-                input1.display(), input2.display(), input3.display(),
-                output1.display(), output1.display(), output2.display()),
+            format!(
+                "cat {} {} {} > {} && cp {} {}",
+                input1.display(),
+                input2.display(),
+                input3.display(),
+                output1.display(),
+                output1.display(),
+                output2.display()
+            ),
         );
 
         let workspace = Workspace::new(work_dir.clone()).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
+        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2).await?;
 
         // Should need to rebuild when outputs don't exist
         let needs_rebuild = scheduler.needs_rebuild(&task).await?;
@@ -802,7 +812,10 @@ mod tests {
 
         // Should not need to rebuild when all outputs are newer than all inputs
         let needs_rebuild_after = scheduler.needs_rebuild(&task).await?;
-        assert!(!needs_rebuild_after, "Task should not need to run when all outputs are newer than all inputs");
+        assert!(
+            !needs_rebuild_after,
+            "Task should not need to run when all outputs are newer than all inputs"
+        );
 
         // Touch one of the input files to make it newer
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
@@ -810,7 +823,10 @@ mod tests {
 
         // Should need to rebuild when any input is newer than any output
         let needs_rebuild_final = scheduler.needs_rebuild(&task).await?;
-        assert!(needs_rebuild_final, "Task should need to run when any input is newer than outputs");
+        assert!(
+            needs_rebuild_final,
+            "Task should need to run when any input is newer than outputs"
+        );
 
         Ok(())
     }
@@ -838,7 +854,7 @@ mod tests {
 
         let task2 = Task::new(
             "step2".to_string(),
-            vec!["step1".to_string()], // Task dependency
+            vec!["step1".to_string()],                             // Task dependency
             vec![intermediate_file.to_string_lossy().to_string()], // File dependency
             vec![output_file.to_string_lossy().to_string()],
             HashMap::new(),
@@ -848,7 +864,13 @@ mod tests {
 
         let workspace = Workspace::new(work_dir.clone()).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task1.clone(), task2.clone()], Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
+        let scheduler = TaskScheduler::new(
+            vec![task1.clone(), task2.clone()],
+            Arc::new(workspace),
+            ExecutionContext::new(),
+            2,
+        )
+        .await?;
 
         // Both tasks should need to run initially
         let task1_needs_rebuild = scheduler.needs_rebuild(&task1).await?;
@@ -898,12 +920,12 @@ mod tests {
 
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
+        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2).await?;
 
         // When timestamps are very close, should be conservative and rebuild
         let needs_rebuild = scheduler.needs_rebuild(&task).await?;
         // This might be true or false depending on timestamp precision, but should be consistent
-        println!("Timestamp precision test - needs rebuild: {}", needs_rebuild);
+        println!("Timestamp precision test - needs rebuild: {needs_rebuild}");
 
         Ok(())
     }
@@ -926,7 +948,7 @@ mod tests {
 
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
+        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2).await?;
 
         // Should always need to run when there are no file dependencies to check
         let needs_rebuild = scheduler.needs_rebuild(&task).await?;
@@ -955,12 +977,16 @@ mod tests {
             vec![output_file.to_string_lossy().to_string()],
             HashMap::new(),
             HashMap::new(),
-            format!("find {} -name '*.txt' | wc -l > {}", src_dir.display(), output_file.display()),
+            format!(
+                "find {} -name '*.txt' | wc -l > {}",
+                src_dir.display(),
+                output_file.display()
+            ),
         );
 
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
+        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2).await?;
 
         // Should handle directory dependencies (gets modification time of directory)
         let needs_rebuild = scheduler.needs_rebuild(&task).await?;
@@ -977,8 +1003,8 @@ mod tests {
         // Create many input files
         let mut input_files = Vec::new();
         for i in 0..100 {
-            let file = work_dir.join(format!("input_{:03}.txt", i));
-            tokio::fs::write(&file, format!("content {}", i)).await?;
+            let file = work_dir.join(format!("input_{i:03}.txt"));
+            tokio::fs::write(&file, format!("content {i}")).await?;
             input_files.push(file.to_string_lossy().to_string());
         }
 
@@ -996,7 +1022,7 @@ mod tests {
 
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
+        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2).await?;
 
         // Should handle large numbers of file dependencies efficiently
         let start = std::time::Instant::now();
@@ -1004,7 +1030,10 @@ mod tests {
         let duration = start.elapsed();
 
         assert!(needs_rebuild, "Task should need to run when output doesn't exist");
-        assert!(duration.as_millis() < 1000, "File dependency checking should be fast even with many files");
+        assert!(
+            duration.as_millis() < 1000,
+            "File dependency checking should be fast even with many files"
+        );
 
         Ok(())
     }
@@ -1033,12 +1062,12 @@ mod tests {
 
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
+        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2).await?;
 
         // Should handle circular file dependencies gracefully
         let needs_rebuild = scheduler.needs_rebuild(&task).await?;
         // Should be conservative when input and output are the same file
-        println!("Circular dependency test - needs rebuild: {}", needs_rebuild);
+        println!("Circular dependency test - needs rebuild: {needs_rebuild}");
 
         Ok(())
     }
@@ -1066,7 +1095,7 @@ mod tests {
 
         let workspace = Workspace::new(work_dir.clone()).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2, 2).await?;
+        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2).await?;
 
         // First execution - should run because output doesn't exist
         let needs_rebuild_1 = scheduler.needs_rebuild(&task).await?;
@@ -1093,6 +1122,81 @@ mod tests {
         // Third check - should need to run because input is newer
         let needs_rebuild_3 = scheduler.needs_rebuild(&task).await?;
         assert!(needs_rebuild_3, "Should need to run when input is modified");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_parallel_execution_limit() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let work_dir = temp_dir.path().to_path_buf();
+
+        // Create tasks that sleep for a bit to test concurrency
+        let mut tasks = vec![];
+        for i in 1..=4 {
+            let task = Task::new(
+                format!("task{i}"),
+                vec![],
+                vec![],
+                vec![],
+                HashMap::new(),
+                HashMap::new(),
+                format!("sleep 0.1 && echo task{i}"),
+            );
+            tasks.push(task);
+        }
+
+        let workspace = Workspace::new(work_dir).await?;
+        workspace.init().await?;
+
+        // Create scheduler with limit of 2 parallel jobs
+        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), 2).await?;
+
+        // Verify semaphore has 2 permits
+        assert_eq!(scheduler.semaphore.available_permits(), 2);
+
+        // Execute all tasks
+        scheduler.execute_all().await?;
+
+        // Verify all tasks completed
+        for i in 1..=4 {
+            let status = scheduler.get_task_status(&format!("task{i}")).await;
+            assert_eq!(status, TaskStatus::Completed);
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_scheduler_respects_max_parallel() -> Result<()> {
+        // Test with different job limits
+        for max_parallel in [1, 2, 4, 8] {
+            let temp_dir = TempDir::new()?;
+            let work_dir = temp_dir.path().to_path_buf();
+
+            let workspace = Workspace::new(work_dir).await?;
+            workspace.init().await?;
+
+            let tasks = vec![Task::new(
+                "test".to_string(),
+                vec![],
+                vec![],
+                vec![],
+                HashMap::new(),
+                HashMap::new(),
+                "echo test".to_string(),
+            )];
+
+            let scheduler =
+                TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), max_parallel).await?;
+
+            // Verify semaphore has correct number of permits
+            assert_eq!(
+                scheduler.semaphore.available_permits(),
+                max_parallel,
+                "Scheduler should have {max_parallel} permits"
+            );
+        }
 
         Ok(())
     }

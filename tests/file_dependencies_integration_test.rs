@@ -1,18 +1,18 @@
+use eyre::Result;
 use std::collections::HashMap;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::time::timeout;
-use eyre::Result;
 
+use otto::Task;
 use otto::cfg::config::ConfigSpec;
 use otto::cfg::task::TaskSpec;
-use otto::Task;
 use otto::executor::scheduler::{TaskScheduler, TaskStatus};
-use otto::executor::workspace::{Workspace, ExecutionContext};
+use otto::executor::workspace::{ExecutionContext, Workspace};
 
 // Test helper functions to reduce boilerplate
 struct TestFixture {
-    _temp_dir: TempDir,  // Keep alive for cleanup
+    _temp_dir: TempDir, // Keep alive for cleanup
     temp_path: std::path::PathBuf,
     workspace: std::sync::Arc<Workspace>,
 }
@@ -50,13 +50,7 @@ impl TestFixture {
     }
 
     async fn create_scheduler(&self, tasks: Vec<Task>) -> Result<TaskScheduler> {
-        TaskScheduler::new(
-            tasks,
-            self.workspace.clone(),
-            ExecutionContext::new(),
-            2,
-            2,
-        ).await
+        TaskScheduler::new(tasks, self.workspace.clone(), ExecutionContext::new(), 2).await
     }
 
     fn create_task(&self, name: &str, action: &str, inputs: Vec<&str>, outputs: Vec<&str>) -> Task {
@@ -72,11 +66,18 @@ impl TestFixture {
                 params: HashMap::new(),
                 help: None,
             },
-            &self.temp_path
+            &self.temp_path,
         )
     }
 
-    fn create_task_with_deps(&self, name: &str, action: &str, inputs: Vec<&str>, outputs: Vec<&str>, before: Vec<&str>) -> Task {
+    fn create_task_with_deps(
+        &self,
+        name: &str,
+        action: &str,
+        inputs: Vec<&str>,
+        outputs: Vec<&str>,
+        before: Vec<&str>,
+    ) -> Task {
         Task::from_task_with_cwd(
             &TaskSpec {
                 name: name.to_string(),
@@ -89,7 +90,7 @@ impl TestFixture {
                 params: HashMap::new(),
                 help: None,
             },
-            &self.temp_path
+            &self.temp_path,
         )
     }
 
@@ -106,19 +107,25 @@ async fn test_file_dependencies_end_to_end_yaml() -> Result<()> {
 
     // Create source files
     std::fs::create_dir_all(temp_path.join("src"))?;
-    std::fs::write(temp_path.join("src/main.c"), r#"
+    std::fs::write(
+        temp_path.join("src/main.c"),
+        r#"
 #include <stdio.h>
 int main() {
     printf("Hello from file dependencies!\n");
     return 0;
 }
-"#)?;
-    std::fs::write(temp_path.join("src/utils.c"), r#"
+"#,
+    )?;
+    std::fs::write(
+        temp_path.join("src/utils.c"),
+        r#"
 #include <stdio.h>
 void utils() {
     printf("Utils function\n");
 }
-"#)?;
+"#,
+    )?;
     std::fs::write(temp_path.join("Makefile"), "all:\n\techo 'Building...'\n")?;
 
     // Change to temp directory
@@ -186,7 +193,7 @@ tasks:
 
     // Convert tasks to TaskSpecs
     let mut task_specs = Vec::new();
-    for (_, task_spec) in &config_spec.tasks {
+    for task_spec in config_spec.tasks.values() {
         let spec = Task::from_task_with_cwd(task_spec, temp_path);
         task_specs.push(spec);
     }
@@ -199,8 +206,8 @@ tasks:
         std::sync::Arc::new(workspace),
         ExecutionContext::new(),
         2,
-        2,
-    ).await?;
+    )
+    .await?;
 
     // Verify file dependencies were parsed correctly
     let compile_spec = task_specs.iter().find(|t| t.name == "compile").unwrap();
@@ -247,12 +254,12 @@ async fn test_file_dependencies_glob_patterns() -> Result<()> {
         "build_all",
         "echo 'Building all Rust files'",
         vec![
-            "src/**/*.rs",    // Recursive glob
-            "tests/*.rs",     // Simple glob
-            "*.toml",         // Root-level glob
-            "docs/*.md",      // Documentation glob
+            "src/**/*.rs", // Recursive glob
+            "tests/*.rs",  // Simple glob
+            "*.toml",      // Root-level glob
+            "docs/*.md",   // Documentation glob
         ],
-        vec!["target/debug/app"]
+        vec!["target/debug/app"],
     );
 
     // Verify glob patterns were resolved
@@ -289,7 +296,7 @@ async fn test_file_dependencies_error_handling() -> Result<()> {
             params: HashMap::new(),
             help: None,
         },
-        temp_path
+        temp_path,
     );
 
     let workspace = Workspace::new(temp_path.to_path_buf()).await?;
@@ -299,8 +306,8 @@ async fn test_file_dependencies_error_handling() -> Result<()> {
         std::sync::Arc::new(workspace),
         ExecutionContext::new(),
         2,
-        2,
-    ).await?;
+    )
+    .await?;
 
     // Task should need to run when input file doesn't exist (conservative approach)
     let needs_rebuild = scheduler.needs_rebuild(&task).await?;
@@ -332,7 +339,7 @@ async fn test_file_dependencies_error_handling() -> Result<()> {
             params: HashMap::new(),
             help: None,
         },
-        temp_path
+        temp_path,
     );
 
     // Should handle permission issues gracefully
@@ -352,18 +359,20 @@ async fn test_file_dependencies_performance() -> Result<()> {
     let mut input_files = Vec::new();
 
     for i in 0..num_files {
-        let filename = format!("input_{:04}.txt", i);
-        fixture.write_file(&filename, &format!("content {}", i))?;
+        let filename = format!("input_{i:04}.txt");
+        fixture.write_file(&filename, &format!("content {i}"))?;
         input_files.push(filename);
     }
 
     let task = fixture.create_task(
         "perf_test",
-        &format!("find {} -name 'input_*.txt' | wc -l > {}",
-                 fixture.path().display(),
-                 fixture.file_path("combined.txt").display()),
+        &format!(
+            "find {} -name 'input_*.txt' | wc -l > {}",
+            fixture.path().display(),
+            fixture.file_path("combined.txt").display()
+        ),
         input_files.iter().map(|s| s.as_str()).collect(),
-        vec!["combined.txt"]
+        vec!["combined.txt"],
     );
 
     let scheduler = fixture.create_scheduler(vec![task.clone()]).await?;
@@ -374,9 +383,14 @@ async fn test_file_dependencies_performance() -> Result<()> {
     let duration = start.elapsed();
 
     assert!(needs_rebuild, "Task should need to run initially");
-    assert!(duration.as_millis() < 2000, "File dependency checking should be fast with {} files (took {}ms)", num_files, duration.as_millis());
+    assert!(
+        duration.as_millis() < 2000,
+        "File dependency checking should be fast with {} files (took {}ms)",
+        num_files,
+        duration.as_millis()
+    );
 
-    println!("File dependency check for {} files took: {:?}", num_files, duration);
+    println!("File dependency check for {num_files} files took: {duration:?}");
 
     Ok(())
 }
@@ -398,8 +412,14 @@ async fn test_mixed_task_and_file_dependencies() -> Result<()> {
     let preprocess_task = Task::from_task_with_cwd(
         &TaskSpec {
             name: "preprocess".to_string(),
-            action: format!(r#"echo '{{"status": "processed", "config": ' > {}; cat {} >> {}; echo '}}' >> {}"#,
-                            processed_file.display(), config_file.display(), processed_file.display(), processed_file.display()).to_string(),
+            action: format!(
+                r#"echo '{{"status": "processed", "config": ' > {}; cat {} >> {}; echo '}}' >> {}"#,
+                processed_file.display(),
+                config_file.display(),
+                processed_file.display(),
+                processed_file.display()
+            )
+            .to_string(),
             before: vec![],
             after: vec![],
             input: vec![
@@ -411,14 +431,20 @@ async fn test_mixed_task_and_file_dependencies() -> Result<()> {
             params: HashMap::new(),
             help: None,
         },
-        temp_path
+        temp_path,
     );
 
     let analyze_task = Task::from_task_with_cwd(
         &TaskSpec {
             name: "analyze".to_string(),
-            action: format!("echo '<html><body>Analysis complete: ' > {}; cat {} >> {}; echo '</body></html>' >> {}",
-                            report_file.display(), processed_file.display(), report_file.display(), report_file.display()).to_string(),
+            action: format!(
+                "echo '<html><body>Analysis complete: ' > {}; cat {} >> {}; echo '</body></html>' >> {}",
+                report_file.display(),
+                processed_file.display(),
+                report_file.display(),
+                report_file.display()
+            )
+            .to_string(),
             before: vec!["preprocess".to_string()],
             after: vec![],
             input: vec![processed_file.to_string_lossy().to_string()],
@@ -427,7 +453,7 @@ async fn test_mixed_task_and_file_dependencies() -> Result<()> {
             params: HashMap::new(),
             help: None,
         },
-        temp_path
+        temp_path,
     );
 
     let workspace = Workspace::new(temp_path.to_path_buf()).await?;
@@ -437,8 +463,8 @@ async fn test_mixed_task_and_file_dependencies() -> Result<()> {
         std::sync::Arc::new(workspace),
         ExecutionContext::new(),
         2,
-        2,
-    ).await?;
+    )
+    .await?;
 
     // Both tasks should need to run initially
     assert!(scheduler.needs_rebuild(&preprocess_task).await?);
@@ -495,7 +521,7 @@ async fn test_file_dependencies_incremental_detection() -> Result<()> {
             params: HashMap::new(),
             help: None,
         },
-        temp_path
+        temp_path,
     );
 
     let workspace = Workspace::new(temp_path.to_path_buf()).await?;
@@ -505,26 +531,38 @@ async fn test_file_dependencies_incremental_detection() -> Result<()> {
         std::sync::Arc::new(workspace),
         ExecutionContext::new(),
         2,
-        2,
-    ).await?;
+    )
+    .await?;
 
     // Test 1: No output file exists - should need rebuild
-    assert!(scheduler.needs_rebuild(&task).await?, "Should need rebuild when output missing");
+    assert!(
+        scheduler.needs_rebuild(&task).await?,
+        "Should need rebuild when output missing"
+    );
 
     // Test 2: Create output file newer than inputs - should NOT need rebuild
     std::thread::sleep(std::time::Duration::from_millis(10)); // Ensure time difference
     std::fs::write(&output, "compiled object")?;
-    assert!(!scheduler.needs_rebuild(&task).await?, "Should NOT need rebuild when output newer than inputs");
+    assert!(
+        !scheduler.needs_rebuild(&task).await?,
+        "Should NOT need rebuild when output newer than inputs"
+    );
 
     // Test 3: Touch input file to make it newer - should need rebuild
     std::thread::sleep(std::time::Duration::from_millis(10)); // Ensure time difference
     std::fs::write(&input1, "int main() { return 1; }")?; // Modify input
-    assert!(scheduler.needs_rebuild(&task).await?, "Should need rebuild when input newer than output");
+    assert!(
+        scheduler.needs_rebuild(&task).await?,
+        "Should need rebuild when input newer than output"
+    );
 
     // Test 4: Update output to be newer again - should NOT need rebuild
     std::thread::sleep(std::time::Duration::from_millis(10)); // Ensure time difference
     std::fs::write(&output, "recompiled object")?;
-    assert!(!scheduler.needs_rebuild(&task).await?, "Should NOT need rebuild when output updated");
+    assert!(
+        !scheduler.needs_rebuild(&task).await?,
+        "Should NOT need rebuild when output updated"
+    );
 
     Ok(())
 }
@@ -538,28 +576,41 @@ async fn test_file_dependencies_with_real_execution() -> Result<()> {
 
     let task = fixture.create_task(
         "copy_task",
-        &format!("cp {} {}", fixture.file_path("source.txt").display(), fixture.file_path("result.txt").display()),
+        &format!(
+            "cp {} {}",
+            fixture.file_path("source.txt").display(),
+            fixture.file_path("result.txt").display()
+        ),
         vec!["source.txt"],
-        vec!["result.txt"]
+        vec!["result.txt"],
     );
 
     let scheduler = fixture.create_scheduler(vec![task.clone()]).await?;
 
     // Task should need to run initially (output doesn't exist)
-    assert!(scheduler.needs_rebuild(&task).await?, "Should need rebuild when output missing");
+    assert!(
+        scheduler.needs_rebuild(&task).await?,
+        "Should need rebuild when output missing"
+    );
 
     // Execute the task
     timeout(Duration::from_secs(10), scheduler.execute_all()).await??;
 
     // Verify task completed and output file was created
     assert_eq!(scheduler.get_task_status("copy_task").await, TaskStatus::Completed);
-    assert!(fixture.file_path("result.txt").exists(), "Output file should exist after execution");
+    assert!(
+        fixture.file_path("result.txt").exists(),
+        "Output file should exist after execution"
+    );
 
-    let output_content = std::fs::read_to_string(&fixture.file_path("result.txt"))?;
+    let output_content = std::fs::read_to_string(fixture.file_path("result.txt"))?;
     assert_eq!(output_content, "Hello, File Dependencies!", "Output should match input");
 
     // Task should NOT need to run again (outputs are up-to-date)
-    assert!(!scheduler.needs_rebuild(&task).await?, "Should not need rebuild after successful execution");
+    assert!(
+        !scheduler.needs_rebuild(&task).await?,
+        "Should not need rebuild after successful execution"
+    );
 
     Ok(())
 }
@@ -585,18 +636,25 @@ async fn test_file_dependencies_multiple_files() -> Result<()> {
             name: "combine".to_string(),
             action: format!(
                 "cat {} {} {} > {} && echo 'Files: 3' > {}",
-                input1.display(), input2.display(), input3.display(),
-                output1.display(), output2.display()
+                input1.display(),
+                input2.display(),
+                input3.display(),
+                output1.display(),
+                output2.display()
             ),
             before: vec![],
             after: vec![],
-            input: vec!["file1.txt".to_string(), "file2.txt".to_string(), "file3.txt".to_string()],
+            input: vec![
+                "file1.txt".to_string(),
+                "file2.txt".to_string(),
+                "file3.txt".to_string(),
+            ],
             output: vec!["combined.txt".to_string(), "summary.txt".to_string()],
             envs: HashMap::new(),
             params: HashMap::new(),
             help: None,
         },
-        temp_path
+        temp_path,
     );
 
     let workspace = Workspace::new(temp_path.to_path_buf()).await?;
@@ -606,11 +664,14 @@ async fn test_file_dependencies_multiple_files() -> Result<()> {
         std::sync::Arc::new(workspace),
         ExecutionContext::new(),
         2,
-        2,
-    ).await?;
+    )
+    .await?;
 
     // Should need to run - no outputs exist
-    assert!(scheduler.needs_rebuild(&task).await?, "Should need rebuild with missing outputs");
+    assert!(
+        scheduler.needs_rebuild(&task).await?,
+        "Should need rebuild with missing outputs"
+    );
 
     // Execute task
     timeout(Duration::from_secs(10), scheduler.execute_all()).await??;
@@ -622,14 +683,20 @@ async fn test_file_dependencies_multiple_files() -> Result<()> {
     assert_eq!(std::fs::read_to_string(&output2)?, "Files: 3\n");
 
     // Should NOT need rebuild - outputs are newer than inputs
-    assert!(!scheduler.needs_rebuild(&task).await?, "Should not need rebuild after execution");
+    assert!(
+        !scheduler.needs_rebuild(&task).await?,
+        "Should not need rebuild after execution"
+    );
 
     // Modify one input file to trigger rebuild
     std::thread::sleep(std::time::Duration::from_millis(10)); // Ensure time difference
     std::fs::write(&input2, "Modified Line 2")?;
 
     // Should need rebuild - input is newer than output
-    assert!(scheduler.needs_rebuild(&task).await?, "Should need rebuild when input is modified");
+    assert!(
+        scheduler.needs_rebuild(&task).await?,
+        "Should need rebuild when input is modified"
+    );
 
     Ok(())
 }
@@ -644,31 +711,43 @@ async fn test_file_dependencies_task_chain() -> Result<()> {
     // Task 1: Process markdown to text
     let process_task = fixture.create_task(
         "process",
-        &format!("sed 's/#//g' {} | tr -d '*' > {}",
-                 fixture.file_path("source.md").display(),
-                 fixture.file_path("processed.txt").display()),
+        &format!(
+            "sed 's/#//g' {} | tr -d '*' > {}",
+            fixture.file_path("source.md").display(),
+            fixture.file_path("processed.txt").display()
+        ),
         vec!["source.md"],
-        vec!["processed.txt"]
+        vec!["processed.txt"],
     );
 
     // Task 2: Convert text to HTML (depends on task 1)
     let convert_task = fixture.create_task_with_deps(
         "convert",
-        &format!("echo '<html><body><pre>' > {} && cat {} >> {} && echo '</pre></body></html>' >> {}",
-                 fixture.file_path("final.html").display(),
-                 fixture.file_path("processed.txt").display(),
-                 fixture.file_path("final.html").display(),
-                 fixture.file_path("final.html").display()),
+        &format!(
+            "echo '<html><body><pre>' > {} && cat {} >> {} && echo '</pre></body></html>' >> {}",
+            fixture.file_path("final.html").display(),
+            fixture.file_path("processed.txt").display(),
+            fixture.file_path("final.html").display(),
+            fixture.file_path("final.html").display()
+        ),
         vec!["processed.txt"],
         vec!["final.html"],
-        vec!["process"]  // Before dependency
+        vec!["process"], // Before dependency
     );
 
-    let scheduler = fixture.create_scheduler(vec![process_task.clone(), convert_task.clone()]).await?;
+    let scheduler = fixture
+        .create_scheduler(vec![process_task.clone(), convert_task.clone()])
+        .await?;
 
     // Both tasks should need to run initially
-    assert!(scheduler.needs_rebuild(&process_task).await?, "Process task should need rebuild");
-    assert!(scheduler.needs_rebuild(&convert_task).await?, "Convert task should need rebuild");
+    assert!(
+        scheduler.needs_rebuild(&process_task).await?,
+        "Process task should need rebuild"
+    );
+    assert!(
+        scheduler.needs_rebuild(&convert_task).await?,
+        "Convert task should need rebuild"
+    );
 
     // Execute all tasks
     timeout(Duration::from_secs(10), scheduler.execute_all()).await??;
@@ -678,16 +757,28 @@ async fn test_file_dependencies_task_chain() -> Result<()> {
     assert_eq!(scheduler.get_task_status("convert").await, TaskStatus::Completed);
 
     // Verify files were created with expected content
-    assert!(fixture.file_path("processed.txt").exists(), "Intermediate file should exist");
+    assert!(
+        fixture.file_path("processed.txt").exists(),
+        "Intermediate file should exist"
+    );
     assert!(fixture.file_path("final.html").exists(), "Final output should exist");
 
-    let final_content = std::fs::read_to_string(&fixture.file_path("final.html"))?;
+    let final_content = std::fs::read_to_string(fixture.file_path("final.html"))?;
     assert!(final_content.contains("<html>"), "Final output should be HTML");
-    assert!(final_content.contains("Hello"), "Final output should contain processed content");
+    assert!(
+        final_content.contains("Hello"),
+        "Final output should contain processed content"
+    );
 
     // Neither task should need rebuild now
-    assert!(!scheduler.needs_rebuild(&process_task).await?, "Process task should not need rebuild after completion");
-    assert!(!scheduler.needs_rebuild(&convert_task).await?, "Convert task should not need rebuild after completion");
+    assert!(
+        !scheduler.needs_rebuild(&process_task).await?,
+        "Process task should not need rebuild after completion"
+    );
+    assert!(
+        !scheduler.needs_rebuild(&convert_task).await?,
+        "Convert task should not need rebuild after completion"
+    );
 
     Ok(())
 }
@@ -721,7 +812,7 @@ async fn test_file_dependencies_task_skipping() -> Result<()> {
             params: HashMap::new(),
             help: None,
         },
-        temp_path
+        temp_path,
     );
 
     let workspace = Workspace::new(temp_path.to_path_buf()).await?;
@@ -731,20 +822,29 @@ async fn test_file_dependencies_task_skipping() -> Result<()> {
         std::sync::Arc::new(workspace),
         ExecutionContext::new(),
         2,
-        2,
-    ).await?;
+    )
+    .await?;
 
     // Task should NOT need to run - output is newer than input
-    assert!(!scheduler.needs_rebuild(&task).await?, "Task should not need rebuild when output is newer");
+    assert!(
+        !scheduler.needs_rebuild(&task).await?,
+        "Task should not need rebuild when output is newer"
+    );
 
     // Verify the output file still contains original content (no execution needed)
     let output_content = std::fs::read_to_string(&output_file)?;
-    assert_eq!(output_content, r#"{"setting": "value"}"#, "Output should be unchanged when task doesn't need rebuild");
+    assert_eq!(
+        output_content, r#"{"setting": "value"}"#,
+        "Output should be unchanged when task doesn't need rebuild"
+    );
 
     // Test that modifying input triggers rebuild
     std::thread::sleep(std::time::Duration::from_millis(10));
     std::fs::write(&input_file, "setting=new_value")?;
-    assert!(scheduler.needs_rebuild(&task).await?, "Task should need rebuild when input is modified");
+    assert!(
+        scheduler.needs_rebuild(&task).await?,
+        "Task should need rebuild when input is modified"
+    );
 
     Ok(())
 }
@@ -775,27 +875,36 @@ async fn test_file_dependencies_modification_detection() -> Result<()> {
             params: HashMap::new(),
             help: None,
         },
-        &fixture.temp_path
+        &fixture.temp_path,
     );
 
     let scheduler = fixture.create_scheduler(vec![task.clone()]).await?;
 
     // Should need rebuild because new_file is newer than output
-    assert!(scheduler.needs_rebuild(&task).await?, "Should need rebuild when any input is newer than output");
+    assert!(
+        scheduler.needs_rebuild(&task).await?,
+        "Should need rebuild when any input is newer than output"
+    );
 
     // Update output to be newer than all inputs
     TestFixture::sleep_ms(10);
     fixture.write_file("result.txt", "updated output")?;
 
     // Should NOT need rebuild now
-    assert!(!scheduler.needs_rebuild(&task).await?, "Should not need rebuild when output is newer than all inputs");
+    assert!(
+        !scheduler.needs_rebuild(&task).await?,
+        "Should not need rebuild when output is newer than all inputs"
+    );
 
     // Touch the old file to make it newer
     TestFixture::sleep_ms(10);
     fixture.write_file("old_config.txt", "old_value=1")?; // Same content, newer timestamp
 
     // Should need rebuild again
-    assert!(scheduler.needs_rebuild(&task).await?, "Should need rebuild when any input file is touched");
+    assert!(
+        scheduler.needs_rebuild(&task).await?,
+        "Should need rebuild when any input file is touched"
+    );
 
     Ok(())
 }

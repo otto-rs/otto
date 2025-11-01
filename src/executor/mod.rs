@@ -1,17 +1,19 @@
 pub mod action;
-pub mod scheduler;
-pub mod workspace;
-pub mod output;
-pub mod visualizer;
-pub mod graph;
 pub mod colors;
+pub mod graph;
+pub mod output;
+pub mod scheduler;
 pub mod task;
+pub mod visualizer;
+pub mod workspace;
 
-pub use action::{ActionProcessor, ProcessedAction, ScriptProcessor, BashProcessor, PythonProcessor};
-pub use colors::{get_task_color, get_task_color_combination, colorize_task_name, colorize_task_prefix, set_global_task_order};
-pub use graph::{DagVisualizer, GraphOptions, GraphFormat, NodeStyle};
+pub use action::{ActionProcessor, BashProcessor, ProcessedAction, PythonProcessor, ScriptProcessor};
+pub use colors::{
+    colorize_task_name, colorize_task_prefix, get_task_color, get_task_color_combination, set_global_task_order,
+};
+pub use graph::{DagVisualizer, GraphFormat, GraphOptions, NodeStyle};
 pub use output::TaskStreams;
 pub use scheduler::{TaskScheduler, TaskStatus};
-pub use task::{Task, DAG};
+pub use task::{DAG, Task};
 pub use visualizer::OutputVisualizer;
 pub use workspace::Workspace;

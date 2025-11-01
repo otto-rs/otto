@@ -1,10 +1,10 @@
-use std::path::{Path, PathBuf};
-use std::time::SystemTime;
-use eyre::{eyre, Result};
-use sha2::{Sha256, Digest};
 use expanduser::expanduser;
+use eyre::{Result, eyre};
 use serde::{Deserialize, Serialize};
 use serde_yaml;
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionContext {
@@ -15,6 +15,12 @@ pub struct ExecutionContext {
     pub hash: String,
     pub ottofile: Option<PathBuf>,
     pub args: Vec<String>,
+}
+
+impl Default for ExecutionContext {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ExecutionContext {
@@ -38,22 +44,22 @@ impl ExecutionContext {
 /// Handles Otto's directory structure and storage paths
 pub struct Workspace {
     // Base paths
-    home: PathBuf,          // ~/.otto
-    root: PathBuf,          // Current project directory
-    hash: String,          // First 8 chars of project path hash
-    time: u64,             // Current run timestamp
+    home: PathBuf, // ~/.otto
+    root: PathBuf, // Current project directory
+    hash: String,  // First 8 chars of project path hash
+    time: u64,     // Current run timestamp
 
     // Computed paths
-    project: PathBuf,      // <name>-<hash>
-    cache: PathBuf,        // <name>-<hash>/.cache
-    run: PathBuf,          // <name>-<hash>/<timestamp>
+    project: PathBuf, // <name>-<hash>
+    cache: PathBuf,   // <name>-<hash>/.cache
+    run: PathBuf,     // <name>-<hash>/<timestamp>
 }
 
 impl Workspace {
     /// Create new workspace for a project
     pub async fn new(root: PathBuf) -> Result<Self> {
         // Expand any ~ in the root path first
-        let root = expanduser(root.to_string_lossy().to_string())?;
+        let root = expanduser(root.to_string_lossy())?;
 
         // Get canonical project root, creating parent dirs if needed
         let root = if !root.exists() {
@@ -62,7 +68,8 @@ impl Workspace {
             }
             // For non-existent paths, still try to canonicalize the parent and join the last component
             if let Some(parent) = root.parent() {
-                let canonical_parent = parent.canonicalize()
+                let canonical_parent = parent
+                    .canonicalize()
                     .map_err(|e| eyre!("Failed to canonicalize parent directory: {}", e))?;
                 if let Some(file_name) = root.file_name() {
                     canonical_parent.join(file_name)
@@ -78,7 +85,8 @@ impl Workspace {
         };
 
         // Get project name from last component (unused but kept for future use)
-        let _name = root.file_name()
+        let _name = root
+            .file_name()
             .and_then(|n| n.to_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| {
@@ -98,17 +106,14 @@ impl Workspace {
     /// Create new workspace with a specific hash
     pub async fn new_with_hash(root: PathBuf, hash: String) -> Result<Self> {
         // Get timestamp for this run
-        let time = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)?
-            .as_secs();
+        let time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
 
         // Get absolute path to ~/.otto by expanding HOME
-        let home_dir = std::env::var("HOME")
-            .map_err(|e| eyre!("Failed to get HOME directory: {}", e))?;
+        let home_dir = std::env::var("HOME").map_err(|e| eyre!("Failed to get HOME directory: {}", e))?;
         let home = PathBuf::from(home_dir).join(".otto");
 
         // Build computed paths - simple structure with otto-<hash>
-        let project = home.join(format!("otto-{}", hash));
+        let project = home.join(format!("otto-{hash}"));
         let cache = project.join(".cache");
         let run = project.join(time.to_string());
 
@@ -153,7 +158,7 @@ impl Workspace {
     /// Get path for task script symlink
     pub fn script(&self, task: &str, is_python: bool) -> PathBuf {
         let ext = if is_python { "py" } else { "sh" };
-        self.task(task).join(format!("script.{}", ext))
+        self.task(task).join(format!("script.{ext}"))
     }
 
     /// Get path for task output file
@@ -178,7 +183,7 @@ impl Workspace {
 
     /// Get path for run metadata files
     pub fn metadata(&self, name: &str) -> PathBuf {
-        self.run.join(format!("{}.yaml", name))
+        self.run.join(format!("{name}.yaml"))
     }
 
     /// Verify a task's directory structure exists
@@ -233,10 +238,14 @@ impl Workspace {
         path.as_ref()
             .strip_prefix(&self.root)
             .map(|p| p.to_path_buf())
-            .map_err(|e| eyre!("Path {} is not relative to root {}: {}",
-                path.as_ref().display(),
-                self.root.display(),
-                e))
+            .map_err(|e| {
+                eyre!(
+                    "Path {} is not relative to root {}: {}",
+                    path.as_ref().display(),
+                    self.root.display(),
+                    e
+                )
+            })
     }
 
     /// Check if a path is within the project root
@@ -252,8 +261,8 @@ impl Workspace {
     /// Save execution context metadata to run.yaml
     pub async fn save_execution_context(&self, context: ExecutionContext) -> Result<()> {
         let run_yaml_path = self.metadata("run");
-        let yaml_content = serde_yaml::to_string(&context)
-            .map_err(|e| eyre!("Failed to serialize execution context: {}", e))?;
+        let yaml_content =
+            serde_yaml::to_string(&context).map_err(|e| eyre!("Failed to serialize execution context: {}", e))?;
 
         tokio::fs::write(&run_yaml_path, yaml_content)
             .await
@@ -265,8 +274,8 @@ impl Workspace {
     /// Save task-specific execution context to task directory
     pub async fn save_task_context(&self, task_name: &str, context: &ExecutionContext) -> Result<()> {
         let task_run_yaml = self.task(task_name).join("run.yaml");
-        let yaml_content = serde_yaml::to_string(context)
-            .map_err(|e| eyre!("Failed to serialize task context: {}", e))?;
+        let yaml_content =
+            serde_yaml::to_string(context).map_err(|e| eyre!("Failed to serialize task context: {}", e))?;
 
         tokio::fs::write(&task_run_yaml, yaml_content)
             .await
@@ -294,17 +303,17 @@ impl Workspace {
 
     /// Get task output file path
     pub fn task_output_file(&self, task_name: &str) -> PathBuf {
-        self.task(task_name).join(format!("output.{}.json", task_name))
+        self.task(task_name).join(format!("output.{task_name}.json"))
     }
 
     /// Get task input file path for a specific dependency
     pub fn task_input_file(&self, task_name: &str, dep_name: &str) -> PathBuf {
-        self.task(task_name).join(format!("input.{}.json", dep_name))
+        self.task(task_name).join(format!("input.{dep_name}.json"))
     }
 
     /// Get task script file path with extension
     pub fn task_script_file(&self, task_name: &str, extension: &str) -> PathBuf {
-        self.task(task_name).join(format!("script.{}", extension))
+        self.task(task_name).join(format!("script.{extension}"))
     }
 
     /// Get the current run directory

@@ -3,8 +3,8 @@ pub mod cli;
 pub mod executor;
 pub mod utils;
 
-pub use cli::Parser;
 pub use cfg::config::ConfigSpec;
+pub use cli::Parser;
 pub use executor::{Task, TaskScheduler, Workspace};
 
 #[cfg(test)]

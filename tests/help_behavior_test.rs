@@ -9,7 +9,9 @@ fn test_help_with_ottofile_shows_tasks_and_no_error() {
     let temp = tempdir().unwrap();
     let ottofile_path = temp.path().join("otto.yml");
     let mut file = fs::File::create(&ottofile_path).unwrap();
-    writeln!(file, r#"
+    writeln!(
+        file,
+        r#"
 otto:
   api: 1
 tasks:
@@ -22,11 +24,12 @@ tasks:
   deploy:
     help: Deploy the application
     action: echo deploying
-"#).unwrap();
+"#
+    )
+    .unwrap();
 
     let mut cmd = Command::cargo_bin("otto").unwrap();
-    cmd.current_dir(&temp)
-        .arg("--help");
+    cmd.current_dir(&temp).arg("--help");
 
     cmd.assert()
         .success()
@@ -58,8 +61,7 @@ fn test_help_without_ottofile_shows_normal_help_plus_error_message() {
     // No ottofile created - directory is empty
 
     let mut cmd = Command::cargo_bin("otto").unwrap();
-    cmd.current_dir(&temp)
-        .arg("--help");
+    cmd.current_dir(&temp).arg("--help");
 
     cmd.assert()
         .failure()
@@ -77,7 +79,9 @@ fn test_help_without_ottofile_shows_normal_help_plus_error_message() {
         // Must NOT contain Commands section since no tasks available
         .stdout(predicate::str::contains("Commands:").not())
         // Must contain error message as after_help
-        .stdout(predicate::str::contains("ERROR: No ottofile found in this directory or any parent directory!"))
+        .stdout(predicate::str::contains(
+            "ERROR: No ottofile found in this directory or any parent directory!",
+        ))
         .stdout(predicate::str::contains("Otto looks for one of the following files"))
         .stdout(predicate::str::contains("otto.yml"))
         .stdout(predicate::str::contains(".otto.yml"))
@@ -93,8 +97,7 @@ fn test_help_with_short_flag_behaves_same_as_long_flag() {
     // No ottofile created - directory is empty
 
     let mut cmd = Command::cargo_bin("otto").unwrap();
-    cmd.current_dir(&temp)
-        .arg("-h");
+    cmd.current_dir(&temp).arg("-h");
 
     cmd.assert()
         .failure()
@@ -102,7 +105,9 @@ fn test_help_with_short_flag_behaves_same_as_long_flag() {
         // Must contain the same content as --help
         .stdout(predicate::str::contains("A task runner"))
         .stdout(predicate::str::contains("Usage: otto [OPTIONS] [COMMAND]"))
-        .stdout(predicate::str::contains("ERROR: No ottofile found in this directory or any parent directory!"));
+        .stdout(predicate::str::contains(
+            "ERROR: No ottofile found in this directory or any parent directory!",
+        ));
 }
 
 #[test]
@@ -110,7 +115,9 @@ fn test_help_with_complex_ottofile_shows_all_tasks() {
     let temp = tempdir().unwrap();
     let ottofile_path = temp.path().join("otto.yml");
     let mut file = fs::File::create(&ottofile_path).unwrap();
-    writeln!(file, r#"
+    writeln!(
+        file,
+        r#"
 otto:
   api: 1
 tasks:
@@ -138,11 +145,12 @@ tasks:
   unit-test:
     help: Run unit tests with pytest and coverage
     action: echo unit-test
-"#).unwrap();
+"#
+    )
+    .unwrap();
 
     let mut cmd = Command::cargo_bin("otto").unwrap();
-    cmd.current_dir(&temp)
-        .arg("--help");
+    cmd.current_dir(&temp).arg("--help");
 
     cmd.assert()
         .success()
@@ -158,7 +166,9 @@ tasks:
         .stdout(predicate::str::contains("unit-test"))
         // Must contain built-in graph task
         .stdout(predicate::str::contains("graph"))
-        .stdout(predicate::str::contains("[built-in] Visualize the task dependency graph"))
+        .stdout(predicate::str::contains(
+            "[built-in] Visualize the task dependency graph",
+        ))
         // Must NOT contain error message
         .stdout(predicate::str::contains("ERROR: No ottofile found").not());
 }
@@ -168,19 +178,20 @@ fn test_help_error_message_order_is_after_main_help() {
     let temp = tempdir().unwrap();
 
     let mut cmd = Command::cargo_bin("otto").unwrap();
-    cmd.current_dir(&temp)
-        .arg("--help");
+    cmd.current_dir(&temp).arg("--help");
 
-    let output = cmd.assert()
-        .failure()
-        .code(2);
+    let output = cmd.assert().failure().code(2);
 
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
 
     // Find positions of key elements
-    let usage_pos = stdout.find("Usage: otto [OPTIONS] [COMMAND]").expect("Usage should be present");
+    let usage_pos = stdout
+        .find("Usage: otto [OPTIONS] [COMMAND]")
+        .expect("Usage should be present");
     let options_pos = stdout.find("Options:").expect("Options should be present");
-    let error_pos = stdout.find("ERROR: No ottofile found").expect("Error should be present");
+    let error_pos = stdout
+        .find("ERROR: No ottofile found")
+        .expect("Error should be present");
 
     // Error message should come AFTER the main help content
     assert!(error_pos > usage_pos, "Error message should come after Usage");
@@ -192,22 +203,25 @@ fn test_help_with_ottofile_in_parent_directory() {
     let temp = tempdir().unwrap();
     let ottofile_path = temp.path().join("otto.yml");
     let mut file = fs::File::create(&ottofile_path).unwrap();
-    writeln!(file, r#"
+    writeln!(
+        file,
+        r#"
 otto:
   api: 1
 tasks:
   parent-task:
     help: Task from parent directory
     action: echo parent
-"#).unwrap();
+"#
+    )
+    .unwrap();
 
     // Create subdirectory
     let subdir = temp.path().join("subdir");
     fs::create_dir(&subdir).unwrap();
 
     let mut cmd = Command::cargo_bin("otto").unwrap();
-    cmd.current_dir(&subdir)
-        .arg("--help");
+    cmd.current_dir(&subdir).arg("--help");
 
     cmd.assert()
         .success()
@@ -227,25 +241,28 @@ fn test_help_behavior_is_consistent_across_different_ottofile_names() {
         "otto.yaml",
         ".otto.yaml",
         "Ottofile",
-        "OTTOFILE"
+        "OTTOFILE",
     ];
 
     for ottofile_name in ottofile_names {
         let temp = tempdir().unwrap();
         let ottofile_path = temp.path().join(ottofile_name);
         let mut file = fs::File::create(&ottofile_path).unwrap();
-        writeln!(file, r#"
+        writeln!(
+            file,
+            r#"
 otto:
   api: 1
 tasks:
   test-task:
     help: Test task
     action: echo test
-"#).unwrap();
+"#
+        )
+        .unwrap();
 
         let mut cmd = Command::cargo_bin("otto").unwrap();
-        cmd.current_dir(&temp)
-            .arg("--help");
+        cmd.current_dir(&temp).arg("--help");
 
         cmd.assert()
             .success()

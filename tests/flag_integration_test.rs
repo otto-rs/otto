@@ -1,6 +1,6 @@
+use otto::cli::parser::Parser;
 use std::fs;
 use tempfile::TempDir;
-use otto::cli::parser::Parser;
 
 #[test]
 fn test_boolean_flags_integration() {
@@ -45,7 +45,7 @@ tasks:
     ];
 
     let mut parser = Parser::new(args).unwrap();
-    let (tasks, _, _) = parser.parse().unwrap();
+    let (tasks, _, _, _) = parser.parse().unwrap();
 
     assert_eq!(tasks.len(), 1);
     let task = &tasks[0];
@@ -91,7 +91,7 @@ tasks:
     ];
 
     let mut parser = Parser::new(args).unwrap();
-    let (tasks, _, _) = parser.parse().unwrap();
+    let (tasks, _, _, _) = parser.parse().unwrap();
 
     assert_eq!(tasks.len(), 1);
     let task = &tasks[0];
@@ -147,7 +147,7 @@ tasks:
     ];
 
     let mut parser = Parser::new(args).unwrap();
-    let (tasks, _, _) = parser.parse().unwrap();
+    let (tasks, _, _, _) = parser.parse().unwrap();
 
     assert_eq!(tasks.len(), 1);
     let task = &tasks[0];
@@ -200,7 +200,7 @@ tasks:
     ];
 
     let mut parser = Parser::new(args).unwrap();
-    let (tasks, _, _) = parser.parse().unwrap();
+    let (tasks, _, _, _) = parser.parse().unwrap();
 
     assert_eq!(tasks.len(), 1);
     let task = &tasks[0];
@@ -274,7 +274,7 @@ tasks:
     ];
 
     let mut parser = Parser::new(args).unwrap();
-    let (tasks, _, _) = parser.parse().unwrap();
+    let (tasks, _, _, _) = parser.parse().unwrap();
 
     assert_eq!(tasks.len(), 1);
     let task = &tasks[0];
@@ -336,7 +336,7 @@ tasks:
     ];
 
     let mut parser = Parser::new(args).unwrap();
-    let (tasks, _, _) = parser.parse().unwrap();
+    let (tasks, _, _, _) = parser.parse().unwrap();
 
     assert_eq!(tasks.len(), 1);
     let task = &tasks[0];

@@ -2,9 +2,9 @@
 
 use serde::Deserialize;
 
-pub use crate::cfg::otto::{default_otto, OttoSpec};
+pub use crate::cfg::otto::{OttoSpec, default_otto};
 pub use crate::cfg::param::{ParamSpec, ParamSpecs, Value};
-pub use crate::cfg::task::{deserialize_task_map, TaskSpec, TaskSpecs};
+pub use crate::cfg::task::{TaskSpec, TaskSpecs, deserialize_task_map};
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct ConfigSpec {

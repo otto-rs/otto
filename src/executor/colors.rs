@@ -1,7 +1,7 @@
+use colored::{Color, Colorize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, OnceLock};
-use colored::{Color, Colorize};
 
 /// All 15 possible color combinations (bracket_color, text_color) where bracket ≠ text
 /// This gives us 15 unique visual patterns before cycling
@@ -100,21 +100,24 @@ pub fn colorize_task_name(task_name: &str) -> String {
 pub fn colorize_task_prefix(task_name: &str) -> String {
     if colored::control::SHOULD_COLORIZE.should_colorize() {
         let (bracket_color, text_color) = get_task_color_combination(task_name);
-        format!("{}{}{}",
+        format!(
+            "{}{}{}",
             "[".color(bracket_color),
             task_name.color(text_color),
             "]".color(bracket_color)
         )
     } else {
-        format!("[{}]", task_name)
+        format!("[{task_name}]")
     }
 }
 
 /// Format a task prefix with color using context of all task names
 pub fn colorize_task_prefix_with_context(task_name: &str, all_task_names: &[String]) -> String {
-    let prefix = format!("[{}]", task_name);
+    let prefix = format!("[{task_name}]");
     if colored::control::SHOULD_COLORIZE.should_colorize() {
-        prefix.color(get_task_color_with_context(task_name, all_task_names)).to_string()
+        prefix
+            .color(get_task_color_with_context(task_name, all_task_names))
+            .to_string()
     } else {
         prefix
     }
@@ -123,7 +126,9 @@ pub fn colorize_task_prefix_with_context(task_name: &str, all_task_names: &[Stri
 /// Format a task name with its assigned color using context
 pub fn colorize_task_name_with_context(task_name: &str, all_task_names: &[String]) -> String {
     if colored::control::SHOULD_COLORIZE.should_colorize() {
-        task_name.color(get_task_color_with_context(task_name, all_task_names)).to_string()
+        task_name
+            .color(get_task_color_with_context(task_name, all_task_names))
+            .to_string()
     } else {
         task_name.to_string()
     }
@@ -147,10 +152,10 @@ mod tests {
 
         // Test that we're cycling through our expected range
         for i in 0..16 {
-            let task_name = format!("task_{}", i);
+            let task_name = format!("task_{i}");
             let color = get_task_color(&task_name);
             // Just ensure we can get a color without panicking
-            let _ = format!("{:?}", color);
+            let _ = format!("{color:?}");
         }
     }
 

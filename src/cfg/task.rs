@@ -1,13 +1,13 @@
 //#![allow(unused_imports, unused_variables, dead_code)]
 
 use eyre::Result;
-use serde::de::{Deserializer, MapAccess, Visitor};
 use serde::Deserialize;
+use serde::de::{Deserializer, MapAccess, Visitor};
 use std::collections::HashMap;
 use std::fmt;
 use std::vec::Vec;
 
-use crate::cfg::param::{deserialize_param_map, ParamSpecs};
+use crate::cfg::param::{ParamSpecs, deserialize_param_map};
 
 pub type TaskSpecs = HashMap<String, TaskSpec>;
 
@@ -75,7 +75,7 @@ impl<'de> Deserialize<'de> for TaskSpec {
             if bash_script.trim_start().starts_with("#!") {
                 bash_script
             } else {
-                format!("#!/bin/bash\n{}", bash_script)
+                format!("#!/bin/bash\n{bash_script}")
             }
         } else if let Some(python_script) = helper.python {
             let python_script = deserialize_script_string(&python_script);
@@ -83,7 +83,7 @@ impl<'de> Deserialize<'de> for TaskSpec {
             if python_script.trim_start().starts_with("#!") {
                 python_script
             } else {
-                format!("#!/usr/bin/env python3\n{}", python_script)
+                format!("#!/usr/bin/env python3\n{python_script}")
             }
         } else if let Some(action_script) = helper.action {
             deserialize_script_string(&action_script)
@@ -110,14 +110,16 @@ fn deserialize_script_string(s: &str) -> String {
     let lines: Vec<&str> = s.lines().collect();
 
     // Find minimum indentation (ignoring empty lines)
-    let min_indent = lines.iter()
+    let min_indent = lines
+        .iter()
         .filter(|line| !line.trim().is_empty())
         .map(|line| line.len() - line.trim_start().len())
         .min()
         .unwrap_or(0);
 
     // Remove common indentation from each line
-    let dedented: Vec<String> = lines.iter()
+    let dedented: Vec<String> = lines
+        .iter()
         .map(|line| {
             if line.len() > min_indent {
                 line[min_indent..].to_string()
@@ -132,9 +134,9 @@ fn deserialize_script_string(s: &str) -> String {
     result.trim_start().trim_end().to_string()
 }
 
-
 impl TaskSpec {
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: String,
         help: Option<String>,
@@ -161,9 +163,10 @@ impl TaskSpec {
 }
 
 fn namify(name: &str) -> String {
-    name.split('|')
-        .find(|&part| part.starts_with("--"))
-        .map_or_else(|| name.split('|').next().unwrap().trim_start_matches('-').to_string(), |s| s.trim_start_matches("--").to_string())
+    name.split('|').find(|&part| part.starts_with("--")).map_or_else(
+        || name.split('|').next().unwrap().trim_start_matches('-').to_string(),
+        |s| s.trim_start_matches("--").to_string(),
+    )
 }
 
 #[test]

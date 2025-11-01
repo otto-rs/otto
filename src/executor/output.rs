@@ -1,7 +1,7 @@
 use std::{
-    path::PathBuf,
-    time::SystemTime,
     io::{self, Write},
+    path::{Path, PathBuf},
+    time::SystemTime,
 };
 
 use eyre::Result;
@@ -65,9 +65,9 @@ impl TeeWriter {
         let colored_prefix = colorize_task_prefix(&self.task_name);
         let terminal_output = format!("{} {}", colored_prefix, String::from_utf8_lossy(data));
         if self.is_stderr {
-            eprint!("{}", terminal_output);
+            eprint!("{terminal_output}");
         } else {
-            print!("{}", terminal_output);
+            print!("{terminal_output}");
         }
 
         // Ensure terminal output is flushed
@@ -94,7 +94,7 @@ pub struct TaskStreams {
 
 impl TaskStreams {
     /// Create new output streams for a task
-    pub async fn new(task_name: &str, output_dir: &PathBuf) -> Result<Self> {
+    pub async fn new(task_name: &str, output_dir: &Path) -> Result<Self> {
         // Create task directory if it doesn't exist
         let task_dir = output_dir.join(task_name);
         if !task_dir.exists() {
@@ -130,11 +130,7 @@ impl TaskStreams {
         };
 
         let file = File::create(output_file).await?;
-        let mut writer = TeeWriter::new(
-            file,
-            matches!(output_type, OutputType::Stderr),
-            task_name.clone()
-        ).await;
+        let mut writer = TeeWriter::new(file, matches!(output_type, OutputType::Stderr), task_name.clone()).await;
 
         let mut line = String::new();
 
@@ -198,11 +194,10 @@ mod tests {
 
         // Process the output
         let mut cursor = std::io::Cursor::new(test_output);
-        streams.process_output(
-            "test_task".to_string(),
-            OutputType::Stdout,
-            &mut cursor
-        ).await.unwrap();
+        streams
+            .process_output("test_task".to_string(), OutputType::Stdout, &mut cursor)
+            .await
+            .unwrap();
 
         // Verify file contents
         let contents = streams.read_output(OutputType::Stdout).await.unwrap();
@@ -230,17 +225,15 @@ mod tests {
         let mut stderr_cursor = std::io::Cursor::new(stderr_data);
 
         // Process both streams
-        streams.process_output(
-            "test_task".to_string(),
-            OutputType::Stdout,
-            &mut stdout_cursor
-        ).await.unwrap();
+        streams
+            .process_output("test_task".to_string(), OutputType::Stdout, &mut stdout_cursor)
+            .await
+            .unwrap();
 
-        streams.process_output(
-            "test_task".to_string(),
-            OutputType::Stderr,
-            &mut stderr_cursor
-        ).await.unwrap();
+        streams
+            .process_output("test_task".to_string(), OutputType::Stderr, &mut stderr_cursor)
+            .await
+            .unwrap();
 
         // Verify separate files
         let stdout_contents = streams.read_output(OutputType::Stdout).await.unwrap();

@@ -1,11 +1,14 @@
 use eyre::{Result, eyre};
-use std::collections::HashMap;
-use std::process::Command;
-use std::env;
 use regex::Regex;
+use std::collections::HashMap;
+use std::env;
+use std::process::Command;
 
 /// Evaluate environment variables with shell command substitution and variable resolution
-pub fn evaluate_envs(envs: &HashMap<String, String>, working_dir: Option<&std::path::Path>) -> Result<HashMap<String, String>> {
+pub fn evaluate_envs(
+    envs: &HashMap<String, String>,
+    working_dir: Option<&std::path::Path>,
+) -> Result<HashMap<String, String>> {
     let mut evaluated = HashMap::new();
     let mut pending: Vec<String> = envs.keys().cloned().collect();
     let mut iterations = 0;
@@ -56,14 +59,20 @@ pub fn evaluate_envs(envs: &HashMap<String, String>, working_dir: Option<&std::p
     }
 
     if iterations >= MAX_ITERATIONS {
-        return Err(eyre!("Maximum iterations reached while resolving environment variables - possible circular dependency"));
+        return Err(eyre!(
+            "Maximum iterations reached while resolving environment variables - possible circular dependency"
+        ));
     }
 
     Ok(evaluated)
 }
 
 /// Evaluate a single environment variable value with shell command substitution and variable resolution
-fn evaluate_single_env_value(value: &str, env_context: &HashMap<String, String>, working_dir: Option<&std::path::Path>) -> Result<String> {
+fn evaluate_single_env_value(
+    value: &str,
+    env_context: &HashMap<String, String>,
+    working_dir: Option<&std::path::Path>,
+) -> Result<String> {
     let mut result = value.to_string();
 
     // Step 1: Resolve shell command substitution $(...)
@@ -101,13 +110,18 @@ fn execute_shell_command(command_str: &str, working_dir: Option<&std::path::Path
         cmd.current_dir(dir);
     }
 
-    let output = cmd.output()
+    let output = cmd
+        .output()
         .map_err(|e| eyre!("Failed to execute command '{}': {}", command_str, e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(eyre!("Command '{}' failed with exit code {}: {}",
-                         command_str, output.status.code().unwrap_or(-1), stderr));
+        return Err(eyre!(
+            "Command '{}' failed with exit code {}: {}",
+            command_str,
+            output.status.code().unwrap_or(-1),
+            stderr
+        ));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -142,7 +156,7 @@ fn resolve_env_variables(input: &str, env_context: &HashMap<String, String>) -> 
         let var_name = &captures[1];
 
         // Skip if this is part of a ${...} pattern we already handled
-        if input.contains(&format!("${{{}}}", var_name)) {
+        if input.contains(&format!("${{{var_name}}}")) {
             continue;
         }
 

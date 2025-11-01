@@ -1,13 +1,13 @@
+use daggy::Dag;
+use eyre::Result;
+use hex;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use eyre::Result;
-use sha2::{Sha256, Digest};
-use hex;
-use daggy::Dag;
 
-use crate::cfg::task::TaskSpec;
 use crate::cfg::config::Value;
 use crate::cfg::env as env_eval;
+use crate::cfg::task::TaskSpec;
 
 pub type DAG<T> = Dag<T, (), u32>;
 
@@ -64,7 +64,11 @@ impl Task {
     }
 
     #[must_use]
-    pub fn from_task_with_cwd_and_global_envs(task_spec: &TaskSpec, cwd: &std::path::Path, global_envs: &HashMap<String, String>) -> Self {
+    pub fn from_task_with_cwd_and_global_envs(
+        task_spec: &TaskSpec,
+        cwd: &std::path::Path,
+        global_envs: &HashMap<String, String>,
+    ) -> Self {
         let name = task_spec.name.clone();
         let task_deps = task_spec.before.clone();
 
@@ -75,21 +79,24 @@ impl Task {
         let output_deps = Self::resolve_file_globs(&task_spec.output, cwd);
 
         // Evaluate environment variables with two-level merging: global then task-level
-        let evaluated_envs = Self::evaluate_merged_envs(global_envs, &task_spec.envs, cwd)
-            .unwrap_or_else(|e| {
-                eprintln!("Warning: Failed to evaluate environment variables for task '{}': {}", name, e);
-                HashMap::new()
-            });
+        let evaluated_envs = Self::evaluate_merged_envs(global_envs, &task_spec.envs, cwd).unwrap_or_else(|e| {
+            eprintln!("Warning: Failed to evaluate environment variables for task '{name}': {e}");
+            HashMap::new()
+        });
 
         // Note: We do NOT add after tasks here since they depend on us, not vice versa
         // The after dependencies will be handled during DAG construction
         let values = HashMap::new();
-        let action = task_spec.action.trim().to_string();  // Trim whitespace from script content
+        let action = task_spec.action.trim().to_string(); // Trim whitespace from script content
         Self::new(name, task_deps, file_deps, output_deps, evaluated_envs, values, action)
     }
 
     /// Evaluate and merge environment variables from global and task-level sources
-    fn evaluate_merged_envs(global_envs: &HashMap<String, String>, task_envs: &HashMap<String, String>, working_dir: &std::path::Path) -> Result<HashMap<String, String>> {
+    fn evaluate_merged_envs(
+        global_envs: &HashMap<String, String>,
+        task_envs: &HashMap<String, String>,
+        working_dir: &std::path::Path,
+    ) -> Result<HashMap<String, String>> {
         // Step 1: Create merged environment for task evaluation (global + task)
         let mut merged_envs = global_envs.clone();
         merged_envs.extend(task_envs.iter().map(|(k, v)| (k.clone(), v.clone())));

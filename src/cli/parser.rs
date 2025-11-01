@@ -7,17 +7,18 @@ use std::fmt::Debug;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use clap::{value_parser, Arg, ArgMatches, Command};
+use clap::{Arg, ArgMatches, Command, value_parser};
 use daggy::Dag;
 use expanduser::expanduser;
-use eyre::{eyre, Result};
-use hex;
-use sha2::{Digest, Sha256};
+use eyre::{Result, eyre};
 use glob;
+use hex;
+use once_cell::sync::Lazy;
+use sha2::{Digest, Sha256};
 
 use crate::cfg::config::{ConfigSpec, ParamSpec, TaskSpec, Value};
-use crate::cfg::param::ParamType;
 use crate::cfg::env as env_eval;
+use crate::cfg::param::ParamType;
 
 pub type DAG<T> = Dag<T, (), u32>;
 
@@ -30,24 +31,31 @@ const OTTOFILES: &[&str] = &[
     "OTTOFILE",
 ];
 
+static DEFAULT_JOBS: Lazy<String> = Lazy::new(|| num_cpus::get().to_string());
+
 fn calculate_hash(action: &String) -> String {
     let mut hasher = Sha256::new();
     hasher.update(action);
     let result = hasher.finalize();
-    hex::encode(&result)[..8].to_string()
+    hex::encode(result)[..8].to_string()
 }
 
 fn ottofile_not_found_message() -> String {
     use colored::Colorize;
 
-    let file_list = OTTOFILES.iter()
+    let file_list = OTTOFILES
+        .iter()
         .map(|f| format!("  {}", f.bright_yellow()))
         .collect::<Vec<_>>()
         .join("\n");
 
-    format!("{}\n\nOtto looks for one of the following files:\n{}",
-        "ERROR: No ottofile found in this directory or any parent directory!".red().bold(),
-        file_list)
+    format!(
+        "{}\n\nOtto looks for one of the following files:\n{}",
+        "ERROR: No ottofile found in this directory or any parent directory!"
+            .red()
+            .bold(),
+        file_list
+    )
 }
 
 #[derive(Debug)]
@@ -98,7 +106,11 @@ impl Task {
     }
 
     #[must_use]
-    pub fn from_task_with_cwd_and_global_envs(task_spec: &TaskSpec, cwd: &std::path::Path, global_envs: &HashMap<String, String>) -> Self {
+    pub fn from_task_with_cwd_and_global_envs(
+        task_spec: &TaskSpec,
+        cwd: &std::path::Path,
+        global_envs: &HashMap<String, String>,
+    ) -> Self {
         let name = task_spec.name.clone();
         let task_deps = task_spec.before.clone();
 
@@ -109,16 +121,15 @@ impl Task {
         let output_deps = Self::resolve_file_globs(&task_spec.output, cwd);
 
         // Evaluate environment variables with two-level merging: global then task-level
-        let evaluated_envs = Self::evaluate_merged_envs(global_envs, &task_spec.envs, cwd)
-            .unwrap_or_else(|e| {
-                eprintln!("Warning: Failed to evaluate environment variables for task '{}': {}", name, e);
-                HashMap::new()
-            });
+        let evaluated_envs = Self::evaluate_merged_envs(global_envs, &task_spec.envs, cwd).unwrap_or_else(|e| {
+            eprintln!("Warning: Failed to evaluate environment variables for task '{name}': {e}");
+            HashMap::new()
+        });
 
         // Note: We do NOT add after tasks here since they depend on us, not vice versa
         // The after dependencies will be handled during DAG construction
         let values = HashMap::new();
-        let action = task_spec.action.trim().to_string();  // Trim whitespace from script content
+        let action = task_spec.action.trim().to_string(); // Trim whitespace from script content
         Self::new(name, task_deps, file_deps, output_deps, evaluated_envs, values, action)
     }
 
@@ -126,7 +137,7 @@ impl Task {
     fn evaluate_merged_envs(
         global_envs: &HashMap<String, String>,
         task_envs: &HashMap<String, String>,
-        cwd: &std::path::Path
+        cwd: &std::path::Path,
     ) -> Result<HashMap<String, String>> {
         let mut merged_envs = HashMap::new();
 
@@ -173,13 +184,13 @@ impl Task {
                                 }
                             }
                             Err(e) => {
-                                eprintln!("Warning: Failed to resolve glob pattern '{}': {}", pattern, e);
+                                eprintln!("Warning: Failed to resolve glob pattern '{pattern}': {e}");
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("Warning: Invalid glob pattern '{}': {}", pattern, e);
+                    eprintln!("Warning: Invalid glob pattern '{pattern}': {e}");
                     // If glob fails, treat as literal path
                     resolved_paths.push(pattern.clone());
                 }
@@ -200,11 +211,12 @@ pub struct Parser {
     args: Vec<String>,
     pargs: Vec<Vec<String>>,
     ottofile: Option<PathBuf>,
+    jobs: usize,
 }
 
 impl Parser {
     pub fn new(args: Vec<String>) -> Result<Self> {
-        let prog = args.get(0).cloned().unwrap_or_else(|| "otto".to_string());
+        let prog = args.first().cloned().unwrap_or_else(|| "otto".to_string());
         let cwd = env::current_dir()?;
         let user = env::var("USER").unwrap_or_else(|_| "unknown".to_string());
 
@@ -217,10 +229,11 @@ impl Parser {
             args,
             pargs: Vec::new(),
             ottofile: None,
+            jobs: num_cpus::get(), // Default to number of CPUs
         })
     }
 
-    pub fn parse(&mut self) -> Result<(Vec<Task>, String, Option<PathBuf>)> {
+    pub fn parse(&mut self) -> Result<(Vec<Task>, String, Option<PathBuf>, usize)> {
         // Check if help was requested
         let help_requested = self.args.contains(&"--help".to_string()) || self.args.contains(&"-h".to_string());
 
@@ -235,7 +248,7 @@ impl Parser {
                         e.print().expect("clap error print failed");
                         std::process::exit(0);
                     }
-                                        ErrorKind::DisplayHelp => {
+                    ErrorKind::DisplayHelp => {
                         // Always show help, but add error message if no ottofile found
                         if help_requested {
                             let ottofile_value = ".".to_string();
@@ -255,6 +268,7 @@ impl Parser {
                                                 args: self.args.clone(),
                                                 pargs: Vec::new(),
                                                 ottofile: None,
+                                                jobs: num_cpus::get(),
                                             };
                                             temp_parser.inject_graph_meta_task();
                                             let mut help_cmd = temp_parser.build_help_command();
@@ -287,9 +301,23 @@ impl Parser {
         };
 
         // Extract ottofile and load config
-        let ottofile_value = matches.get_one::<String>("ottofile")
-            .map(|s| s.clone())
+        let ottofile_value = matches
+            .get_one::<String>("ottofile")
+            .cloned()
             .expect("ottofile should have a value from flag, env var, or default");
+
+        // Extract jobs parameter (has default value from DEFAULT_JOBS)
+        let jobs_str = matches
+            .get_one::<String>("jobs")
+            .expect("jobs should have default value");
+        self.jobs = jobs_str.parse::<usize>().unwrap_or_else(|_| {
+            eprintln!(
+                "Warning: Invalid jobs value '{}', using {} CPUs",
+                jobs_str,
+                num_cpus::get()
+            );
+            num_cpus::get()
+        });
 
         let ottofile_path = Self::divine_ottofile(ottofile_value)?;
         let (config_spec, hash, ottofile) = Self::load_config_from_path(ottofile_path)?;
@@ -327,7 +355,7 @@ impl Parser {
         // Process tasks and build DAG
         let tasks = self.process_tasks_with_filter(&tasks_to_run)?;
 
-        Ok((tasks, self.hash.clone(), self.ottofile.clone()))
+        Ok((tasks, self.hash.clone(), self.ottofile.clone(), self.jobs))
     }
 
     pub fn parse_all_tasks(&mut self) -> Result<(Vec<Task>, String, Option<PathBuf>)> {
@@ -350,7 +378,10 @@ impl Parser {
                     self.ottofile = ottofile;
 
                     // Get all task names (excluding graph)
-                    let all_task_names: Vec<String> = self.config_spec.tasks.keys()
+                    let all_task_names: Vec<String> = self
+                        .config_spec
+                        .tasks
+                        .keys()
                         .filter(|name| *name != "graph")
                         .cloned()
                         .collect();
@@ -363,8 +394,9 @@ impl Parser {
             };
 
             // Extract ottofile path from parsed arguments (Clap handles env var automatically)
-            let ottofile_value = matches.get_one::<String>("ottofile")
-                .map(|s| s.clone())
+            let ottofile_value = matches
+                .get_one::<String>("ottofile")
+                .cloned()
                 .expect("ottofile should have a value from flag, env var, or default");
 
             let ottofile_path = Self::divine_ottofile(ottofile_value)?;
@@ -376,7 +408,10 @@ impl Parser {
         }
 
         // Get all task names (excluding graph)
-        let all_task_names: Vec<String> = self.config_spec.tasks.keys()
+        let all_task_names: Vec<String> = self
+            .config_spec
+            .tasks
+            .keys()
             .filter(|name| *name != "graph")
             .cloned()
             .collect();
@@ -399,7 +434,7 @@ impl Parser {
                     .help("path to the ottofile")
                     .default_value(".")
                     .env("OTTOFILE")
-                    .value_parser(value_parser!(String))
+                    .value_parser(value_parser!(String)),
             )
             .arg(
                 Arg::new("jobs")
@@ -407,40 +442,40 @@ impl Parser {
                     .long("jobs")
                     .value_name("N")
                     .help("Number of parallel jobs")
-                    .default_value("1")
-                    .value_parser(value_parser!(String))
+                    .default_value(DEFAULT_JOBS.as_str())
+                    .value_parser(value_parser!(String)),
             )
             .arg(
                 Arg::new("verbose")
                     .short('v')
                     .long("verbose")
                     .help("Verbose output")
-                    .action(clap::ArgAction::SetTrue)
+                    .action(clap::ArgAction::SetTrue),
             )
             .arg(
                 Arg::new("quiet")
                     .short('q')
                     .long("quiet")
                     .help("Quiet output")
-                    .action(clap::ArgAction::SetTrue)
+                    .action(clap::ArgAction::SetTrue),
             )
             .arg(
                 Arg::new("dry-run")
                     .long("dry-run")
                     .help("Show what would be done without executing")
-                    .action(clap::ArgAction::SetTrue)
+                    .action(clap::ArgAction::SetTrue),
             )
             .arg(
                 Arg::new("force")
                     .long("force")
                     .help("Force execution even if up-to-date")
-                    .action(clap::ArgAction::SetTrue)
+                    .action(clap::ArgAction::SetTrue),
             )
             .arg(
                 Arg::new("no-deps")
                     .long("no-deps")
                     .help("Don't run dependencies")
-                    .action(clap::ArgAction::SetTrue)
+                    .action(clap::ArgAction::SetTrue),
             )
             .allow_external_subcommands(true)
     }
@@ -474,11 +509,9 @@ impl Parser {
 
         // Empty args - check if we have default tasks
         let default_tasks = &self.config_spec.otto.tasks;
-        default_tasks.is_empty() ||
-        (default_tasks.len() == 1 && default_tasks[0] == "*" && self.config_spec.tasks.is_empty())
+        default_tasks.is_empty()
+            || (default_tasks.len() == 1 && default_tasks[0] == "*" && self.config_spec.tasks.is_empty())
     }
-
-
 
     fn show_help(&self, args: &[String]) -> Result<()> {
         if args.is_empty() {
@@ -496,7 +529,7 @@ impl Parser {
                 let mut task_cmd = Self::task_to_command(task);
                 task_cmd.print_help()?;
             } else {
-                eprintln!("Task '{}' not found", task_name);
+                eprintln!("Task '{task_name}' not found");
                 std::process::exit(1);
             }
         }
@@ -516,16 +549,18 @@ impl Parser {
             if task_pattern == "*" {
                 // "*" means all tasks
                 resolved_tasks.extend(
-                    self.config_spec.tasks.keys()
+                    self.config_spec
+                        .tasks
+                        .keys()
                         .filter(|name| *name != "graph") // Exclude meta-tasks
-                        .cloned()
+                        .cloned(),
                 );
             } else {
                 // Specific task name
                 if self.config_spec.tasks.contains_key(task_pattern) {
                     resolved_tasks.push(task_pattern.clone());
                 } else {
-                    eprintln!("Warning: Default task '{}' not found", task_pattern);
+                    eprintln!("Warning: Default task '{task_pattern}' not found");
                 }
             }
         }
@@ -538,16 +573,15 @@ impl Parser {
     }
 
     fn get_task_names(&self) -> Vec<&str> {
-        let mut task_names: Vec<&str> = self.config_spec.tasks.keys()
-            .map(String::as_str)
-            .collect();
+        let mut task_names: Vec<&str> = self.config_spec.tasks.keys().map(String::as_str).collect();
         task_names.push("graph"); // Always include built-in tasks
         task_names.push("help"); // Always include help as a special command
         task_names
     }
 
     fn extract_task_names_from_partitions(&self) -> Vec<String> {
-        self.pargs.iter()
+        self.pargs
+            .iter()
             .filter_map(|p| if p.is_empty() { None } else { Some(p[0].clone()) })
             .collect()
     }
@@ -557,11 +591,10 @@ impl Parser {
         let global_envs = if self.config_spec.otto.envs.is_empty() {
             HashMap::new()
         } else {
-            env_eval::evaluate_envs(&self.config_spec.otto.envs, Some(&self.cwd))
-                .unwrap_or_else(|e| {
-                    eprintln!("Warning: Failed to evaluate global environment variables: {}", e);
-                    HashMap::new()
-                })
+            env_eval::evaluate_envs(&self.config_spec.otto.envs, Some(&self.cwd)).unwrap_or_else(|e| {
+                eprintln!("Warning: Failed to evaluate global environment variables: {e}");
+                HashMap::new()
+            })
         };
 
         // Step 1: Compute all task dependencies using simple linear algorithm
@@ -570,13 +603,16 @@ impl Parser {
         // Step 2: Find all tasks we need (requested + their transitive dependencies)
         let mut tasks_needed = HashSet::new();
         for task_name in requested_tasks {
-            self.collect_transitive_deps(task_name, &task_deps, &mut tasks_needed)?;
+            Self::collect_transitive_deps(task_name, &task_deps, &mut tasks_needed)?;
         }
 
         // Step 3: Build task list from needed tasks
         let mut tasks = Vec::new();
         for task_name in &tasks_needed {
-            let task_spec = self.config_spec.tasks.get(task_name)
+            let task_spec = self
+                .config_spec
+                .tasks
+                .get(task_name)
                 .ok_or_else(|| eyre!("Task '{}' not found", task_name))?;
 
             let mut task = Task::from_task_with_cwd_and_global_envs(task_spec, &self.cwd, &global_envs);
@@ -596,7 +632,8 @@ impl Parser {
                             let flag_value = matches.get_flag(param_spec.name.as_str());
                             let value_str = if flag_value { "true" } else { "false" };
 
-                            task.values.insert(param_spec.name.clone(), Value::Item(value_str.to_string()));
+                            task.values
+                                .insert(param_spec.name.clone(), Value::Item(value_str.to_string()));
                             // Convert hyphens to underscores for bash compatibility
                             let env_name = param_spec.name.replace('-', "_");
                             task.envs.insert(env_name, value_str.to_string());
@@ -604,13 +641,15 @@ impl Parser {
                         ParamType::OPT | ParamType::POS => {
                             // Argument with value - use get_one::<String>()
                             if let Some(value) = matches.get_one::<String>(param_spec.name.as_str()) {
-                                task.values.insert(param_spec.name.clone(), Value::Item(value.to_string()));
+                                task.values
+                                    .insert(param_spec.name.clone(), Value::Item(value.to_string()));
                                 // Convert hyphens to underscores for bash compatibility
                                 let env_name = param_spec.name.replace('-', "_");
                                 task.envs.insert(env_name, value.to_string());
                             } else if let Some(ref default) = param_spec.default {
                                 // Apply default value if not provided
-                                task.values.insert(param_spec.name.clone(), Value::Item(default.clone()));
+                                task.values
+                                    .insert(param_spec.name.clone(), Value::Item(default.clone()));
                                 // Convert hyphens to underscores for bash compatibility
                                 let env_name = param_spec.name.replace('-', "_");
                                 task.envs.insert(env_name, default.clone());
@@ -625,7 +664,8 @@ impl Parser {
                         ParamType::FLG => {
                             // Boolean flag defaults to false (or the specified default)
                             let default_value = param_spec.default.as_deref().unwrap_or("false");
-                            task.values.insert(param_spec.name.clone(), Value::Item(default_value.to_string()));
+                            task.values
+                                .insert(param_spec.name.clone(), Value::Item(default_value.to_string()));
                             // Convert hyphens to underscores for bash compatibility
                             let env_name = param_spec.name.replace('-', "_");
                             task.envs.insert(env_name, default_value.to_string());
@@ -633,7 +673,8 @@ impl Parser {
                         ParamType::OPT | ParamType::POS => {
                             // Apply default value if specified
                             if let Some(ref default) = param_spec.default {
-                                task.values.insert(param_spec.name.clone(), Value::Item(default.clone()));
+                                task.values
+                                    .insert(param_spec.name.clone(), Value::Item(default.clone()));
                                 // Convert hyphens to underscores for bash compatibility
                                 let env_name = param_spec.name.replace('-', "_");
                                 task.envs.insert(env_name, default.clone());
@@ -644,9 +685,7 @@ impl Parser {
             }
 
             // Override task_deps with computed dependencies
-            task.task_deps = task_deps.get(task_name)
-                .map(|deps| deps.iter().cloned().collect())
-                .unwrap_or_default();
+            task.task_deps = task_deps.get(task_name).map(|deps| deps.to_vec()).unwrap_or_default();
 
             tasks.push(task);
         }
@@ -676,7 +715,11 @@ impl Parser {
         Ok(task_deps)
     }
 
-    fn collect_transitive_deps(&self, task_name: &str, task_deps: &HashMap<String, Vec<String>>, collected: &mut HashSet<String>) -> Result<()> {
+    fn collect_transitive_deps(
+        task_name: &str,
+        task_deps: &HashMap<String, Vec<String>>,
+        collected: &mut HashSet<String>,
+    ) -> Result<()> {
         if collected.contains(task_name) {
             return Ok(());
         }
@@ -685,7 +728,7 @@ impl Parser {
 
         if let Some(deps) = task_deps.get(task_name) {
             for dep in deps {
-                self.collect_transitive_deps(dep, task_deps, collected)?;
+                Self::collect_transitive_deps(dep, task_deps, collected)?;
             }
         }
 
@@ -739,7 +782,7 @@ impl Parser {
 
                 // Add choices validation if specified
                 if !param_spec.choices.is_empty() {
-                    let choices: Vec<String> = param_spec.choices.iter().cloned().collect();
+                    let choices: Vec<String> = param_spec.choices.to_vec();
                     arg = arg.value_parser(clap::builder::PossibleValuesParser::new(choices));
                 }
             }
@@ -747,8 +790,10 @@ impl Parser {
 
         // Handle positional arguments
         if param_spec.param_type == ParamType::POS {
-            let value_name = param_spec.metavar.as_deref()
-                .unwrap_or_else(|| param_spec.name.as_str())
+            let value_name = param_spec
+                .metavar
+                .as_deref()
+                .unwrap_or(param_spec.name.as_str())
                 .to_string();
             arg = arg.value_name(value_name);
         }
@@ -766,47 +811,50 @@ impl Parser {
                     .long("jobs")
                     .value_name("N")
                     .help("Number of parallel jobs")
-                    .default_value("1")
-                    .value_parser(value_parser!(String))
+                    .default_value(DEFAULT_JOBS.as_str())
+                    .value_parser(value_parser!(String)),
             )
             .arg(
                 Arg::new("verbose")
                     .short('v')
                     .long("verbose")
                     .help("Verbose output")
-                    .action(clap::ArgAction::SetTrue)
+                    .action(clap::ArgAction::SetTrue),
             )
             .arg(
                 Arg::new("quiet")
                     .short('q')
                     .long("quiet")
                     .help("Quiet output")
-                    .action(clap::ArgAction::SetTrue)
+                    .action(clap::ArgAction::SetTrue),
             )
             .arg(
                 Arg::new("dry-run")
                     .long("dry-run")
                     .help("Show what would be done without executing")
-                    .action(clap::ArgAction::SetTrue)
+                    .action(clap::ArgAction::SetTrue),
             )
             .arg(
                 Arg::new("force")
                     .long("force")
                     .help("Force execution even if up-to-date")
-                    .action(clap::ArgAction::SetTrue)
+                    .action(clap::ArgAction::SetTrue),
             )
             .arg(
                 Arg::new("no-deps")
                     .long("no-deps")
                     .help("Don't run dependencies")
-                    .action(clap::ArgAction::SetTrue)
+                    .action(clap::ArgAction::SetTrue),
             )
             .allow_external_subcommands(true);
 
         // Add tasks as subcommands
         if !self.config_spec.tasks.is_empty() {
             // Collect all tasks except graph, sort them alphabetically
-            let mut regular_tasks: Vec<_> = self.config_spec.tasks.iter()
+            let mut regular_tasks: Vec<_> = self
+                .config_spec
+                .tasks
+                .iter()
                 .filter(|(name, _)| *name != "graph")
                 .collect();
             regular_tasks.sort_by_key(|(name, _)| name.as_str());
@@ -837,47 +885,47 @@ impl Parser {
                     .long("jobs")
                     .value_name("N")
                     .help("Number of parallel jobs")
-                    .default_value("1")
-                    .value_parser(value_parser!(String))
+                    .default_value(DEFAULT_JOBS.as_str())
+                    .value_parser(value_parser!(String)),
             )
             .arg(
                 Arg::new("verbose")
                     .short('v')
                     .long("verbose")
                     .help("Verbose output")
-                    .action(clap::ArgAction::SetTrue)
+                    .action(clap::ArgAction::SetTrue),
             )
             .arg(
                 Arg::new("quiet")
                     .short('q')
                     .long("quiet")
                     .help("Quiet output")
-                    .action(clap::ArgAction::SetTrue)
+                    .action(clap::ArgAction::SetTrue),
             )
             .arg(
                 Arg::new("dry-run")
                     .long("dry-run")
                     .help("Show what would be done without executing")
-                    .action(clap::ArgAction::SetTrue)
+                    .action(clap::ArgAction::SetTrue),
             )
             .arg(
                 Arg::new("force")
                     .long("force")
                     .help("Force execution even if up-to-date")
-                    .action(clap::ArgAction::SetTrue)
+                    .action(clap::ArgAction::SetTrue),
             )
             .arg(
                 Arg::new("no-deps")
                     .long("no-deps")
                     .help("Don't run dependencies")
-                    .action(clap::ArgAction::SetTrue)
+                    .action(clap::ArgAction::SetTrue),
             )
             .after_help(ottofile_not_found_message())
             .allow_external_subcommands(true)
     }
 
     fn inject_graph_meta_task(&mut self) {
-        use crate::cfg::param::{ParamType, Nargs};
+        use crate::cfg::param::{Nargs, ParamType};
 
         // Add graph meta-task to the configuration
         let graph_task = TaskSpec {
@@ -892,36 +940,48 @@ impl Parser {
                 let mut params = HashMap::new();
 
                 // Add --format parameter
-                params.insert("format".to_string(), ParamSpec {
-                    name: "format".to_string(),
-                    short: Some('f'),
-                    long: Some("format".to_string()),
-                    param_type: ParamType::OPT,
-                    dest: None,
-                    metavar: None,
-                    default: Some("ascii".to_string()),
-                    constant: Value::Empty,
-                    choices: vec!["ascii".to_string(), "dot".to_string(), "svg".to_string(), "png".to_string(), "pdf".to_string()],
-                    nargs: Nargs::One,
-                    help: Some("Output format".to_string()),
-                    value: Value::Empty,
-                });
+                params.insert(
+                    "format".to_string(),
+                    ParamSpec {
+                        name: "format".to_string(),
+                        short: Some('f'),
+                        long: Some("format".to_string()),
+                        param_type: ParamType::OPT,
+                        dest: None,
+                        metavar: None,
+                        default: Some("ascii".to_string()),
+                        constant: Value::Empty,
+                        choices: vec![
+                            "ascii".to_string(),
+                            "dot".to_string(),
+                            "svg".to_string(),
+                            "png".to_string(),
+                            "pdf".to_string(),
+                        ],
+                        nargs: Nargs::One,
+                        help: Some("Output format".to_string()),
+                        value: Value::Empty,
+                    },
+                );
 
                 // Add --output parameter
-                params.insert("output".to_string(), ParamSpec {
-                    name: "output".to_string(),
-                    short: None,
-                    long: Some("output".to_string()),
-                    param_type: ParamType::OPT,
-                    dest: None,
-                    metavar: None,
-                    default: None,
-                    constant: Value::Empty,
-                    choices: vec![],
-                    nargs: Nargs::One,
-                    help: Some("Output file path".to_string()),
-                    value: Value::Empty,
-                });
+                params.insert(
+                    "output".to_string(),
+                    ParamSpec {
+                        name: "output".to_string(),
+                        short: None,
+                        long: Some("output".to_string()),
+                        param_type: ParamType::OPT,
+                        dest: None,
+                        metavar: None,
+                        default: None,
+                        constant: Value::Empty,
+                        choices: vec![],
+                        nargs: Nargs::One,
+                        help: Some("Output file path".to_string()),
+                        value: Value::Empty,
+                    },
+                );
 
                 params
             },
@@ -965,7 +1025,7 @@ impl Parser {
             let mut hasher = Sha256::new();
             hasher.update(&content);
             let result = hasher.finalize();
-            let hash = hex::encode(&result)[..8].to_string();
+            let hash = hex::encode(result)[..8].to_string();
             let config_spec: ConfigSpec = serde_yaml::from_str(&content)?;
             Ok((config_spec, hash, Some(ottofile)))
         } else {
@@ -984,7 +1044,7 @@ fn indices(args: &[String], task_names: &[&str]) -> Vec<usize> {
     indices
 }
 
-fn partitions(args: &Vec<String>, task_names: &[&str]) -> Vec<Vec<String>> {
+fn partitions(args: &[String], task_names: &[&str]) -> Vec<Vec<String>> {
     let task_indices = indices(args, task_names);
     if task_indices.is_empty() {
         return vec![];
@@ -1007,7 +1067,12 @@ mod tests {
 
     #[test]
     fn test_indices() {
-        let args = vec!["task1".to_string(), "arg2".to_string(), "task2".to_string(), "arg3".to_string()];
+        let args = vec![
+            "task1".to_string(),
+            "arg2".to_string(),
+            "task2".to_string(),
+            "arg3".to_string(),
+        ];
         let task_names = &["task1", "task2"];
         let expected = vec![0, 2];
         assert_eq!(indices(&args, task_names), expected);
@@ -1015,11 +1080,16 @@ mod tests {
 
     #[test]
     fn test_partitions() {
-        let args = vec!["task1".to_string(), "arg2".to_string(), "task2".to_string(), "arg3".to_string()];
+        let args = vec![
+            "task1".to_string(),
+            "arg2".to_string(),
+            "task2".to_string(),
+            "arg3".to_string(),
+        ];
         let task_names = &["task1", "task2"];
         let expected = vec![
             vec!["task1".to_string(), "arg2".to_string()],
-            vec!["task2".to_string(), "arg3".to_string()]
+            vec!["task2".to_string(), "arg3".to_string()],
         ];
         assert_eq!(partitions(&args, task_names), expected);
     }
@@ -1047,25 +1117,28 @@ mod tests {
 
         let task_names = &["build", "test", "deploy"];
         let expected = vec![
-            vec!["build".to_string(), "--release".to_string(), "--target=x86_64-unknown-linux-gnu".to_string()],
-            vec!["test".to_string(), "--verbose".to_string(), "--filter=integration".to_string()],
-            vec!["deploy".to_string(), "--environment=staging".to_string()]
+            vec![
+                "build".to_string(),
+                "--release".to_string(),
+                "--target=x86_64-unknown-linux-gnu".to_string(),
+            ],
+            vec![
+                "test".to_string(),
+                "--verbose".to_string(),
+                "--filter=integration".to_string(),
+            ],
+            vec!["deploy".to_string(), "--environment=staging".to_string()],
         ];
 
         assert_eq!(partitions(&args, task_names), expected);
     }
 
     // New tests for flag functionality
-    use crate::cfg::param::{ParamSpec, ParamType, Value, Nargs};
+    use crate::cfg::param::{Nargs, ParamSpec, ParamType, Value};
     use crate::cfg::task::TaskSpec;
     use clap::Command;
 
-    fn create_test_param_spec(
-        name: &str,
-        param_type: ParamType,
-        short: Option<char>,
-        long: Option<&str>
-    ) -> ParamSpec {
+    fn create_test_param_spec(name: &str, param_type: ParamType, short: Option<char>, long: Option<&str>) -> ParamSpec {
         let default = match param_type {
             ParamType::FLG => Some("false".to_string()),
             _ => None,
@@ -1082,7 +1155,7 @@ mod tests {
             constant: Value::Empty,
             choices: vec![],
             nargs: Nargs::default(),
-            help: Some(format!("Help for {}", name)),
+            help: Some(format!("Help for {name}")),
             value: Value::Empty,
         }
     }
@@ -1182,7 +1255,11 @@ mod tests {
         // Add argument flag
         let mut env_param = create_test_param_spec("env", ParamType::OPT, Some('e'), Some("env"));
         env_param.default = Some("development".to_string());
-        env_param.choices = vec!["development".to_string(), "staging".to_string(), "production".to_string()];
+        env_param.choices = vec![
+            "development".to_string(),
+            "staging".to_string(),
+            "production".to_string(),
+        ];
         task_spec.params.insert("env".to_string(), env_param);
 
         // Add positional argument
@@ -1192,12 +1269,9 @@ mod tests {
         let cmd = Parser::task_to_command(&task_spec);
 
         // Test with all parameters
-        let matches = cmd.try_get_matches_from(vec![
-            "build",
-            "--verbose",
-            "--env", "production",
-            "input.txt"
-        ]).unwrap();
+        let matches = cmd
+            .try_get_matches_from(vec!["build", "--verbose", "--env", "production", "input.txt"])
+            .unwrap();
 
         assert!(matches.get_flag("verbose"));
         assert_eq!(matches.get_one::<String>("env").unwrap(), "production");
@@ -1221,7 +1295,9 @@ mod tests {
 
         // Test with all flags
         let cmd = Parser::task_to_command(&task_spec);
-        let matches = cmd.try_get_matches_from(vec!["test", "-v", "--coverage", "-w"]).unwrap();
+        let matches = cmd
+            .try_get_matches_from(vec!["test", "-v", "--coverage", "-w"])
+            .unwrap();
         assert!(matches.get_flag("verbose"));
         assert!(matches.get_flag("coverage"));
         assert!(matches.get_flag("watch"));
@@ -1232,5 +1308,91 @@ mod tests {
         assert!(!matches.get_flag("verbose"));
         assert!(!matches.get_flag("coverage"));
         assert!(!matches.get_flag("watch"));
+    }
+
+    #[test]
+    fn test_default_jobs_value() {
+        // Test that DEFAULT_JOBS equals num_cpus::get()
+        let expected = num_cpus::get().to_string();
+        assert_eq!(DEFAULT_JOBS.as_str(), expected);
+    }
+
+    #[test]
+    fn test_jobs_parameter_parsing() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        // Create a temporary directory with a minimal ottofile
+        let temp_dir = TempDir::new().unwrap();
+        let ottofile_path = temp_dir.path().join("otto.yml");
+        fs::write(&ottofile_path, "tasks:\n  test:\n    action: echo test\n").unwrap();
+
+        // Test with explicit jobs value
+        let args = vec![
+            "otto".to_string(),
+            "-j".to_string(),
+            "4".to_string(),
+            "--ottofile".to_string(),
+            ottofile_path.to_string_lossy().to_string(),
+            "test".to_string(),
+        ];
+
+        let mut parser = Parser::new(args).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok());
+        let (_, _, _, jobs) = result.unwrap();
+        assert_eq!(jobs, 4);
+    }
+
+    #[test]
+    fn test_jobs_parameter_default() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        // Create a temporary directory with a minimal ottofile
+        let temp_dir = TempDir::new().unwrap();
+        let ottofile_path = temp_dir.path().join("otto.yml");
+        fs::write(&ottofile_path, "tasks:\n  test:\n    action: echo test\n").unwrap();
+
+        // Test without explicit jobs value (should default to num_cpus::get())
+        let args = vec![
+            "otto".to_string(),
+            "--ottofile".to_string(),
+            ottofile_path.to_string_lossy().to_string(),
+            "test".to_string(),
+        ];
+
+        let mut parser = Parser::new(args).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok());
+        let (_, _, _, jobs) = result.unwrap();
+        assert_eq!(jobs, num_cpus::get());
+    }
+
+    #[test]
+    fn test_jobs_parameter_invalid() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        // Create a temporary directory with a minimal ottofile
+        let temp_dir = TempDir::new().unwrap();
+        let ottofile_path = temp_dir.path().join("otto.yml");
+        fs::write(&ottofile_path, "tasks:\n  test:\n    action: echo test\n").unwrap();
+
+        // Test with invalid jobs value (should fall back to num_cpus::get())
+        let args = vec![
+            "otto".to_string(),
+            "-j".to_string(),
+            "invalid".to_string(),
+            "--ottofile".to_string(),
+            ottofile_path.to_string_lossy().to_string(),
+            "test".to_string(),
+        ];
+
+        let mut parser = Parser::new(args).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok());
+        let (_, _, _, jobs) = result.unwrap();
+        assert_eq!(jobs, num_cpus::get());
     }
 }

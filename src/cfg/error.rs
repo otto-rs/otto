@@ -3,8 +3,8 @@
 use std::fmt;
 use std::io;
 
+use eyre::{Report, Result, eyre};
 use std::fmt::{Debug, Display, Formatter};
-use eyre::{eyre, Result, Report};
 
 // Since ConfigError types aren't used elsewhere in the codebase,
 // we can simplify this to just use eyre::Report directly.

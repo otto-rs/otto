@@ -15,7 +15,7 @@ fn format_items(items: &[&str], before: Option<&str>, between: Option<&str>, aft
     let after_str = after.unwrap_or("");
 
     if items.is_empty() {
-        return format!("{}{}", before_str, after_str);
+        return format!("{before_str}{after_str}");
     }
 
     let mut result = String::new();

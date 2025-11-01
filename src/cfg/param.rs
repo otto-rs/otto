@@ -1,8 +1,8 @@
 //#![allow(unused_imports, unused_variables, dead_code)]
 
 use eyre::Result;
-use serde::de::{Deserializer, Error, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
+use serde::de::{Deserializer, Error, MapAccess, SeqAccess, Visitor};
 use std::collections::HashMap;
 use std::fmt;
 use std::vec::Vec;
@@ -187,8 +187,8 @@ fn divine(title: &str) -> (String, Option<char>, Option<String>) {
     let flags: Vec<String> = title.split('|').map(std::string::ToString::to_string).collect();
     let short = flags
         .iter()
+        .filter(|&i| i.starts_with('-') && i.len() == 2)
         .cloned()
-        .filter(|i| i.starts_with('-') && i.len() == 2)
         .collect::<String>()
         .trim_matches('-')
         .chars()
@@ -197,8 +197,8 @@ fn divine(title: &str) -> (String, Option<char>, Option<String>) {
     let long = Some(String::from(
         flags
             .iter()
+            .filter(|&i| i.starts_with("--") && i.len() > 2)
             .cloned()
-            .filter(|i| i.starts_with("--") && i.len() > 2)
             .collect::<String>()
             .trim_matches('-'),
     ))
@@ -495,7 +495,10 @@ mod tests {
     fn test_value_display() {
         assert_eq!(Value::Empty.to_string(), "Value::Empty");
         assert_eq!(Value::Item("test".to_string()).to_string(), "Value::Item(test)");
-        assert_eq!(Value::List(vec!["a".to_string(), "b".to_string()]).to_string(), "Value::List([a, b])");
+        assert_eq!(
+            Value::List(vec!["a".to_string(), "b".to_string()]).to_string(),
+            "Value::List([a, b])"
+        );
 
         let mut dict = HashMap::new();
         dict.insert("key".to_string(), "value".to_string());

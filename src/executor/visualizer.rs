@@ -1,13 +1,13 @@
+use eyre::Result;
+use log::info;
 use std::{
     collections::HashMap,
     sync::Arc,
     time::{Duration, SystemTime},
 };
-use tokio::sync::{broadcast, Mutex};
-use log::info;
-use eyre::Result;
+use tokio::sync::{Mutex, broadcast};
 
-use super::output::{TaskOutput, OutputType};
+use super::output::{OutputType, TaskOutput};
 
 /// Configuration for output visualization
 #[derive(Debug, Clone)]
@@ -69,9 +69,7 @@ impl OutputVisualizer {
     async fn process_output(&self, output: TaskOutput) -> Result<()> {
         let mut buffers = self.output_buffers.lock().await;
 
-        let buffer = buffers
-            .entry(output.task_name.clone())
-            .or_insert_with(Vec::new);
+        let buffer = buffers.entry(output.task_name.clone()).or_insert_with(Vec::new);
 
         // Add new output
         buffer.push(output.clone());
@@ -83,7 +81,7 @@ impl OutputVisualizer {
 
         // Format and display the output
         let formatted = self.format_output(&output);
-        println!("{}", formatted);
+        println!("{formatted}");
 
         Ok(())
     }
@@ -93,11 +91,12 @@ impl OutputVisualizer {
         let mut parts = Vec::new();
 
         if self.config.show_timestamps {
-            let timestamp = output.timestamp
+            let timestamp = output
+                .timestamp
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or(Duration::from_secs(0))
                 .as_secs();
-            parts.push(format!("[{}]", timestamp));
+            parts.push(format!("[{timestamp}]"));
         }
 
         if self.config.show_task_names {
@@ -109,7 +108,7 @@ impl OutputVisualizer {
                 OutputType::Stdout => "out",
                 OutputType::Stderr => "err",
             };
-            parts.push(format!("[{}]", stream));
+            parts.push(format!("[{stream}]"));
         }
 
         parts.push(output.content.clone());
@@ -119,9 +118,7 @@ impl OutputVisualizer {
     /// Get recent output for a specific task
     pub async fn get_task_output(&self, task_name: &str) -> Vec<TaskOutput> {
         let buffers = self.output_buffers.lock().await;
-        buffers.get(task_name)
-            .cloned()
-            .unwrap_or_default()
+        buffers.get(task_name).cloned().unwrap_or_default()
     }
 
     /// Clear output buffer for a task
@@ -180,7 +177,7 @@ mod tests {
                 task_name: "test_task".to_string(),
                 stream_type: OutputType::Stdout,
                 timestamp: SystemTime::UNIX_EPOCH,
-                content: format!("output {}", i),
+                content: format!("output {i}"),
             };
             visualizer.process_output(output).await.unwrap();
         }

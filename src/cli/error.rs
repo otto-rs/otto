@@ -4,7 +4,7 @@ use std::env;
 use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::path::PathBuf;
 
-use eyre::{eyre, Result, Report};
+use eyre::{Report, Result, eyre};
 
 // Since these error types aren't used elsewhere in the codebase,
 // we can simplify this to just use eyre::Report directly.
