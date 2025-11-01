@@ -30,43 +30,60 @@ tasks:
       echo "Otto tasks:"
       echo "  otto ci              - Full CI pipeline"
       echo "  otto quick           - Fast validation"
-      echo "  otto test-suite      - All tests with details"
 
-  # Testing (only meaningful aggregations)
-  test-suite:
-    help: "Run all tests with verbose output and timing"
+  # Individual quality checks (for parallel execution)
+  check:
+    help: "Fast compile check"
     bash: |
-      echo "=== Running Unit Tests ==="
-      cargo test --lib -- --nocapture
+      cargo check
+
+  clippy:
+    help: "Run Clippy linter"
+    bash: |
+      cargo clippy -- -D warnings
+
+  fmt-check:
+    help: "Check code formatting"
+    bash: |
+      cargo fmt -- --check
+
+  test:
+    help: "Run all tests"
+    bash: |
+      cargo test
+
+  doc-build:
+    help: "Build documentation"
+    bash: |
+      cargo doc --no-deps
+
+  # Meta task: quick validation (3 things in parallel)
+  quick:
+    help: "Quick validation (check + test + fmt-check in parallel)"
+    before: [check, test, fmt-check]
+    bash: |
+      echo "✅ Quick checks passed!"
+
+  # Meta task: CI pipeline (3 checks in parallel)
+  ci:
+    help: "Full CI pipeline (test + clippy + fmt-check in parallel)"
+    before: [test, clippy, fmt-check]
+    bash: |
+      echo "✅ All CI checks passed!"
+
+  # Pre-commit workflow
+  pre-commit:
+    help: "Pre-commit checks (format, then run CI)"
+    bash: |
+      echo "=== Formatting Code ==="
+      cargo fmt
       echo ""
-      echo "=== Running Integration Tests ==="
-      cargo test --test '*' -- --nocapture
+      echo "=== Running CI Checks ==="
+      otto ci
       echo ""
-      echo "✅ All tests passed!"
+      echo "✅ Ready to commit!"
 
-  test-parallel:
-    help: "Run tests in parallel with custom job count"
-    bash: |
-      echo "Running tests with parallel execution..."
-      cargo test -- --test-threads=4
-
-  # Examples - These actually add value
-  run-examples:
-    help: "Run all example tasks (ex1-ex13)"
-    bash: |
-      echo "Running example tasks..."
-      for dir in examples/ex{1..13}; do
-        if [ -d "$dir" ]; then
-          echo ""
-          echo "=== Running $dir ==="
-          cd "$dir"
-          if [ -f "otto.yml" ] || [ -f "otto.yaml" ] || [ -f ".otto.yml" ]; then
-            cargo run --quiet --manifest-path=../../Cargo.toml -- $(basename $(pwd -P)) 2>&1 | head -20
-          fi
-          cd ../..
-        fi
-      done
-
+  # Examples
   validate-examples:
     help: "Validate all example ottofiles parse correctly"
     bash: |
@@ -92,68 +109,29 @@ tasks:
         exit 1
       fi
 
-  # CI - This actually combines multiple checks
-  ci:
-    help: "Full CI pipeline (build + test + clippy + fmt-check)"
+  # Complete validation (4 things in parallel)
+  all:
+    help: "Run everything (ci + doc + examples in parallel)"
+    before: [ci, doc-build, validate-examples]
     bash: |
-      echo "=== Building ==="
-      cargo build || exit 1
       echo ""
-      echo "=== Running Tests ==="
-      cargo test || exit 1
+      echo "=== Summary ==="
+      echo "✅ All tests passed"
+      echo "✅ Clippy checks passed"
+      echo "✅ Format checks passed"
+      echo "✅ Documentation built"
+      echo "✅ Examples validated"
       echo ""
-      echo "=== Running Clippy ==="
-      cargo clippy -- -D warnings || exit 1
-      echo ""
-      echo "=== Checking Format ==="
-      cargo fmt -- --check || exit 1
-      echo ""
-      echo "✅ All CI checks passed!"
+      echo "🎉 Everything looks great!"
 
-  quick:
-    help: "Quick validation (check + unit tests + fmt-check)"
-    bash: |
-      echo "=== Quick Check ==="
-      cargo check || exit 1
-      echo ""
-      echo "=== Unit Tests ==="
-      cargo test --lib || exit 1
-      echo ""
-      echo "=== Format Check ==="
-      cargo fmt -- --check || exit 1
-      echo ""
-      echo "✅ Quick checks passed!"
-
-  pre-commit:
-    help: "Pre-commit checks (format, clippy, quick test)"
-    bash: |
-      echo "=== Formatting Code ==="
-      cargo fmt
-      echo ""
-      echo "=== Running Clippy ==="
-      cargo clippy -- -D warnings || exit 1
-      echo ""
-      echo "=== Running Tests ==="
-      cargo test || exit 1
-      echo ""
-      echo "✅ Ready to commit!"
-
-  # Release - Combines multiple steps
+  # Release workflow
   release-check:
     help: "Verify everything is ready for release"
+    before: [all]
     bash: |
-      echo "=== Running Full CI ==="
-      cargo build || exit 1
-      cargo test || exit 1
-      cargo clippy -- -D warnings || exit 1
-      cargo fmt -- --check || exit 1
-      echo ""
-      echo "=== Building Documentation ==="
-      cargo doc --no-deps || exit 1
       echo ""
       echo "=== Release Checklist ==="
-      echo "✅ CI checks passed"
-      echo "✅ Documentation built"
+      echo "✅ All validations passed"
       echo ""
       echo "Current version: $(grep '^version =' Cargo.toml | cut -d'"' -f2)"
       echo "Git tag: $(git describe --tags --always)"
@@ -165,71 +143,7 @@ tasks:
       echo "  4. Push: git push && git push --tags"
       echo "  5. cargo publish"
 
-  # Testing the binary itself
-  test-binary:
-    help: "Test the built binary works correctly"
-    bash: |
-      echo "Building release binary..."
-      cargo build --release --quiet
-      echo ""
-      echo "=== Testing Binary ==="
-      echo ""
-      echo "Version:"
-      ./target/release/otto --version
-      echo ""
-      echo "Help (first 20 lines):"
-      ./target/release/otto --help | head -20
-      echo ""
-      echo "Graph command:"
-      ./target/release/otto graph | head -30
-      echo ""
-      echo "✅ Binary works!"
-
-  # Complete validation
-  all:
-    help: "Run everything (full validation + examples)"
-    bash: |
-      echo "=== Full CI Pipeline ==="
-      cargo build || exit 1
-      cargo test || exit 1
-      cargo clippy -- -D warnings || exit 1
-      cargo fmt -- --check || exit 1
-      echo ""
-      echo "=== Building Documentation ==="
-      cargo doc --no-deps || exit 1
-      echo ""
-      echo "=== Integration Tests ==="
-      cargo test --test '*' || exit 1
-      echo ""
-      echo "=== Validating Examples ==="
-      otto validate-examples || exit 1
-      echo ""
-      echo "=== Summary ==="
-      echo "✅ Build successful"
-      echo "✅ All tests passed"
-      echo "✅ Clippy checks passed"
-      echo "✅ Format checks passed"
-      echo "✅ Documentation built"
-      echo "✅ Examples validated"
-      echo ""
-      echo "🎉 Everything looks great!"
-
-  # Benchmarking (actually useful since it includes setup/warmup)
-  bench-suite:
-    help: "Run benchmarks with proper setup"
-    bash: |
-      echo "Preparing benchmark environment..."
-      echo "Building optimized binary..."
-      cargo build --release --quiet
-      echo ""
-      echo "Running benchmarks..."
-      cargo bench
-      echo ""
-      echo "✅ Benchmarks complete!"
-      echo ""
-      echo "Results saved in target/criterion/"
-
-  # Cleanup that's actually useful
+  # Cleanup
   clean-all:
     help: "Deep clean (cargo clean + remove all otto run artifacts)"
     bash: |
