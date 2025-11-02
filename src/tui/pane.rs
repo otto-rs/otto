@@ -185,12 +185,29 @@ impl Pane for TaskPane {
                     TaskMessage::StatusChange { task_name, status, .. } => {
                         if task_name == self.task_name {
                             self.status = Self::tui_status_to_pane_status(&status);
+                            // Add status change message to output buffer
+                            let status_msg = match status {
+                                TuiTaskStatus::Skipped => "○ Task skipped (up to date)",
+                                TuiTaskStatus::Running => "● Task running",
+                                TuiTaskStatus::Completed => "✓ Task completed",
+                                TuiTaskStatus::Failed => "✗ Task failed",
+                                TuiTaskStatus::Pending => "◌ Task pending",
+                            };
+                            self.output_buffer.push_back(status_msg.to_string());
+                            if self.output_buffer.len() > self.max_buffer_lines {
+                                self.output_buffer.pop_front();
+                            }
                         }
                     }
                     TaskMessage::Started { task_name, timestamp } => {
                         if task_name == self.task_name {
                             self.status = PaneStatus::Running;
                             self.start_time = Some(timestamp);
+                            // Add start message to output buffer
+                            self.output_buffer.push_back("● Task started".to_string());
+                            if self.output_buffer.len() > self.max_buffer_lines {
+                                self.output_buffer.pop_front();
+                            }
                         }
                     }
                     TaskMessage::Finished {
@@ -202,6 +219,17 @@ impl Pane for TaskPane {
                         if task_name == self.task_name {
                             self.status = Self::tui_status_to_pane_status(&status);
                             self.duration = Some(Duration::from_millis(duration_ms));
+                            // Add completion message to output buffer
+                            let status_msg = match status {
+                                TuiTaskStatus::Completed => "✓ Task completed successfully",
+                                TuiTaskStatus::Failed => "✗ Task failed",
+                                TuiTaskStatus::Skipped => "○ Task skipped",
+                                _ => "Task finished",
+                            };
+                            self.output_buffer.push_back(status_msg.to_string());
+                            if self.output_buffer.len() > self.max_buffer_lines {
+                                self.output_buffer.pop_front();
+                            }
                         }
                     }
                 }

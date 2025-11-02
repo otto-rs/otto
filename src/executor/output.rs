@@ -151,7 +151,8 @@ impl TaskStreams {
         File::create(&stdout_file).await?;
         File::create(&stderr_file).await?;
 
-        let (output_tx, _) = broadcast::channel(100);
+        // Larger buffer to handle tasks with lots of output without message loss
+        let (output_tx, _) = broadcast::channel(10000);
 
         Ok(Self {
             stdout_file,

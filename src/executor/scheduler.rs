@@ -58,6 +58,8 @@ pub struct TaskScheduler {
     tui_mode: bool,
     /// Optional broadcast channel for TUI status updates
     message_tx: Option<tokio::sync::broadcast::Sender<TaskMessage>>,
+    /// Pre-created TaskStreams for TUI mode (task_name -> TaskStreams)
+    task_streams: Option<Arc<std::collections::HashMap<String, TaskStreams>>>,
 }
 
 impl TaskScheduler {
@@ -83,12 +85,18 @@ impl TaskScheduler {
             tasks,
             tui_mode,
             message_tx: None,
+            task_streams: None,
         })
     }
 
     /// Set the message broadcast channel for TUI updates
     pub fn set_message_channel(&mut self, tx: tokio::sync::broadcast::Sender<TaskMessage>) {
         self.message_tx = Some(tx);
+    }
+
+    /// Set pre-created TaskStreams for TUI mode
+    pub fn set_task_streams(&mut self, streams: std::collections::HashMap<String, TaskStreams>) {
+        self.task_streams = Some(Arc::new(streams));
     }
 
     /// Helper to broadcast a TaskMessage to TUI
@@ -189,10 +197,12 @@ impl TaskScheduler {
                             total_tasks
                         );
 
-                        // Print user-visible skipped message
-                        let skipped_msg = format!("{} skipped (up to date)\n", colorize_task_prefix(&task.name));
-                        print!("{skipped_msg}");
-                        io::stdout().flush().unwrap_or(());
+                        // Print user-visible skipped message (only in terminal mode)
+                        if !self.tui_mode {
+                            let skipped_msg = format!("{} skipped (up to date)\n", colorize_task_prefix(&task.name));
+                            print!("{skipped_msg}");
+                            io::stdout().flush().unwrap_or(());
+                        }
 
                         // Broadcast task skipped to TUI
                         self.broadcast_message(TaskMessage::StatusChange {
@@ -249,10 +259,12 @@ impl TaskScheduler {
                 Some(Ok(completed_task)) => {
                     info!("Task {completed_task} completed successfully");
 
-                    // Print user-visible success message
-                    let success_msg = format!("{} finished successfully\n", colorize_task_prefix(&completed_task));
-                    print!("{success_msg}");
-                    io::stdout().flush().unwrap_or(());
+                    // Print user-visible success message (only in terminal mode)
+                    if !self.tui_mode {
+                        let success_msg = format!("{} finished successfully\n", colorize_task_prefix(&completed_task));
+                        print!("{success_msg}");
+                        io::stdout().flush().unwrap_or(());
+                    }
 
                     // Broadcast task completion to TUI
                     self.broadcast_message(TaskMessage::Finished {
@@ -296,9 +308,12 @@ impl TaskScheduler {
                     // Extract task name from error message for user-visible failure message
                     let error_str = e.to_string();
                     if let Some(task_name) = error_str.split_whitespace().nth(1) {
-                        let failure_msg = format!("{} failed\n", colorize_task_prefix(task_name));
-                        eprint!("{failure_msg}");
-                        io::stderr().flush().unwrap_or(());
+                        // Print user-visible failure message (only in terminal mode)
+                        if !self.tui_mode {
+                            let failure_msg = format!("{} failed\n", colorize_task_prefix(task_name));
+                            eprint!("{failure_msg}");
+                            io::stderr().flush().unwrap_or(());
+                        }
 
                         // Broadcast task failure to TUI
                         self.broadcast_message(TaskMessage::Finished {
@@ -334,6 +349,7 @@ impl TaskScheduler {
         let tasks_dir = self.workspace.run().join("tasks");
         let execution_context = self.execution_context.clone();
         let suppress_terminal = self.tui_mode;
+        let task_streams = self.task_streams.clone();
 
         Ok(tokio::spawn(async move {
             // Acquire semaphore permit
@@ -451,7 +467,15 @@ impl TaskScheduler {
                 let stdout = child.stdout.take().ok_or_else(|| eyre!("Failed to capture stdout"))?;
                 let stderr = child.stderr.take().ok_or_else(|| eyre!("Failed to capture stderr"))?;
 
-                let streams = TaskStreams::new(&task_name, &tasks_dir).await?;
+                // Use pre-created streams if available (TUI mode), otherwise create new ones
+                let streams = if let Some(streams_map) = &task_streams {
+                    streams_map
+                        .get(&task_name)
+                        .ok_or_else(|| eyre!("TaskStreams not found for task {}", task_name))?
+                        .clone()
+                } else {
+                    TaskStreams::new(&task_name, &tasks_dir).await?
+                };
 
                 // Start output handling
                 let stdout_handle = {

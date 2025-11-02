@@ -284,8 +284,8 @@ async fn execute_with_tui(
 
     let mut app = TuiApp::new();
 
-    // Create message broadcast channel for status updates
-    let (message_tx, _) = tokio::sync::broadcast::channel::<otto::executor::output::TaskMessage>(100);
+    // Create message broadcast channel for status updates (larger buffer for fast tasks)
+    let (message_tx, _) = tokio::sync::broadcast::channel::<otto::executor::output::TaskMessage>(1000);
 
     // Create pane for each task
     for task in &executor_tasks {
@@ -308,6 +308,17 @@ async fn execute_with_tui(
 
     // Set message channel on scheduler for broadcasting status updates
     scheduler.set_message_channel(message_tx);
+
+    // Pass the pre-created task streams to the scheduler
+    scheduler.set_task_streams(task_streams_map);
+
+    // Draw initial TUI state before starting tasks (ensures receivers are ready)
+    terminal.draw(|f| {
+        app.layout_mut().render(f, f.area());
+    })?;
+
+    // Give TUI a moment to fully initialize
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
     let scheduler_handle = tokio::spawn(async move { scheduler.execute_all().await });
 
