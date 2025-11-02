@@ -1,0 +1,81 @@
+otto:
+  api: 1
+  jobs: 4
+
+tasks:
+  fast-task:
+    bash: |
+      echo "Starting fast task..."
+      for i in {1..5}; do
+        echo "Fast task: Step $i/5"
+        sleep 0.5
+      done
+      echo "Fast task complete!"
+    help: Completes quickly in ~2.5 seconds
+
+  medium-task:
+    bash: |
+      echo "Starting medium task..."
+      for i in {1..10}; do
+        echo "Medium task: Processing item $i/10"
+        sleep 1
+      done
+      echo "Medium task complete!"
+    help: Takes about 10 seconds to complete
+
+  slow-task:
+    bash: |
+      echo "Starting slow task..."
+      for i in {1..20}; do
+        echo "Slow task: Long operation $i/20"
+        sleep 1
+      done
+      echo "Slow task complete!"
+    help: Takes about 20 seconds to complete
+
+  verbose-task:
+    bash: |
+      echo "Starting verbose task..."
+      for i in {1..30}; do
+        echo "Verbose: Line $i - Lorem ipsum dolor sit amet, consectetur adipiscing elit"
+        echo "Verbose: Processing data chunk $i with detailed information"
+        echo "Verbose: Status update $i - $(date +%H:%M:%S)"
+        sleep 0.5
+      done
+      echo "Verbose task complete!"
+    help: Produces lots of output to test scrolling
+
+  failing-task:
+    bash: |
+      echo "Starting failing task..."
+      for i in {1..5}; do
+        echo "Failing task: Step $i/5"
+        sleep 1
+      done
+      echo "ERROR: Something went wrong!"
+      exit 1
+    help: Deliberately fails to test error handling
+
+  dependent-task:
+    before:
+      - fast-task
+    bash: |
+      echo "Starting dependent task (runs after fast-task)..."
+      for i in {1..8}; do
+        echo "Dependent task: Operation $i/8"
+        sleep 1
+      done
+      echo "Dependent task complete!"
+    help: Runs after fast-task completes
+
+  all-parallel:
+    before:
+      - fast-task
+      - medium-task
+      - slow-task
+      - verbose-task
+    bash: |
+      echo "All parallel tasks completed!"
+      echo "Summary: All tasks have finished executing"
+    help: Meta-task that depends on all parallel tasks
+
