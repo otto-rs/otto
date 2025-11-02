@@ -4,6 +4,127 @@
 
 **Why**: Preserves inspectability while adding queryability, state management, and observability
 
+**Status**: Basic file-based cleanup (`otto clean`) is implemented. This plan builds upon that foundation.
+
+---
+
+## Existing Foundation
+
+### What's Already Built (`otto clean` implementation)
+
+The following components are already implemented and can be leveraged for SQLite integration:
+
+#### Core Utilities (in `src/cli/commands/clean.rs`)
+- **Directory Scanning**: Walk `~/.otto/otto-*/` structure
+- **Timestamp Parsing**: Parse Unix timestamps from directory names
+- **Age Calculation**: Compute age in days from timestamps
+- **Size Calculation**: Recursive directory size computation
+- **Metadata Reading**: Parse `run.yaml` files for ottofile paths
+- **Formatting Utilities**: Human-readable timestamps and sizes
+- **Project Filtering**: Filter cleanup by project hash
+
+#### Command-Line Interface
+- **`otto clean --keep <days>`**: Delete runs older than threshold
+- **`--dry-run`**: Preview deletions without actually deleting
+- **`--project <hash>`**: Clean specific project only
+
+#### Test Coverage
+- Directory scanning edge cases
+- Size calculation accuracy
+- Timestamp parsing and age computation
+- Metadata reading (with/without run.yaml)
+- Project filtering
+- Comprehensive unit tests
+
+### Reusable Components for SQLite
+
+When implementing SQLite phases, leverage these existing utilities:
+
+1. **`CleanCommand::calculate_dir_size()`** - Use for size tracking in DB
+2. **`CleanCommand::format_size()`** - Consistent size display
+3. **`CleanCommand::format_timestamp()`** - Consistent date formatting
+4. **`RunMetadata` struct** - Extend for SQLite schema
+5. **Filesystem layout knowledge** - `otto-<hash>/<timestamp>/` structure
+
+### Migration Strategy
+
+The SQLite implementation will:
+1. Keep `CleanCommand` working as-is (backward compatible)
+2. Add optional database backend (`StateManager`)
+3. Enhance `CleanCommand` to query DB when available, fallback to filesystem scan
+4. Preserve all existing CLI flags and behavior
+5. Add new flags (`--keep-last`, `--keep-failed`) that require DB
+
+---
+
+## Initial Schema Design
+
+Based on `otto clean` implementation and existing `run.yaml` format:
+
+### Projects Table
+```sql
+CREATE TABLE projects (
+    id INTEGER PRIMARY KEY,
+    hash TEXT NOT NULL UNIQUE,        -- e.g., "6b20a2e4" from otto-6b20a2e4/
+    ottofile_path TEXT,                -- Canonical path to otto.yml
+    first_seen INTEGER NOT NULL,       -- Unix timestamp
+    last_seen INTEGER NOT NULL,        -- Unix timestamp
+    run_count INTEGER DEFAULT 0
+);
+```
+
+### Runs Table
+```sql
+CREATE TABLE runs (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL,
+    timestamp INTEGER NOT NULL UNIQUE, -- Directory name, also run start time
+    status TEXT NOT NULL,              -- 'running', 'success', 'failed'
+    duration_seconds REAL,             -- NULL if still running
+    size_bytes INTEGER,                -- Total run directory size
+    ottofile_path TEXT,                -- May differ from project canonical path
+    cwd TEXT,                          -- Working directory at run time
+    user TEXT,                         -- Username who ran it
+    hostname TEXT,                     -- Host where it ran
+    args TEXT,                         -- Serialized command-line args
+    ended_at INTEGER,                  -- Unix timestamp when completed
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_runs_timestamp ON runs(timestamp);
+CREATE INDEX idx_runs_status ON runs(status);
+CREATE INDEX idx_runs_project ON runs(project_id);
+```
+
+### Tasks Table
+```sql
+CREATE TABLE tasks (
+    id INTEGER PRIMARY KEY,
+    run_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL,              -- 'pending', 'running', 'completed', 'failed', 'skipped'
+    script_hash TEXT,                  -- Hash of script content (for cache tracking)
+    exit_code INTEGER,
+    started_at INTEGER,
+    ended_at INTEGER,
+    duration_seconds REAL,
+    stdout_path TEXT,                  -- Relative path from ~/.otto/
+    stderr_path TEXT,
+    script_path TEXT,
+    FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_tasks_run ON tasks(run_id);
+CREATE INDEX idx_tasks_name ON tasks(name);
+CREATE INDEX idx_tasks_status ON tasks(status);
+```
+
+### Schema Version Table
+```sql
+CREATE TABLE schema_version (
+    version INTEGER PRIMARY KEY,
+    applied_at INTEGER NOT NULL
+);
+```
+
 ---
 
 ## Phase 1: SQLite Infrastructure
@@ -13,23 +134,29 @@ Add SQLite database layer without changing any existing functionality
 
 ### Deliverables
 - [ ] Add `rusqlite` and `tokio-rusqlite` to Cargo.toml
-- [ ] Create `src/executor/state/` module
-- [ ] Database connection management with WAL mode
-- [ ] Schema migration framework
-- [ ] Initial schema (projects, runs, tasks tables)
+- [ ] Create `src/executor/state/` module structure
+- [ ] Implement `DatabaseManager` with WAL mode
+- [ ] Schema migration framework with versioning
+- [ ] Initial schema (projects, runs, tasks tables from design above)
+- [ ] Connection pooling for async operations
 - [ ] All existing tests still pass
 
 ### What Gets Built
+- `src/executor/state/mod.rs` - Module exports
+- `src/executor/state/db.rs` - DatabaseManager
+- `src/executor/state/schema.rs` - SQL schema definitions
+- `src/executor/state/migrations.rs` - Migration framework
 - Database manager that opens `~/.otto/otto.db`
 - Schema versioning table
 - Migration system for future schema changes
-- Connection pooling for async operations
 
 ### Success Criteria
-- Database initializes on first run
-- Schema applies correctly
-- No impact on existing functionality
+- Database initializes on first run at `~/.otto/otto.db`
+- Schema applies correctly with proper indexes
+- No impact on existing functionality (DB is not yet used)
 - Unit tests for database operations
+- Connection pooling works correctly
+- WAL mode enabled and verified
 
 ---
 
@@ -38,18 +165,28 @@ Add SQLite database layer without changing any existing functionality
 ### Goal
 Record run metadata in database (non-intrusive)
 
+### Leverages Existing Work
+- Extend existing `RunMetadata` struct (currently in `clean.rs`)
+- Use existing `run.yaml` format as reference
+- Build on workspace initialization in `Workspace::init()`
+- Match existing filesystem structure (`otto-<hash>/<timestamp>/`)
+
 ### Deliverables
+- [ ] Create shared `RunMetadata` module (move from `clean.rs`)
 - [ ] Record run start/complete in database
-- [ ] Store run metadata (timestamp, args, ottofile, user, etc.)
+- [ ] Store run metadata (timestamp, hash, ottofile, user, cwd, etc.)
 - [ ] Track run status (running/success/failed)
 - [ ] Query API to retrieve run history
 - [ ] Optional database (fallback to in-memory if DB unavailable)
+- [ ] Maintain compatibility with existing `run.yaml` files
 
 ### What Gets Built
+- `src/executor/state/mod.rs` - State management module
+- `src/executor/state/metadata.rs` - Shared `RunMetadata` type
 - `StateManager::record_run_start()`
 - `StateManager::record_run_complete()`
 - `StateManager::get_recent_runs()`
-- Integration with TaskScheduler
+- Integration with `Workspace::save_execution_context()`
 - Graceful fallback if database fails
 
 ### Success Criteria
@@ -57,6 +194,7 @@ Record run metadata in database (non-intrusive)
 - Run history queryable
 - System works even if DB is missing/locked
 - Performance unchanged
+- Existing `run.yaml` files still readable by `otto clean`
 
 ---
 
@@ -114,31 +252,44 @@ Add CLI commands to query execution history
 
 ---
 
-## Phase 5: Cleanup & Retention
+## Phase 5: Enhanced Cleanup & Retention
 
 ### Goal
-Automated cleanup of old runs
+Enhance existing cleanup with database-backed retention policies
 
-### Deliverables
-- [ ] `otto clean --keep <days>` command
-- [ ] Query old runs from database
-- [ ] Delete both DB records and filesystem directories
-- [ ] Dry-run mode (`--dry-run`)
-- [ ] Orphaned cache detection
-- [ ] Report disk space freed
+### Already Implemented (File-Based)
+- ✅ `otto clean --keep <days>` command
+- ✅ Scan `~/.otto/otto-*/` directories by timestamp
+- ✅ `--dry-run` mode to preview deletions
+- ✅ `--project` filter for per-project cleanup
+- ✅ Report disk space freed
+- ✅ Directory deletion logic
+- ✅ Size calculation utilities
+- ✅ Read ottofile path from run.yaml metadata
+- ✅ Comprehensive test coverage
+
+### Deliverables (SQLite Enhancement)
+- [ ] Migrate `CleanCommand` to query database instead of scanning filesystem
+- [ ] Add retention policy storage in database
+- [ ] `--keep-last N` flag (keep N most recent runs regardless of age)
+- [ ] `--keep-failed <days>` (different retention for failed runs)
+- [ ] Enhanced orphaned cache detection using DB references
+- [ ] Audit trail of cleanup operations in database
 
 ### What Gets Built
-- `StateManager::find_old_runs()`
-- `StateManager::delete_run()`
-- `StateManager::find_orphaned_cache()`
-- Directory deletion logic
-- Size calculation utilities
+- `StateManager::find_old_runs()` - Query database for cleanup candidates
+- `StateManager::delete_run()` - Delete both DB records and filesystem directories
+- `StateManager::find_orphaned_cache()` - Use DB to find unreferenced cache entries
+- `StateManager::record_cleanup()` - Audit trail of cleanup operations
+- Retention policy configuration in database
 
 ### Success Criteria
-- Cleanup removes both DB and filesystem data
-- Dry-run shows what would be deleted
-- Orphaned cache entries detected correctly
-- Disk space actually freed
+- Cleanup 100x faster (query DB instead of scanning filesystem)
+- Retention policies applied correctly
+- Both DB records and filesystem data deleted atomically
+- Orphaned cache entries detected with 100% accuracy
+- Audit trail shows all cleanup operations
+- Graceful fallback to filesystem scan if DB unavailable
 
 ---
 
@@ -265,11 +416,45 @@ Otto 1.0 with hybrid storage is successful when:
 
 ## Open Questions
 
-1. **Default retention period**: 30 days? 90 days? Unlimited?
-2. **Database location**: `~/.otto/otto.db` or per-project?
-3. **Metrics to track**: What statistics are most useful?
-4. **Export formats**: CSV? JSON? Prometheus?
-5. **Import old runs**: Scan existing directories to populate DB?
+### Resolved by `otto clean` Implementation
+
+1. ~~**Default retention period**~~: **Answered** - No default, require explicit `--keep` flag
+2. ~~**Database location**~~: **Answered** - Single `~/.otto/otto.db` (cross-project queries)
+3. ~~**Dry-run behavior**~~: **Answered** - Require explicit flag, don't default to dry-run
+
+### Still Open
+
+1. **Metrics to track**: What statistics are most useful?
+   - Average task duration?
+   - Success rate by task?
+   - Failure patterns?
+   - Resource usage (if we can capture it)?
+
+2. **Export formats**: What formats for data export?
+   - JSON (for scripting)
+   - CSV (for spreadsheets)
+   - Prometheus (for monitoring)
+   - All of the above?
+
+3. **Import old runs**: Should we import existing runs into DB?
+   - On first DB initialization?
+   - Via explicit `otto import` command?
+   - Optional vs. automatic?
+
+4. **Cleanup policies defaults**: For new advanced flags
+   - Default for `--keep-last N`? (e.g., always keep 10 most recent)
+   - Default for `--keep-failed`? (e.g., 7 days for failures)
+   - Should these be configurable?
+
+5. **Size tracking**: When to compute directory sizes?
+   - During run (track as files are created)?
+   - After run completes (recursive calculation)?
+   - On-demand only (when needed for cleanup)?
+
+6. **Concurrent runs**: How to handle DB updates during parallel task execution?
+   - Per-task DB writes?
+   - Batch updates at end?
+   - Use WAL mode for safety?
 
 ---
 
@@ -282,13 +467,134 @@ Otto 1.0 with hybrid storage is successful when:
 | **Paths** | Relative to `~/.otto/` | Portable, handles HOME changes |
 | **Mode** | WAL | Better concurrency, crash recovery |
 | **Required** | No (optional) | Graceful degradation, no hard dependency |
+| **Cleanup** | Enhance existing `CleanCommand` | Proven implementation, backward compatible |
+
+### Lessons from `otto clean` Implementation
+
+The file-based cleanup implementation taught us:
+
+1. **Filesystem Scanning Works**: Walking `~/.otto/` is reasonably fast (even for 1000+ runs)
+2. **run.yaml is Essential**: Metadata file provides ottofile path, project context
+3. **Dry-run is Critical**: Users want to preview before deleting
+4. **Project Filtering Useful**: Per-project cleanup is a common use case
+5. **Size Reporting Matters**: Users care about disk space freed
+6. **Tests are Valuable**: Comprehensive tests prevent data loss bugs
+7. **Graceful Degradation**: Handle missing/malformed metadata gracefully
+
+### Implications for SQLite
+
+Based on `otto clean` learnings:
+
+1. **Keep Fallback**: DB queries should fallback to filesystem scan
+2. **Preserve Flags**: Maintain all existing CLI flags (`--keep`, `--dry-run`, `--project`)
+3. **Size Tracking**: Store run size in DB (computed during run)
+4. **Metadata Schema**: Use `run.yaml` format as basis for DB schema
+5. **Project Concept**: Formalize project hash in database schema
+6. **Test Thoroughly**: Especially cleanup operations (data loss risk)
+7. **Performance Target**: DB queries should be <100ms (much faster than filesystem scan)
 
 ---
 
 ## Next Steps
 
-1. **Review this plan** - Get feedback from maintainers
-2. **Start Phase 1** - Add SQLite infrastructure
-3. **Iterate** - Adjust based on implementation learnings
-4. **Ship** - Release Otto 1.0 with hybrid storage
+### Immediate (Phase 1)
+
+1. **Review updated plan** - Get feedback on changes since `otto clean`
+2. **Add rusqlite dependencies** - `Cargo.toml` updates
+3. **Create `src/executor/state/`** - Database module structure
+4. **Implement basic schema** - Projects, runs, tasks tables
+5. **Add migration framework** - Schema versioning
+
+### After Phase 1 (Phase 2)
+
+1. **Extract `RunMetadata`** - Move from `clean.rs` to shared module
+2. **Integrate with Workspace** - Record runs in DB during execution
+3. **Add database fallback** - Graceful degradation for `CleanCommand`
+4. **Test backward compatibility** - Ensure existing runs still work
+
+### Optional: Import Existing Runs
+
+Before Phase 2, consider implementing an import utility:
+
+```bash
+otto import --scan ~/.otto
+```
+
+This would:
+1. Walk existing `otto-*/<timestamp>/` directories
+2. Read `run.yaml` metadata files
+3. Populate database with historical runs
+4. Report how many runs were imported
+
+Benefits:
+- Users get immediate value from query commands
+- Historical data available for analysis
+- Smooth transition to database-backed system
+
+Implementation:
+- Reuse `CleanCommand::scan_for_old_runs()` logic
+- Parse all `run.yaml` files (not just old ones)
+- Batch insert into database
+- Handle missing/malformed metadata gracefully
+
+---
+
+## Summary of Changes
+
+This plan has been updated to reflect the completed `otto clean` implementation. Key changes:
+
+### What's Already Done ✅
+
+1. **Basic Cleanup Command** (`src/cli/commands/clean.rs`)
+   - File-based cleanup working and tested
+   - `--keep <days>`, `--dry-run`, `--project` flags
+   - Directory scanning, size calculation, metadata reading
+   - Comprehensive test coverage
+
+### What Changes
+
+1. **Phase 5 Refocused**: From "build cleanup" to "enhance cleanup with DB"
+2. **Schema Design**: Based on real-world `run.yaml` structure
+3. **Code Reuse**: Leverage existing utilities (size calc, formatting, scanning)
+4. **Migration Path**: Enhance existing command rather than replace it
+5. **Backward Compatibility**: Ensure `run.yaml` format remains compatible
+
+### What Stays The Same
+
+1. **Overall Architecture**: Hybrid storage (files + SQLite)
+2. **Phase Order**: Still 6 phases, same dependencies
+3. **Core Principles**: Inspectability, optional DB, graceful degradation
+4. **Success Criteria**: Same end goals for users
+
+### Key Insights
+
+The `otto clean` implementation validated several assumptions:
+
+- ✅ Filesystem scanning is fast enough for current use cases
+- ✅ Users need dry-run and filtering capabilities
+- ✅ run.yaml metadata format is sufficient
+- ✅ Size calculation is important for cleanup decisions
+- ✅ Project-level organization (otto-<hash>/) works well
+
+These insights inform the SQLite design:
+
+- Keep filesystem scanning as fallback (it works!)
+- DB should accelerate, not replace, existing patterns
+- Schema should match proven run.yaml structure
+- Maintain all existing CLI flags and behavior
+- Add DB-only features incrementally (--keep-last, --keep-failed)
+
+---
+
+## Ready to Start
+
+With `otto clean` completed and tested, we have:
+
+1. ✅ **Proven filesystem layout** - otto-<hash>/<timestamp>/tasks/
+2. ✅ **Working metadata format** - run.yaml with ottofile, hash, timestamp
+3. ✅ **Reusable utilities** - Scanning, parsing, formatting
+4. ✅ **Test patterns** - Comprehensive test suite to copy
+5. ✅ **User feedback** - Real CLI experience to preserve
+
+**Next action**: Begin Phase 1 (SQLite Infrastructure) with confidence that we're building on solid foundations.
 
