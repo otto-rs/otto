@@ -41,6 +41,7 @@ tempfile = "3.20"
 regex = "1.11.1"
 colored = "3.0.0"
 clap = { version = "4.5.41", features = ["derive", "env", "string"] }
+chrono = "0.4"
 
 [dev-dependencies]
 tokio-test = "0.4"

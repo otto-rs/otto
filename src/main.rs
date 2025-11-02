@@ -2,7 +2,7 @@ use env_logger::Target;
 use eyre::{Report, Result};
 use log::info;
 use otto::{
-    cli::Parser,
+    cli::{CleanCommand, Parser},
     executor::{DagVisualizer, TaskScheduler, Workspace},
 };
 use std::env;
@@ -62,10 +62,38 @@ async fn main() {
     }
 }
 
+async fn execute_clean_from_task(task: &otto::cli::parser::Task) -> Result<(), Report> {
+    use otto::cfg::param::Value;
+
+    // Extract parameters from task values
+    let keep_days = if let Some(Value::Item(s)) = task.values.get("keep") {
+        s.parse::<u64>().unwrap_or(30)
+    } else {
+        30 // Default
+    };
+
+    // Boolean flag: stored as Value::Item("true") or Value::Item("false")
+    let dry_run = task
+        .values
+        .get("dry-run")
+        .and_then(|v| if let Value::Item(s) = v { Some(s == "true") } else { None })
+        .unwrap_or(false);
+
+    let project_filter = task
+        .values
+        .get("project")
+        .and_then(|v| if let Value::Item(s) = v { Some(s.clone()) } else { None });
+
+    let clean_cmd = CleanCommand::new(keep_days, dry_run, project_filter);
+    clean_cmd.execute().await?;
+
+    Ok(())
+}
+
 async fn execute_tasks(
     tasks: Vec<otto::cli::parser::Task>,
-    _hash: String,
-    _ottofile_path: Option<std::path::PathBuf>,
+    hash: String,
+    ottofile_path: Option<std::path::PathBuf>,
     jobs: usize,
 ) -> Result<(), Report> {
     if tasks.is_empty() {
@@ -73,16 +101,23 @@ async fn execute_tasks(
         return Ok(());
     }
 
+    // Check if any task is a clean command
+    let clean_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "clean").collect();
+    if !clean_tasks.is_empty() {
+        return execute_clean_from_task(clean_tasks[0]).await;
+    }
+
     // Check if any task is a graph command
     let graph_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "graph").collect();
-
     if !graph_tasks.is_empty() {
-        // If there are graph tasks, handle them specially
         return DagVisualizer::execute_command(graph_tasks[0]).await;
     }
 
-    // Filter out graph task for normal execution (shouldn't be needed now, but safety)
-    let execution_tasks: Vec<_> = tasks.into_iter().filter(|task| task.name != "graph").collect();
+    // Filter out built-in commands for normal execution
+    let execution_tasks: Vec<_> = tasks
+        .into_iter()
+        .filter(|task| task.name != "graph" && task.name != "clean")
+        .collect();
 
     if execution_tasks.is_empty() {
         println!("No tasks to execute");
@@ -94,8 +129,13 @@ async fn execute_tasks(
     let workspace = Workspace::new(cwd).await?;
     workspace.init().await?;
 
-    // Create execution context
-    let execution_context = otto::executor::workspace::ExecutionContext::new();
+    // Create execution context with ottofile path
+    let mut execution_context = otto::executor::workspace::ExecutionContext::new();
+    execution_context.ottofile = ottofile_path;
+    execution_context.hash = hash;
+
+    // Save execution context to run directory
+    workspace.save_execution_context(execution_context.clone()).await?;
 
     // Convert parser tasks to executor tasks
     let executor_tasks: Vec<otto::executor::Task> = execution_tasks

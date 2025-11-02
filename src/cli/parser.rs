@@ -270,7 +270,7 @@ impl Parser {
                                                 ottofile: None,
                                                 jobs: num_cpus::get(),
                                             };
-                                            temp_parser.inject_graph_meta_task();
+                                            temp_parser.inject_builtin_commands();
                                             let mut help_cmd = temp_parser.build_help_command();
                                             help_cmd.print_help().expect("Failed to print help");
                                             std::process::exit(0);
@@ -326,8 +326,8 @@ impl Parser {
         self.hash = hash;
         self.ottofile = ottofile;
 
-        // Inject built-in meta-tasks
-        self.inject_graph_meta_task();
+        // Inject built-in commands
+        self.inject_builtin_commands();
 
         // Extract remaining arguments after global options
         let remaining_args = self.extract_remaining_args(&matches);
@@ -850,23 +850,33 @@ impl Parser {
 
         // Add tasks as subcommands
         if !self.config_spec.tasks.is_empty() {
-            // Collect all tasks except graph, sort them alphabetically
+            // Separate regular tasks from built-in commands
+            let builtin_commands = ["graph", "clean"];
             let mut regular_tasks: Vec<_> = self
                 .config_spec
                 .tasks
                 .iter()
-                .filter(|(name, _)| *name != "graph")
+                .filter(|(name, _)| !builtin_commands.contains(&name.as_str()))
                 .collect();
             regular_tasks.sort_by_key(|(name, _)| name.as_str());
 
-            // Add regular tasks first
+            // Add regular tasks first (sorted alphabetically)
             for (_, task_spec) in regular_tasks {
                 cmd = cmd.subcommand(Self::task_to_command(task_spec));
             }
 
-            // Add graph task at the end if it exists
-            if let Some(graph_task) = self.config_spec.tasks.get("graph") {
-                cmd = cmd.subcommand(Self::task_to_command(graph_task));
+            // Collect and sort built-in commands
+            let mut builtins: Vec<(&String, &TaskSpec)> = self
+                .config_spec
+                .tasks
+                .iter()
+                .filter(|(name, _)| builtin_commands.contains(&name.as_str()))
+                .collect();
+            builtins.sort_by_key(|(name, _)| name.as_str());
+
+            // Add built-in commands at the end (sorted alphabetically)
+            for (_, task_spec) in builtins {
+                cmd = cmd.subcommand(Self::task_to_command(task_spec));
             }
         } else {
             cmd = cmd.after_help(ottofile_not_found_message());
@@ -989,6 +999,91 @@ impl Parser {
         };
 
         self.config_spec.tasks.insert("graph".to_string(), graph_task);
+    }
+
+    fn inject_clean_meta_task(&mut self) {
+        use crate::cfg::param::{Nargs, ParamType};
+
+        // Add clean meta-task to the configuration
+        let clean_task = TaskSpec {
+            name: "clean".to_string(),
+            help: Some("[built-in] Clean old runs from ~/.otto/".to_string()),
+            after: vec![],
+            before: vec![],
+            input: vec![],
+            output: vec![],
+            envs: HashMap::new(),
+            params: {
+                let mut params = HashMap::new();
+
+                // Add --keep parameter
+                params.insert(
+                    "keep".to_string(),
+                    ParamSpec {
+                        name: "keep".to_string(),
+                        short: None,
+                        long: Some("keep".to_string()),
+                        param_type: ParamType::OPT,
+                        dest: None,
+                        metavar: Some("DAYS".to_string()),
+                        default: Some("30".to_string()),
+                        constant: Value::Empty,
+                        choices: vec![],
+                        nargs: Nargs::One,
+                        help: Some("Keep runs from the last N days".to_string()),
+                        value: Value::Empty,
+                    },
+                );
+
+                // Add --dry-run parameter
+                params.insert(
+                    "dry-run".to_string(),
+                    ParamSpec {
+                        name: "dry-run".to_string(),
+                        short: None,
+                        long: Some("dry-run".to_string()),
+                        param_type: ParamType::FLG,
+                        dest: None,
+                        metavar: None,
+                        default: None,
+                        constant: Value::Empty,
+                        choices: vec![],
+                        nargs: Nargs::Zero,
+                        help: Some("Show what would be deleted without actually deleting".to_string()),
+                        value: Value::Empty,
+                    },
+                );
+
+                // Add --project parameter
+                params.insert(
+                    "project".to_string(),
+                    ParamSpec {
+                        name: "project".to_string(),
+                        short: None,
+                        long: Some("project".to_string()),
+                        param_type: ParamType::OPT,
+                        dest: None,
+                        metavar: Some("HASH".to_string()),
+                        default: None,
+                        constant: Value::Empty,
+                        choices: vec![],
+                        nargs: Nargs::One,
+                        help: Some("Only clean runs for a specific project".to_string()),
+                        value: Value::Empty,
+                    },
+                );
+
+                params
+            },
+            action: "# Built-in clean command".to_string(),
+        };
+
+        self.config_spec.tasks.insert("clean".to_string(), clean_task);
+    }
+
+    fn inject_builtin_commands(&mut self) {
+        self.inject_graph_meta_task();
+        self.inject_clean_meta_task();
     }
 
     fn find_ottofile(path: &Path) -> Result<Option<PathBuf>> {
