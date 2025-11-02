@@ -209,7 +209,7 @@ async fn execute_with_terminal_output(
         .collect();
 
     // Create task scheduler
-    let scheduler = TaskScheduler::new(executor_tasks, Arc::new(workspace), execution_context, jobs).await?;
+    let scheduler = TaskScheduler::new(executor_tasks, Arc::new(workspace), execution_context, jobs, false).await?;
 
     // Execute all tasks
     scheduler.execute_all().await?;
@@ -218,12 +218,107 @@ async fn execute_with_terminal_output(
 }
 
 async fn execute_with_tui(
-    _tasks: Vec<otto::cli::parser::Task>,
-    _hash: String,
-    _ottofile_path: Option<std::path::PathBuf>,
-    _jobs: usize,
+    tasks: Vec<otto::cli::parser::Task>,
+    hash: String,
+    ottofile_path: Option<std::path::PathBuf>,
+    jobs: usize,
 ) -> Result<(), Report> {
-    todo!("TUI mode not yet implemented")
+    use otto::tui::{TaskPane, TuiApp};
+
+    if tasks.is_empty() {
+        eprintln!("No tasks to execute");
+        return Ok(());
+    }
+
+    // Filter out built-in commands for normal execution
+    let execution_tasks: Vec<_> = tasks
+        .into_iter()
+        .filter(|task| task.name != "graph" && task.name != "clean")
+        .collect();
+
+    if execution_tasks.is_empty() {
+        eprintln!("No tasks to execute");
+        return Ok(());
+    }
+
+    // Create workspace
+    let cwd = env::current_dir()?;
+    let workspace = Workspace::new(cwd).await?;
+    workspace.init().await?;
+
+    // Create execution context with ottofile path
+    let mut execution_context = otto::executor::workspace::ExecutionContext::new();
+    execution_context.ottofile = ottofile_path;
+    execution_context.hash = hash;
+
+    // Save execution context to run directory
+    workspace.save_execution_context(execution_context.clone()).await?;
+
+    // Convert parser tasks to executor tasks and create TaskStreams
+    let mut executor_tasks = Vec::new();
+    let mut task_streams_map = std::collections::HashMap::new();
+    let output_dir = workspace.run().join("tasks");
+
+    for parser_task in execution_tasks {
+        let task_name = parser_task.name.clone();
+
+        // Create TaskStreams for this task
+        let streams = otto::executor::output::TaskStreams::new(&task_name, &output_dir).await?;
+        task_streams_map.insert(task_name.clone(), streams);
+
+        // Create executor task
+        let executor_task = otto::executor::Task::new(
+            parser_task.name,
+            parser_task.task_deps,
+            parser_task.file_deps,
+            parser_task.output_deps,
+            parser_task.envs,
+            parser_task.values,
+            parser_task.action,
+        );
+        executor_tasks.push(executor_task);
+    }
+
+    // Initialize TUI
+    let mut terminal = otto::tui::init_terminal().map_err(|e| eyre::eyre!("Failed to initialize TUI: {}", e))?;
+
+    let mut app = TuiApp::new();
+
+    // Create pane for each task
+    for task in &executor_tasks {
+        if let Some(streams) = task_streams_map.get(&task.name) {
+            let pane = TaskPane::new(task.name.clone(), streams.output_tx.clone());
+            app.layout_mut().add_pane(Box::new(pane));
+        }
+    }
+
+    // Start scheduler in background with TUI mode enabled
+    let scheduler = TaskScheduler::new(
+        executor_tasks,
+        Arc::new(workspace),
+        execution_context,
+        jobs,
+        true, // tui_mode = true
+    )
+    .await?;
+
+    let scheduler_handle = tokio::spawn(async move { scheduler.execute_all().await });
+
+    // Run TUI (blocks until user quits)
+    let tui_result = app.run(&mut terminal);
+
+    // Restore terminal
+    otto::tui::restore_terminal(&mut terminal)?;
+
+    // Handle TUI errors
+    tui_result.map_err(|e| eyre::eyre!("TUI error: {}", e))?;
+
+    // Wait for scheduler to complete or propagate errors
+    match scheduler_handle.await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(e),
+        Err(e) => Err(eyre::eyre!("Scheduler panicked: {}", e)),
+    }
 }
 
 async fn execute_clean_command(args: &[String]) -> Result<(), Report> {

@@ -44,37 +44,43 @@ pub struct TeeWriter {
     is_stderr: bool,
     /// Task name for prefixing output
     task_name: String,
+    /// Whether to suppress terminal output (for TUI mode)
+    suppress_terminal: bool,
 }
 
 impl TeeWriter {
     /// Create a new TeeWriter
-    pub async fn new(file: File, is_stderr: bool, task_name: String) -> Self {
+    pub async fn new(file: File, is_stderr: bool, task_name: String, suppress_terminal: bool) -> Self {
         Self {
             file,
             is_stderr,
             task_name,
+            suppress_terminal,
         }
     }
 
     /// Write data to both file and terminal
     pub async fn write(&mut self, data: &[u8]) -> Result<()> {
-        // Write to file (no colors)
+        // Always write to file (no colors)
         self.file.write_all(data).await?;
 
-        // Write to terminal with colored task name prefix
-        let colored_prefix = colorize_task_prefix(&self.task_name);
-        let terminal_output = format!("{} {}", colored_prefix, String::from_utf8_lossy(data));
-        if self.is_stderr {
-            eprint!("{terminal_output}");
-        } else {
-            print!("{terminal_output}");
-        }
+        // Conditionally write to terminal (suppressed in TUI mode)
+        if !self.suppress_terminal {
+            // Write to terminal with colored task name prefix
+            let colored_prefix = colorize_task_prefix(&self.task_name);
+            let terminal_output = format!("{} {}", colored_prefix, String::from_utf8_lossy(data));
+            if self.is_stderr {
+                eprint!("{terminal_output}");
+            } else {
+                print!("{terminal_output}");
+            }
 
-        // Ensure terminal output is flushed
-        if self.is_stderr {
-            io::stderr().flush()?;
-        } else {
-            io::stdout().flush()?;
+            // Ensure terminal output is flushed
+            if self.is_stderr {
+                io::stderr().flush()?;
+            } else {
+                io::stdout().flush()?;
+            }
         }
 
         Ok(())
@@ -123,6 +129,7 @@ impl TaskStreams {
         task_name: String,
         output_type: OutputType,
         mut reader: impl AsyncBufReadExt + Unpin,
+        suppress_terminal: bool,
     ) -> Result<()> {
         let output_file = match output_type {
             OutputType::Stdout => &self.stdout_file,
@@ -130,7 +137,13 @@ impl TaskStreams {
         };
 
         let file = File::create(output_file).await?;
-        let mut writer = TeeWriter::new(file, matches!(output_type, OutputType::Stderr), task_name.clone()).await;
+        let mut writer = TeeWriter::new(
+            file,
+            matches!(output_type, OutputType::Stderr),
+            task_name.clone(),
+            suppress_terminal,
+        )
+        .await;
 
         let mut line = String::new();
 
@@ -195,7 +208,7 @@ mod tests {
         // Process the output
         let mut cursor = std::io::Cursor::new(test_output);
         streams
-            .process_output("test_task".to_string(), OutputType::Stdout, &mut cursor)
+            .process_output("test_task".to_string(), OutputType::Stdout, &mut cursor, false)
             .await
             .unwrap();
 
@@ -226,12 +239,12 @@ mod tests {
 
         // Process both streams
         streams
-            .process_output("test_task".to_string(), OutputType::Stdout, &mut stdout_cursor)
+            .process_output("test_task".to_string(), OutputType::Stdout, &mut stdout_cursor, false)
             .await
             .unwrap();
 
         streams
-            .process_output("test_task".to_string(), OutputType::Stderr, &mut stderr_cursor)
+            .process_output("test_task".to_string(), OutputType::Stderr, &mut stderr_cursor, false)
             .await
             .unwrap();
 

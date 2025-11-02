@@ -90,7 +90,8 @@ tasks:
         // Create task scheduler with jobs parameter
         use std::sync::Arc;
         let _scheduler =
-            otto::executor::TaskScheduler::new(executor_tasks, Arc::new(workspace), execution_context, jobs).await?;
+            otto::executor::TaskScheduler::new(executor_tasks, Arc::new(workspace), execution_context, jobs, false)
+                .await?;
 
         // Note: We don't actually execute tasks in this test since it would require
         // real task execution infrastructure, but we verify the full setup including

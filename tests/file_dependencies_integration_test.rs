@@ -50,7 +50,7 @@ impl TestFixture {
     }
 
     async fn create_scheduler(&self, tasks: Vec<Task>) -> Result<TaskScheduler> {
-        TaskScheduler::new(tasks, self.workspace.clone(), ExecutionContext::new(), 2).await
+        TaskScheduler::new(tasks, self.workspace.clone(), ExecutionContext::new(), 2, false).await
     }
 
     fn create_task(&self, name: &str, action: &str, inputs: Vec<&str>, outputs: Vec<&str>) -> Task {
@@ -206,6 +206,7 @@ tasks:
         std::sync::Arc::new(workspace),
         ExecutionContext::new(),
         2,
+        false,
     )
     .await?;
 
@@ -306,6 +307,7 @@ async fn test_file_dependencies_error_handling() -> Result<()> {
         std::sync::Arc::new(workspace),
         ExecutionContext::new(),
         2,
+        false,
     )
     .await?;
 
@@ -463,6 +465,7 @@ async fn test_mixed_task_and_file_dependencies() -> Result<()> {
         std::sync::Arc::new(workspace),
         ExecutionContext::new(),
         2,
+        false,
     )
     .await?;
 
@@ -531,6 +534,7 @@ async fn test_file_dependencies_incremental_detection() -> Result<()> {
         std::sync::Arc::new(workspace),
         ExecutionContext::new(),
         2,
+        false,
     )
     .await?;
 
@@ -664,6 +668,7 @@ async fn test_file_dependencies_multiple_files() -> Result<()> {
         std::sync::Arc::new(workspace),
         ExecutionContext::new(),
         2,
+        false,
     )
     .await?;
 
@@ -822,6 +827,7 @@ async fn test_file_dependencies_task_skipping() -> Result<()> {
         std::sync::Arc::new(workspace),
         ExecutionContext::new(),
         2,
+        false,
     )
     .await?;
 

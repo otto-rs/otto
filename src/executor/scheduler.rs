@@ -54,6 +54,8 @@ pub struct TaskScheduler {
     execution_context: ExecutionContext,
     /// Tasks to execute
     tasks: Vec<Task>,
+    /// Whether TUI mode is enabled (suppresses terminal output)
+    tui_mode: bool,
 }
 
 impl TaskScheduler {
@@ -63,6 +65,7 @@ impl TaskScheduler {
         workspace: Arc<Workspace>,
         execution_context: ExecutionContext,
         max_parallel: usize,
+        tui_mode: bool,
     ) -> Result<Self> {
         let task_statuses = Arc::new(Mutex::new(HashMap::new()));
 
@@ -76,6 +79,7 @@ impl TaskScheduler {
             workspace,
             execution_context,
             tasks,
+            tui_mode,
         })
     }
 
@@ -265,6 +269,7 @@ impl TaskScheduler {
         let envs = task.envs.clone();
         let tasks_dir = self.workspace.run().join("tasks");
         let execution_context = self.execution_context.clone();
+        let suppress_terminal = self.tui_mode;
 
         Ok(tokio::spawn(async move {
             // Acquire semaphore permit
@@ -390,7 +395,9 @@ impl TaskScheduler {
                     let task_name = task_name.clone();
                     tokio::spawn(async move {
                         let reader = BufReader::new(stdout);
-                        streams.process_output(task_name, OutputType::Stdout, reader).await
+                        streams
+                            .process_output(task_name, OutputType::Stdout, reader, suppress_terminal)
+                            .await
                     })
                 };
 
@@ -399,7 +406,9 @@ impl TaskScheduler {
                     let task_name = task_name.clone();
                     tokio::spawn(async move {
                         let reader = BufReader::new(stderr);
-                        streams.process_output(task_name, OutputType::Stderr, reader).await
+                        streams
+                            .process_output(task_name, OutputType::Stderr, reader, suppress_terminal)
+                            .await
                     })
                 };
 
@@ -617,7 +626,7 @@ mod tests {
 
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task], Arc::new(workspace), ExecutionContext::new(), 2).await?;
+        let scheduler = TaskScheduler::new(vec![task], Arc::new(workspace), ExecutionContext::new(), 2, false).await?;
         scheduler.execute_all().await?;
 
         let status = scheduler.get_task_status("test").await;
@@ -654,7 +663,7 @@ mod tests {
 
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), 2).await?;
+        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), 2, false).await?;
         scheduler.execute_all().await?;
 
         let task1_status = scheduler.get_task_status("task1").await;
@@ -694,7 +703,7 @@ mod tests {
 
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), 2).await?;
+        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), 2, false).await?;
         let result = scheduler.execute_all().await;
 
         assert!(result.is_err());
@@ -725,7 +734,14 @@ mod tests {
 
         let workspace = Workspace::new(work_dir.clone()).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2).await?;
+        let scheduler = TaskScheduler::new(
+            vec![task.clone()],
+            Arc::new(workspace),
+            ExecutionContext::new(),
+            2,
+            false,
+        )
+        .await?;
 
         // First run should execute (no output file exists)
         let needs_rebuild = scheduler.needs_rebuild(&task).await?;
@@ -763,7 +779,7 @@ mod tests {
 
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![], Arc::new(workspace), ExecutionContext::new(), 2).await?;
+        let scheduler = TaskScheduler::new(vec![], Arc::new(workspace), ExecutionContext::new(), 2, false).await?;
 
         // Test timestamp retrieval
         let timestamps = scheduler
@@ -798,7 +814,14 @@ mod tests {
 
         let workspace = Workspace::new(work_dir.clone()).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2).await?;
+        let scheduler = TaskScheduler::new(
+            vec![task.clone()],
+            Arc::new(workspace),
+            ExecutionContext::new(),
+            2,
+            false,
+        )
+        .await?;
 
         // Should need to rebuild when input file doesn't exist (conservative approach)
         let needs_rebuild = scheduler.needs_rebuild(&task).await?;
@@ -852,7 +875,14 @@ mod tests {
 
         let workspace = Workspace::new(work_dir.clone()).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2).await?;
+        let scheduler = TaskScheduler::new(
+            vec![task.clone()],
+            Arc::new(workspace),
+            ExecutionContext::new(),
+            2,
+            false,
+        )
+        .await?;
 
         // Should need to rebuild when outputs don't exist
         let needs_rebuild = scheduler.needs_rebuild(&task).await?;
@@ -922,6 +952,7 @@ mod tests {
             Arc::new(workspace),
             ExecutionContext::new(),
             2,
+            false,
         )
         .await?;
 
@@ -973,7 +1004,14 @@ mod tests {
 
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2).await?;
+        let scheduler = TaskScheduler::new(
+            vec![task.clone()],
+            Arc::new(workspace),
+            ExecutionContext::new(),
+            2,
+            false,
+        )
+        .await?;
 
         // When timestamps are very close, should be conservative and rebuild
         let needs_rebuild = scheduler.needs_rebuild(&task).await?;
@@ -1001,7 +1039,14 @@ mod tests {
 
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2).await?;
+        let scheduler = TaskScheduler::new(
+            vec![task.clone()],
+            Arc::new(workspace),
+            ExecutionContext::new(),
+            2,
+            false,
+        )
+        .await?;
 
         // Should always need to run when there are no file dependencies to check
         let needs_rebuild = scheduler.needs_rebuild(&task).await?;
@@ -1039,7 +1084,14 @@ mod tests {
 
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2).await?;
+        let scheduler = TaskScheduler::new(
+            vec![task.clone()],
+            Arc::new(workspace),
+            ExecutionContext::new(),
+            2,
+            false,
+        )
+        .await?;
 
         // Should handle directory dependencies (gets modification time of directory)
         let needs_rebuild = scheduler.needs_rebuild(&task).await?;
@@ -1075,7 +1127,14 @@ mod tests {
 
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2).await?;
+        let scheduler = TaskScheduler::new(
+            vec![task.clone()],
+            Arc::new(workspace),
+            ExecutionContext::new(),
+            2,
+            false,
+        )
+        .await?;
 
         // Should handle large numbers of file dependencies efficiently
         let start = std::time::Instant::now();
@@ -1115,7 +1174,14 @@ mod tests {
 
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2).await?;
+        let scheduler = TaskScheduler::new(
+            vec![task.clone()],
+            Arc::new(workspace),
+            ExecutionContext::new(),
+            2,
+            false,
+        )
+        .await?;
 
         // Should handle circular file dependencies gracefully
         let needs_rebuild = scheduler.needs_rebuild(&task).await?;
@@ -1148,7 +1214,14 @@ mod tests {
 
         let workspace = Workspace::new(work_dir.clone()).await?;
         workspace.init().await?;
-        let scheduler = TaskScheduler::new(vec![task.clone()], Arc::new(workspace), ExecutionContext::new(), 2).await?;
+        let scheduler = TaskScheduler::new(
+            vec![task.clone()],
+            Arc::new(workspace),
+            ExecutionContext::new(),
+            2,
+            false,
+        )
+        .await?;
 
         // First execution - should run because output doesn't exist
         let needs_rebuild_1 = scheduler.needs_rebuild(&task).await?;
@@ -1203,7 +1276,7 @@ mod tests {
         workspace.init().await?;
 
         // Create scheduler with limit of 2 parallel jobs
-        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), 2).await?;
+        let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), 2, false).await?;
 
         // Verify semaphore has 2 permits
         assert_eq!(scheduler.semaphore.available_permits(), 2);
@@ -1241,7 +1314,7 @@ mod tests {
             )];
 
             let scheduler =
-                TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), max_parallel).await?;
+                TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), max_parallel, false).await?;
 
             // Verify semaphore has correct number of permits
             assert_eq!(

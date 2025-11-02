@@ -486,7 +486,8 @@ impl Parser {
                     .short('t')
                     .long("tui")
                     .help("Enable interactive TUI dashboard for task monitoring")
-                    .action(clap::ArgAction::SetTrue),
+                    .action(clap::ArgAction::SetTrue)
+                    .global(true),
             )
             .allow_external_subcommands(true)
     }
@@ -859,6 +860,13 @@ impl Parser {
                     .help("Don't run dependencies")
                     .action(clap::ArgAction::SetTrue),
             )
+            .arg(
+                Arg::new("tui")
+                    .short('t')
+                    .long("tui")
+                    .help("Enable interactive TUI dashboard for task monitoring")
+                    .action(clap::ArgAction::SetTrue),
+            )
             .allow_external_subcommands(true);
 
         // Add tasks as subcommands
@@ -941,6 +949,13 @@ impl Parser {
                 Arg::new("no-deps")
                     .long("no-deps")
                     .help("Don't run dependencies")
+                    .action(clap::ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("tui")
+                    .short('t')
+                    .long("tui")
+                    .help("Enable interactive TUI dashboard for task monitoring")
                     .action(clap::ArgAction::SetTrue),
             )
             .after_help(ottofile_not_found_message())
