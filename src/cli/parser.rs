@@ -1341,9 +1341,11 @@ mod tests {
 
     #[test]
     fn test_task_to_command_mixed_parameters() {
-        let mut task_spec = TaskSpec::default();
-        task_spec.name = "build".to_string();
-        task_spec.help = Some("Build the project".to_string());
+        let mut task_spec = TaskSpec {
+            name: "build".to_string(),
+            help: Some("Build the project".to_string()),
+            ..Default::default()
+        };
 
         // Add boolean flag
         let verbose_param = create_test_param_spec("verbose", ParamType::FLG, Some('v'), Some("verbose"));
@@ -1377,8 +1379,10 @@ mod tests {
 
     #[test]
     fn test_task_to_command_boolean_flags_only() {
-        let mut task_spec = TaskSpec::default();
-        task_spec.name = "test".to_string();
+        let mut task_spec = TaskSpec {
+            name: "test".to_string(),
+            ..Default::default()
+        };
 
         // Add multiple boolean flags
         let verbose_param = create_test_param_spec("verbose", ParamType::FLG, Some('v'), Some("verbose"));

@@ -5,7 +5,7 @@ use std::time::SystemTime;
 
 use super::db::DatabaseManager;
 use super::metadata::RunMetadata;
-use super::schema::RunStatus;
+use super::schema::{RunStatus, TaskStatus};
 
 /// State manager for recording and querying run/task state
 pub struct StateManager {
@@ -27,6 +27,23 @@ pub struct RunRecord {
     pub hostname: Option<String>,
     pub args: Option<Vec<String>>,
     pub ended_at: Option<u64>,
+}
+
+/// A task record from the database
+#[derive(Debug, Clone)]
+pub struct TaskRecord {
+    pub id: i64,
+    pub run_id: i64,
+    pub name: String,
+    pub status: TaskStatus,
+    pub script_hash: Option<String>,
+    pub exit_code: Option<i32>,
+    pub started_at: Option<u64>,
+    pub ended_at: Option<u64>,
+    pub duration_seconds: Option<f64>,
+    pub stdout_path: Option<PathBuf>,
+    pub stderr_path: Option<PathBuf>,
+    pub script_path: Option<PathBuf>,
 }
 
 impl StateManager {
@@ -120,6 +137,84 @@ impl StateManager {
         })
     }
 
+    /// Record the start of a task
+    /// Returns the database task ID if successful
+    pub fn record_task_start(
+        &self,
+        run_id: i64,
+        task_name: &str,
+        script_hash: Option<&str>,
+        stdout_path: Option<&PathBuf>,
+        stderr_path: Option<&PathBuf>,
+        script_path: Option<&PathBuf>,
+    ) -> Result<i64> {
+        let started_at = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .context("Failed to get current time")?
+            .as_secs();
+
+        self.db.with_connection(|conn| {
+            conn.execute(
+                "INSERT INTO tasks (
+                    run_id, name, status, script_hash, started_at,
+                    stdout_path, stderr_path, script_path
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    run_id,
+                    task_name,
+                    TaskStatus::Running.as_str(),
+                    script_hash,
+                    started_at as i64,
+                    stdout_path.map(|p| p.to_string_lossy().to_string()),
+                    stderr_path.map(|p| p.to_string_lossy().to_string()),
+                    script_path.map(|p| p.to_string_lossy().to_string()),
+                ],
+            )?;
+
+            Ok(conn.last_insert_rowid())
+        })
+    }
+
+    /// Record the completion of a task
+    pub fn record_task_complete(&self, task_id: i64, exit_code: i32, status: TaskStatus) -> Result<()> {
+        let ended_at = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .context("Failed to get current time")?
+            .as_secs();
+
+        self.db.with_connection(|conn| {
+            // Get the started_at time to calculate duration
+            let started_at: i64 =
+                conn.query_row("SELECT started_at FROM tasks WHERE id = ?1", params![task_id], |row| {
+                    row.get(0)
+                })?;
+
+            let duration_seconds = (ended_at as i64 - started_at) as f64;
+
+            conn.execute(
+                "UPDATE tasks
+                 SET status = ?1, exit_code = ?2, ended_at = ?3, duration_seconds = ?4
+                 WHERE id = ?5",
+                params![status.as_str(), exit_code, ended_at as i64, duration_seconds, task_id],
+            )?;
+
+            Ok(())
+        })
+    }
+
+    /// Record that a task was skipped
+    pub fn record_task_skipped(&self, run_id: i64, task_name: &str, script_hash: Option<&str>) -> Result<i64> {
+        self.db.with_connection(|conn| {
+            conn.execute(
+                "INSERT INTO tasks (run_id, name, status, script_hash)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![run_id, task_name, TaskStatus::Skipped.as_str(), script_hash],
+            )?;
+
+            Ok(conn.last_insert_rowid())
+        })
+    }
+
     /// Get recent runs, optionally filtered by project hash
     pub fn get_recent_runs(&self, limit: usize, project_filter: Option<&str>) -> Result<Vec<RunRecord>> {
         self.db.with_connection(|conn| {
@@ -151,6 +246,44 @@ impl StateManager {
         })
     }
 
+    /// Get tasks for a specific run
+    pub fn get_run_tasks(&self, run_id: i64) -> Result<Vec<TaskRecord>> {
+        self.db.with_connection(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, run_id, name, status, script_hash, exit_code,
+                        started_at, ended_at, duration_seconds,
+                        stdout_path, stderr_path, script_path
+                 FROM tasks
+                 WHERE run_id = ?1
+                 ORDER BY started_at ASC",
+            )?;
+
+            let rows = stmt.query_map(params![run_id], Self::row_to_task_record)?;
+
+            rows.collect::<Result<Vec<_>, _>>().context("Failed to fetch tasks")
+        })
+    }
+
+    /// Get task history by task name across all runs
+    pub fn get_task_history(&self, task_name: &str, limit: usize) -> Result<Vec<TaskRecord>> {
+        self.db.with_connection(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, run_id, name, status, script_hash, exit_code,
+                        started_at, ended_at, duration_seconds,
+                        stdout_path, stderr_path, script_path
+                 FROM tasks
+                 WHERE name = ?1
+                 ORDER BY started_at DESC
+                 LIMIT ?2",
+            )?;
+
+            let rows = stmt.query_map(params![task_name, limit as i64], Self::row_to_task_record)?;
+
+            rows.collect::<Result<Vec<_>, _>>()
+                .context("Failed to fetch task history")
+        })
+    }
+
     /// Helper to convert a database row to a RunRecord
     fn row_to_run_record(row: &rusqlite::Row) -> rusqlite::Result<RunRecord> {
         let args_json: Option<String> = row.get(10)?;
@@ -172,6 +305,27 @@ impl StateManager {
             hostname: row.get(9)?,
             args,
             ended_at: row.get::<_, Option<i64>>(11)?.map(|t| t as u64),
+        })
+    }
+
+    /// Helper to convert a database row to a TaskRecord
+    fn row_to_task_record(row: &rusqlite::Row) -> rusqlite::Result<TaskRecord> {
+        let status_str: String = row.get(3)?;
+        let status = TaskStatus::parse(&status_str).unwrap_or(TaskStatus::Failed);
+
+        Ok(TaskRecord {
+            id: row.get(0)?,
+            run_id: row.get(1)?,
+            name: row.get(2)?,
+            status,
+            script_hash: row.get(4)?,
+            exit_code: row.get(5)?,
+            started_at: row.get::<_, Option<i64>>(6)?.map(|t| t as u64),
+            ended_at: row.get::<_, Option<i64>>(7)?.map(|t| t as u64),
+            duration_seconds: row.get(8)?,
+            stdout_path: row.get::<_, Option<String>>(9)?.map(PathBuf::from),
+            stderr_path: row.get::<_, Option<String>>(10)?.map(PathBuf::from),
+            script_path: row.get::<_, Option<String>>(11)?.map(PathBuf::from),
         })
     }
 
@@ -359,5 +513,191 @@ mod tests {
         // This test verifies that try_new() returns None for invalid paths
         // We can't easily test this without mocking, but we can at least verify it compiles
         let _result = StateManager::try_new();
+    }
+
+    #[test]
+    fn test_record_task_start() -> Result<()> {
+        let (manager, _temp_dir) = create_test_manager()?;
+
+        let metadata = RunMetadata::minimal(Some(PathBuf::from("/test/otto.yml")), "abc123".to_string(), 1234567890);
+        let run_id = manager.record_run_start(&metadata)?;
+
+        let task_id = manager.record_task_start(
+            run_id,
+            "test-task",
+            Some("hash123"),
+            Some(&PathBuf::from("/tmp/stdout.log")),
+            Some(&PathBuf::from("/tmp/stderr.log")),
+            Some(&PathBuf::from("/tmp/script.sh")),
+        )?;
+
+        assert!(task_id > 0);
+
+        // Verify task was recorded
+        let tasks = manager.get_run_tasks(run_id)?;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].name, "test-task");
+        assert_eq!(tasks[0].status, TaskStatus::Running);
+        assert_eq!(tasks[0].script_hash, Some("hash123".to_string()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_record_task_complete() -> Result<()> {
+        let (manager, _temp_dir) = create_test_manager()?;
+
+        let metadata = RunMetadata::minimal(Some(PathBuf::from("/test/otto.yml")), "abc123".to_string(), 1234567890);
+        let run_id = manager.record_run_start(&metadata)?;
+
+        let task_id = manager.record_task_start(run_id, "test-task", None, None, None, None)?;
+        manager.record_task_complete(task_id, 0, TaskStatus::Completed)?;
+
+        // Verify task was updated
+        let tasks = manager.get_run_tasks(run_id)?;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].status, TaskStatus::Completed);
+        assert_eq!(tasks[0].exit_code, Some(0));
+        assert!(tasks[0].ended_at.is_some());
+        assert!(tasks[0].duration_seconds.is_some());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_record_task_failed() -> Result<()> {
+        let (manager, _temp_dir) = create_test_manager()?;
+
+        let metadata = RunMetadata::minimal(Some(PathBuf::from("/test/otto.yml")), "abc123".to_string(), 1234567890);
+        let run_id = manager.record_run_start(&metadata)?;
+
+        let task_id = manager.record_task_start(run_id, "test-task", None, None, None, None)?;
+        manager.record_task_complete(task_id, 1, TaskStatus::Failed)?;
+
+        // Verify task was updated with failure
+        let tasks = manager.get_run_tasks(run_id)?;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].status, TaskStatus::Failed);
+        assert_eq!(tasks[0].exit_code, Some(1));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_record_task_skipped() -> Result<()> {
+        let (manager, _temp_dir) = create_test_manager()?;
+
+        let metadata = RunMetadata::minimal(Some(PathBuf::from("/test/otto.yml")), "abc123".to_string(), 1234567890);
+        let run_id = manager.record_run_start(&metadata)?;
+
+        let task_id = manager.record_task_skipped(run_id, "test-task", Some("hash123"))?;
+        assert!(task_id > 0);
+
+        // Verify task was recorded as skipped
+        let tasks = manager.get_run_tasks(run_id)?;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].name, "test-task");
+        assert_eq!(tasks[0].status, TaskStatus::Skipped);
+        assert_eq!(tasks[0].script_hash, Some("hash123".to_string()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_run_tasks() -> Result<()> {
+        let (manager, _temp_dir) = create_test_manager()?;
+
+        let metadata = RunMetadata::minimal(Some(PathBuf::from("/test/otto.yml")), "abc123".to_string(), 1234567890);
+        let run_id = manager.record_run_start(&metadata)?;
+
+        // Create multiple tasks
+        let task_id1 = manager.record_task_start(run_id, "task-1", None, None, None, None)?;
+        let task_id2 = manager.record_task_start(run_id, "task-2", None, None, None, None)?;
+        let task_id3 = manager.record_task_start(run_id, "task-3", None, None, None, None)?;
+
+        manager.record_task_complete(task_id1, 0, TaskStatus::Completed)?;
+        manager.record_task_complete(task_id2, 1, TaskStatus::Failed)?;
+        manager.record_task_complete(task_id3, 0, TaskStatus::Completed)?;
+
+        // Get all tasks for the run
+        let tasks = manager.get_run_tasks(run_id)?;
+        assert_eq!(tasks.len(), 3);
+
+        // Tasks should be ordered by started_at
+        assert_eq!(tasks[0].name, "task-1");
+        assert_eq!(tasks[1].name, "task-2");
+        assert_eq!(tasks[2].name, "task-3");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_task_history() -> Result<()> {
+        let (manager, _temp_dir) = create_test_manager()?;
+
+        // Create multiple runs with the same task name
+        for i in 0..5 {
+            let metadata = RunMetadata::minimal(
+                Some(PathBuf::from("/test/otto.yml")),
+                "abc123".to_string(),
+                1234567890 + i,
+            );
+            let run_id = manager.record_run_start(&metadata)?;
+
+            let task_id = manager.record_task_start(run_id, "build", None, None, None, None)?;
+            manager.record_task_complete(task_id, 0, TaskStatus::Completed)?;
+
+            // Add a small sleep to ensure different timestamps
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        // Get history for the build task
+        let history = manager.get_task_history("build", 3)?;
+        assert_eq!(history.len(), 3);
+
+        // Should be ordered by started_at descending (newest first)
+        // Use >= instead of > since timestamps might be the same in fast execution
+        assert!(history[0].started_at >= history[1].started_at);
+        assert!(history[1].started_at >= history[2].started_at);
+
+        // All should be the same task name
+        assert!(history.iter().all(|t| t.name == "build"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_task_with_all_fields() -> Result<()> {
+        let (manager, _temp_dir) = create_test_manager()?;
+
+        let metadata = RunMetadata::minimal(Some(PathBuf::from("/test/otto.yml")), "abc123".to_string(), 1234567890);
+        let run_id = manager.record_run_start(&metadata)?;
+
+        let task_id = manager.record_task_start(
+            run_id,
+            "complex-task",
+            Some("script_hash_123"),
+            Some(&PathBuf::from("/tmp/stdout.log")),
+            Some(&PathBuf::from("/tmp/stderr.log")),
+            Some(&PathBuf::from("/tmp/script.sh")),
+        )?;
+
+        manager.record_task_complete(task_id, 0, TaskStatus::Completed)?;
+
+        let tasks = manager.get_run_tasks(run_id)?;
+        assert_eq!(tasks.len(), 1);
+
+        let task = &tasks[0];
+        assert_eq!(task.name, "complex-task");
+        assert_eq!(task.script_hash, Some("script_hash_123".to_string()));
+        assert_eq!(task.stdout_path, Some(PathBuf::from("/tmp/stdout.log")));
+        assert_eq!(task.stderr_path, Some(PathBuf::from("/tmp/stderr.log")));
+        assert_eq!(task.script_path, Some(PathBuf::from("/tmp/script.sh")));
+        assert_eq!(task.exit_code, Some(0));
+        assert!(task.started_at.is_some());
+        assert!(task.ended_at.is_some());
+        assert!(task.duration_seconds.is_some());
+
+        Ok(())
     }
 }

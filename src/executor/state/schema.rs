@@ -33,7 +33,6 @@ impl RunStatus {
 
 /// Status of a task
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // Will be used in Phase 3
 pub enum TaskStatus {
     Pending,
     Running,
@@ -42,7 +41,6 @@ pub enum TaskStatus {
     Skipped,
 }
 
-#[allow(dead_code)] // Will be used in Phase 3
 impl TaskStatus {
     pub fn as_str(&self) -> &str {
         match self {

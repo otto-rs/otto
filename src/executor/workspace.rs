@@ -55,6 +55,9 @@ pub struct Workspace {
     project: PathBuf, // <name>-<hash>
     cache: PathBuf,   // <name>-<hash>/.cache
     run: PathBuf,     // <name>-<hash>/<timestamp>
+
+    // Database integration
+    db_run_id: std::sync::Mutex<Option<i64>>, // Run ID from database
 }
 
 impl Workspace {
@@ -127,6 +130,7 @@ impl Workspace {
             project,
             cache,
             run,
+            db_run_id: std::sync::Mutex::new(None),
         })
     }
 
@@ -291,10 +295,23 @@ impl Workspace {
             );
 
             // Try to record - log error but don't fail
-            if let Err(e) = manager.record_run_start(&metadata) {
-                log::warn!("Failed to record run start in database: {}", e);
+            match manager.record_run_start(&metadata) {
+                Ok(run_id) => {
+                    // Store the run_id for task tracking
+                    if let Ok(mut db_run_id) = self.db_run_id.lock() {
+                        *db_run_id = Some(run_id);
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Failed to record run start in database: {}", e);
+                }
             }
         }
+    }
+
+    /// Get the database run ID if available
+    pub fn db_run_id(&self) -> Option<i64> {
+        self.db_run_id.lock().ok().and_then(|guard| *guard)
     }
 
     /// Try to record run completion in database (graceful - doesn't fail if DB unavailable)

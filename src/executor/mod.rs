@@ -15,7 +15,9 @@ pub use colors::{
 pub use graph::{DagVisualizer, GraphFormat, GraphOptions, NodeStyle};
 pub use output::TaskStreams;
 pub use scheduler::{TaskScheduler, TaskStatus};
-pub use state::{DatabaseManager, RunMetadata, RunRecord, RunStatus, StateManager};
+pub use state::{
+    DatabaseManager, RunMetadata, RunRecord, RunStatus, StateManager, TaskRecord, TaskStatus as DbTaskStatus,
+};
 pub use task::{DAG, Task};
 pub use visualizer::OutputVisualizer;
 pub use workspace::Workspace;

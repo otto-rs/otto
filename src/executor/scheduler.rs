@@ -332,6 +332,33 @@ impl TaskScheduler {
                 ProcessedAction::Python3 { path, .. } => (path, "python3"),
             };
 
+            // Record task start in database with paths (graceful degradation)
+            let db_task_id = if let Some(run_id) = workspace.db_run_id() {
+                if let Some(manager) = super::state::StateManager::try_new() {
+                    let stdout_path = tasks_dir.join(&task_name).join("stdout.log");
+                    let stderr_path = tasks_dir.join(&task_name).join("stderr.log");
+
+                    match manager.record_task_start(
+                        run_id,
+                        &task_name,
+                        None, // TODO: Compute script hash in future phase
+                        Some(&stdout_path),
+                        Some(&stderr_path),
+                        Some(&script_path),
+                    ) {
+                        Ok(task_id) => Some(task_id),
+                        Err(e) => {
+                            log::warn!("Failed to record task start in database: {}", e);
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             // Setup command environment
             let mut cmd = Command::new(interpreter);
             cmd.arg(&script_path)
@@ -423,6 +450,15 @@ impl TaskScheduler {
             match result {
                 Ok(()) => {
                     info!("Task {task_name} completed successfully");
+
+                    // Record task completion in database (graceful degradation)
+                    if let Some(task_id) = db_task_id
+                        && let Some(manager) = super::state::StateManager::try_new()
+                        && let Err(e) = manager.record_task_complete(task_id, 0, super::state::TaskStatus::Completed)
+                    {
+                        log::warn!("Failed to record task completion in database: {}", e);
+                    }
+
                     // Ensure we send the completion message
                     if let Err(e) = tx.send(Ok(task_name.clone())).await {
                         error!("Failed to send completion notification for task {task_name}: {e}");
@@ -430,6 +466,23 @@ impl TaskScheduler {
                 }
                 Err(e) => {
                     error!("Task {task_name} failed: {e}");
+
+                    // Record task failure in database (graceful degradation)
+                    if let Some(task_id) = db_task_id
+                        && let Some(manager) = super::state::StateManager::try_new()
+                    {
+                        // Extract exit code from error message if possible
+                        let exit_code = e
+                            .to_string()
+                            .split("exit code")
+                            .nth(1)
+                            .and_then(|s| s.trim().parse::<i32>().ok())
+                            .unwrap_or(1);
+
+                        // Ignore errors in graceful degradation
+                        let _ = manager.record_task_complete(task_id, exit_code, super::state::TaskStatus::Failed);
+                    }
+
                     let mut statuses = task_statuses.lock().await;
                     statuses.insert(task_name.clone(), TaskStatus::Failed(e.to_string()));
                     if let Err(send_err) = tx.send(Err(e)).await {
