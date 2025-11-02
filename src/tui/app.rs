@@ -1,6 +1,13 @@
 use super::layout::PaneLayout;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use ratatui::{Terminal, backend::Backend};
+use ratatui::{
+    Terminal,
+    backend::Backend,
+    layout::{Constraint, Direction, Layout},
+    style::{Color, Style},
+    text::Line,
+    widgets::{Block, Borders, Paragraph},
+};
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -12,6 +19,7 @@ pub struct TuiApp {
     should_quit: bool,
     last_tick: Instant,
     tick_rate: Duration,
+    fullscreen_mode: bool,
 }
 
 impl Default for TuiApp {
@@ -27,6 +35,7 @@ impl TuiApp {
             should_quit: false,
             last_tick: Instant::now(),
             tick_rate: Duration::from_millis(TUI_TICK_RATE_MS),
+            fullscreen_mode: false,
         }
     }
 
@@ -38,7 +47,25 @@ impl TuiApp {
     pub fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> io::Result<()> {
         loop {
             // Draw UI
-            terminal.draw(|f| self.layout.render(f, f.area()))?;
+            terminal.draw(|f| {
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Min(1),    // Main content area
+                        Constraint::Length(3), // Status bar (3 lines with border)
+                    ])
+                    .split(f.area());
+
+                // Render main content
+                if self.fullscreen_mode {
+                    self.layout.render_fullscreen(f, chunks[0]);
+                } else {
+                    self.layout.render(f, chunks[0]);
+                }
+
+                // Render status bar
+                self.render_status_bar(f, chunks[1]);
+            })?;
 
             // Handle events with timeout
             let timeout = self
@@ -72,10 +99,30 @@ impl TuiApp {
         self.layout.update_all();
     }
 
+    fn render_status_bar(&self, frame: &mut ratatui::Frame, area: ratatui::layout::Rect) {
+        let help_text = if self.fullscreen_mode {
+            "f/Enter: Exit Fullscreen | ↑↓/jk: Scroll | Home: Top | q/Esc: Quit"
+        } else {
+            "f/Enter: Fullscreen | Tab/←→: Switch Pane | ↑↓/jk: Scroll | Home: Top | q/Esc: Quit"
+        };
+
+        let status_line = Line::from(help_text);
+        let paragraph = Paragraph::new(status_line).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray)),
+        );
+
+        frame.render_widget(paragraph, area);
+    }
+
     fn handle_key_event(&mut self, code: KeyCode) {
         match code {
             KeyCode::Char('q') | KeyCode::Esc => {
                 self.should_quit = true;
+            }
+            KeyCode::Char('f') | KeyCode::Enter => {
+                self.fullscreen_mode = !self.fullscreen_mode;
             }
             KeyCode::Tab | KeyCode::Right => {
                 self.layout.focus_next();

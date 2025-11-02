@@ -20,7 +20,7 @@ use super::task::Task;
 use super::{
     action::{ActionProcessor, ProcessedAction},
     colors::{colorize_task_prefix, set_global_task_order},
-    output::{OutputType, TaskStreams},
+    output::{OutputType, TaskMessage, TaskStreams, TuiTaskStatus},
     workspace::{ExecutionContext, Workspace},
 };
 
@@ -56,6 +56,8 @@ pub struct TaskScheduler {
     tasks: Vec<Task>,
     /// Whether TUI mode is enabled (suppresses terminal output)
     tui_mode: bool,
+    /// Optional broadcast channel for TUI status updates
+    message_tx: Option<tokio::sync::broadcast::Sender<TaskMessage>>,
 }
 
 impl TaskScheduler {
@@ -80,7 +82,32 @@ impl TaskScheduler {
             execution_context,
             tasks,
             tui_mode,
+            message_tx: None,
         })
+    }
+
+    /// Set the message broadcast channel for TUI updates
+    pub fn set_message_channel(&mut self, tx: tokio::sync::broadcast::Sender<TaskMessage>) {
+        self.message_tx = Some(tx);
+    }
+
+    /// Helper to broadcast a TaskMessage to TUI
+    fn broadcast_message(&self, message: TaskMessage) {
+        if let Some(tx) = &self.message_tx {
+            let _ = tx.send(message);
+        }
+    }
+
+    /// Convert internal TaskStatus to TUI TaskStatus
+    #[allow(dead_code)]
+    fn to_tui_status(status: &TaskStatus) -> TuiTaskStatus {
+        match status {
+            TaskStatus::Pending => TuiTaskStatus::Pending,
+            TaskStatus::Running => TuiTaskStatus::Running,
+            TaskStatus::Completed => TuiTaskStatus::Completed,
+            TaskStatus::Skipped => TuiTaskStatus::Skipped,
+            TaskStatus::Failed(_) => TuiTaskStatus::Failed,
+        }
     }
 
     /// Execute all tasks in the graph
@@ -142,6 +169,13 @@ impl TaskScheduler {
                     Ok(true) => {
                         // Task needs to run
                         info!("Starting task {} ({}/{})", task.name, completed_tasks + 1, total_tasks);
+
+                        // Broadcast task started to TUI
+                        self.broadcast_message(TaskMessage::Started {
+                            task_name: task.name.clone(),
+                            timestamp: std::time::SystemTime::now(),
+                        });
+
                         let handle = self.execute_task(task.clone(), tx.clone()).await?;
                         let task_name = task.name.clone();
                         active_tasks.insert(task_name.clone(), handle);
@@ -159,6 +193,13 @@ impl TaskScheduler {
                         let skipped_msg = format!("{} skipped (up to date)\n", colorize_task_prefix(&task.name));
                         print!("{skipped_msg}");
                         io::stdout().flush().unwrap_or(());
+
+                        // Broadcast task skipped to TUI
+                        self.broadcast_message(TaskMessage::StatusChange {
+                            task_name: task.name.clone(),
+                            status: TuiTaskStatus::Skipped,
+                            timestamp: std::time::SystemTime::now(),
+                        });
 
                         let mut statuses = self.task_statuses.lock().await;
                         statuses.insert(task.name.clone(), TaskStatus::Skipped);
@@ -189,6 +230,13 @@ impl TaskScheduler {
                             completed_tasks + 1,
                             total_tasks
                         );
+
+                        // Broadcast task started to TUI
+                        self.broadcast_message(TaskMessage::Started {
+                            task_name: task.name.clone(),
+                            timestamp: std::time::SystemTime::now(),
+                        });
+
                         let handle = self.execute_task(task.clone(), tx.clone()).await?;
                         let task_name = task.name.clone();
                         active_tasks.insert(task_name.clone(), handle);
@@ -205,6 +253,14 @@ impl TaskScheduler {
                     let success_msg = format!("{} finished successfully\n", colorize_task_prefix(&completed_task));
                     print!("{success_msg}");
                     io::stdout().flush().unwrap_or(());
+
+                    // Broadcast task completion to TUI
+                    self.broadcast_message(TaskMessage::Finished {
+                        task_name: completed_task.clone(),
+                        status: TuiTaskStatus::Completed,
+                        timestamp: std::time::SystemTime::now(),
+                        duration_ms: 0, // TODO: track actual duration
+                    });
 
                     let mut statuses = self.task_statuses.lock().await;
                     statuses.insert(completed_task.clone(), TaskStatus::Completed);
@@ -243,6 +299,14 @@ impl TaskScheduler {
                         let failure_msg = format!("{} failed\n", colorize_task_prefix(task_name));
                         eprint!("{failure_msg}");
                         io::stderr().flush().unwrap_or(());
+
+                        // Broadcast task failure to TUI
+                        self.broadcast_message(TaskMessage::Finished {
+                            task_name: task_name.to_string(),
+                            status: TuiTaskStatus::Failed,
+                            timestamp: std::time::SystemTime::now(),
+                            duration_ms: 0,
+                        });
                     }
 
                     return Err(e);

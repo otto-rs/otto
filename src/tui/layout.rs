@@ -43,6 +43,17 @@ impl PaneLayout {
         }
     }
 
+    pub fn render_fullscreen(&self, frame: &mut Frame, area: Rect) {
+        if self.panes.is_empty() {
+            return;
+        }
+
+        // Render only the focused pane in fullscreen
+        if let Some(pane) = self.panes.get(self.focused_index) {
+            pane.render(frame, area, true);
+        }
+    }
+
     fn calculate_grid(&self, area: Rect) -> Vec<Rect> {
         let num_panes = self.panes.len();
 

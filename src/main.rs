@@ -284,16 +284,20 @@ async fn execute_with_tui(
 
     let mut app = TuiApp::new();
 
+    // Create message broadcast channel for status updates
+    let (message_tx, _) = tokio::sync::broadcast::channel::<otto::executor::output::TaskMessage>(100);
+
     // Create pane for each task
     for task in &executor_tasks {
         if let Some(streams) = task_streams_map.get(&task.name) {
-            let pane = TaskPane::new(task.name.clone(), streams.output_tx.clone());
+            let mut pane = TaskPane::new(task.name.clone(), streams.output_tx.clone());
+            pane.set_message_channel(message_tx.clone());
             app.layout_mut().add_pane(Box::new(pane));
         }
     }
 
     // Start scheduler in background with TUI mode enabled
-    let scheduler = TaskScheduler::new(
+    let mut scheduler = TaskScheduler::new(
         executor_tasks,
         Arc::new(workspace),
         execution_context,
@@ -301,6 +305,9 @@ async fn execute_with_tui(
         true, // tui_mode = true
     )
     .await?;
+
+    // Set message channel on scheduler for broadcasting status updates
+    scheduler.set_message_channel(message_tx);
 
     let scheduler_handle = tokio::spawn(async move { scheduler.execute_all().await });
 

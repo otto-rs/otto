@@ -36,6 +36,43 @@ pub struct TaskOutput {
     pub content: String,
 }
 
+/// Status of a task for TUI display
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum TuiTaskStatus {
+    /// Task is waiting to be executed
+    Pending,
+    /// Task is currently running
+    Running,
+    /// Task completed successfully
+    Completed,
+    /// Task failed with an error
+    Failed,
+    /// Task was skipped
+    Skipped,
+}
+
+/// Message sent from scheduler to TUI with task updates
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TaskMessage {
+    /// Task output line
+    Output(TaskOutput),
+    /// Task status change
+    StatusChange {
+        task_name: String,
+        status: TuiTaskStatus,
+        timestamp: SystemTime,
+    },
+    /// Task started executing
+    Started { task_name: String, timestamp: SystemTime },
+    /// Task finished executing
+    Finished {
+        task_name: String,
+        status: TuiTaskStatus,
+        timestamp: SystemTime,
+        duration_ms: u64,
+    },
+}
+
 /// A writer that writes to both a file and a terminal
 pub struct TeeWriter {
     /// File to write to
