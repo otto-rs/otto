@@ -1,9 +1,10 @@
 use chrono::{DateTime, Utc};
 use eyre::{Context, Result};
-use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+
+use crate::executor::state::RunMetadata;
 
 pub struct CleanCommand {
     keep_days: u64,
@@ -18,15 +19,6 @@ struct RunInfo {
     age_days: u64,
     size_bytes: u64,
     ottofile_path: Option<PathBuf>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct RunMetadata {
-    ottofile: Option<PathBuf>,
-    #[serde(default)]
-    hash: String,
-    #[serde(default)]
-    timestamp: u64,
 }
 
 impl CleanCommand {
@@ -144,10 +136,10 @@ impl CleanCommand {
             }
 
             // Apply project filter if specified
-            if let Some(ref filter) = self.project_filter {
-                if !dir_name.contains(filter) {
-                    continue;
-                }
+            if let Some(ref filter) = self.project_filter
+                && !dir_name.contains(filter)
+            {
+                continue;
             }
 
             // Extract project hash from directory name (e.g., "otto-6b20a2e4" -> "6b20a2e4")
@@ -351,11 +343,11 @@ mod tests {
         fs::create_dir_all(&run_dir)?;
 
         // Create run.yaml with ottofile path
-        let metadata = RunMetadata {
-            ottofile: Some(PathBuf::from("/path/to/otto.yml")),
-            hash: "abc123".to_string(),
-            timestamp: 1234567890,
-        };
+        let metadata = RunMetadata::minimal(
+            Some(PathBuf::from("/path/to/otto.yml")),
+            "abc123".to_string(),
+            1234567890,
+        );
         let yaml_content = serde_yaml::to_string(&metadata)?;
         fs::write(run_dir.join("run.yaml"), yaml_content)?;
 
@@ -386,11 +378,7 @@ mod tests {
         fs::create_dir_all(&run_dir)?;
 
         // Create run.yaml without ottofile field
-        let metadata = RunMetadata {
-            ottofile: None,
-            hash: "abc123".to_string(),
-            timestamp: 1234567890,
-        };
+        let metadata = RunMetadata::minimal(None, "abc123".to_string(), 1234567890);
         let yaml_content = serde_yaml::to_string(&metadata)?;
         fs::write(run_dir.join("run.yaml"), yaml_content)?;
 
@@ -517,11 +505,11 @@ mod tests {
         fs::write(file_path, content)?;
 
         // Create run.yaml with ottofile path
-        let metadata = RunMetadata {
-            ottofile: Some(PathBuf::from("/test/project/otto.yml")),
-            hash: "abc123".to_string(),
-            timestamp: old_timestamp,
-        };
+        let metadata = RunMetadata::minimal(
+            Some(PathBuf::from("/test/project/otto.yml")),
+            "abc123".to_string(),
+            old_timestamp,
+        );
         let yaml_content = serde_yaml::to_string(&metadata)?;
         fs::write(run_dir.join("run.yaml"), yaml_content)?;
 

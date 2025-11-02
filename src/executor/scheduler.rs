@@ -223,10 +223,10 @@ impl TaskScheduler {
 
                     // Update in-degree for dependent tasks
                     for remaining_task in &blocked_tasks {
-                        if remaining_task.task_deps.contains(&completed_task) {
-                            if let Some(degree) = in_degree.get_mut(&remaining_task.name) {
-                                *degree = degree.saturating_sub(1);
-                            }
+                        if remaining_task.task_deps.contains(&completed_task)
+                            && let Some(degree) = in_degree.get_mut(&remaining_task.name)
+                        {
+                            *degree = degree.saturating_sub(1);
                         }
                     }
                 }

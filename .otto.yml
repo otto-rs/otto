@@ -124,25 +124,6 @@ tasks:
       echo ""
       echo "🎉 Everything looks great!"
 
-  # Release workflow
-  release-check:
-    help: "Verify everything is ready for release"
-    before: [all]
-    bash: |
-      echo ""
-      echo "=== Release Checklist ==="
-      echo "✅ All validations passed"
-      echo ""
-      echo "Current version: $(grep '^version =' Cargo.toml | cut -d'"' -f2)"
-      echo "Git tag: $(git describe --tags --always)"
-      echo ""
-      echo "To release:"
-      echo "  1. Update version in Cargo.toml"
-      echo "  2. Commit changes"
-      echo "  3. Tag: git tag v<version>"
-      echo "  4. Push: git push && git push --tags"
-      echo "  5. cargo publish"
-
   # Cleanup
   clean-all:
     help: "Deep clean (cargo clean + remove all otto run artifacts)"

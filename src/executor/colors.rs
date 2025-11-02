@@ -40,12 +40,11 @@ pub fn set_global_task_order(task_names: Vec<String>) {
 /// Get the color combination (bracket_color, text_color) for a task using alphabetical ordering
 pub fn get_task_color_combination(task_name: &str) -> (Color, Color) {
     // Try to use global task order first
-    if let Some(task_order) = TASK_ORDER.get() {
-        if let Ok(order) = task_order.lock() {
-            if let Some(position) = order.iter().position(|name| name == task_name) {
-                return COLOR_COMBINATIONS[position % COLOR_COMBINATIONS.len()];
-            }
-        }
+    if let Some(task_order) = TASK_ORDER.get()
+        && let Ok(order) = task_order.lock()
+        && let Some(position) = order.iter().position(|name| name == task_name)
+    {
+        return COLOR_COMBINATIONS[position % COLOR_COMBINATIONS.len()];
     }
 
     // Fallback to hash-based assignment
@@ -96,7 +95,7 @@ pub fn colorize_task_name(task_name: &str) -> String {
     }
 }
 
-/// Format a task prefix (e.g., "[task_name]") with two-color system: colored brackets + colored text
+/// Format a task prefix (e.g., "\[task_name\]") with two-color system: colored brackets + colored text
 pub fn colorize_task_prefix(task_name: &str) -> String {
     if colored::control::SHOULD_COLORIZE.should_colorize() {
         let (bracket_color, text_color) = get_task_color_combination(task_name);

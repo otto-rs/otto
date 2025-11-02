@@ -48,33 +48,23 @@ pub struct ParamSpec {
     pub value: Value,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum ParamType {
     FLG,
+    #[default]
     OPT,
     POS,
 }
 
-impl Default for ParamType {
-    fn default() -> Self {
-        Self::OPT
-    }
-}
-
 pub type Values = HashMap<String, Value>;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum Value {
     Item(String),
     List(Vec<String>),
     Dict(HashMap<String, String>),
+    #[default]
     Empty,
-}
-
-impl Default for Value {
-    fn default() -> Self {
-        Self::Empty
-    }
 }
 
 impl fmt::Display for Value {
@@ -125,20 +115,15 @@ where
     }
     deserializer.deserialize_any(ValueEnum)
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Nargs {
+    #[default]
     One,
     Zero,
     OneOrZero,
     OneOrMore,
     ZeroOrMore,
     Range(usize, usize),
-}
-
-impl Default for Nargs {
-    fn default() -> Self {
-        Self::One
-    }
 }
 
 impl fmt::Display for Nargs {

@@ -147,11 +147,14 @@ impl DagVisualizer {
     }
 
     /// Create a DAG from executor tasks
-    fn create_dag_from_tasks(tasks: Vec<Task>) -> Result<DAG<Task>> {
+    fn create_dag_from_tasks(mut tasks: Vec<Task>) -> Result<DAG<Task>> {
         use daggy::Dag;
 
         let mut dag: DAG<Task> = Dag::new();
         let mut task_indices = HashMap::new();
+
+        // Sort tasks alphabetically for consistent ordering
+        tasks.sort_by(|a, b| a.name.cmp(&b.name));
 
         // Add all tasks as nodes
         for task in tasks {
@@ -332,7 +335,7 @@ impl DagVisualizer {
         let all_task_names: std::collections::HashSet<String> =
             dag.raw_nodes().iter().map(|node| node.weight.name.clone()).collect();
 
-        let leaf_tasks: Vec<_> = dag
+        let mut leaf_tasks: Vec<_> = dag
             .raw_nodes()
             .iter()
             .filter(|node| {
@@ -345,6 +348,9 @@ impl DagVisualizer {
                 })
             })
             .collect();
+
+        // Sort leaf tasks alphabetically for consistent output
+        leaf_tasks.sort_by(|a, b| a.weight.name.cmp(&b.weight.name));
 
         if leaf_tasks.is_empty() {
             output.push_str("No leaf tasks found (possible circular dependencies)\n");

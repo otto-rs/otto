@@ -620,10 +620,12 @@ impl Parser {
             // Find the partition for this task's arguments
             let task_args = self.pargs.iter().find(|args| !args.is_empty() && args[0] == *task_name);
 
-            if task_args.is_some() && task_args.unwrap().len() > 1 {
+            if let Some(args) = task_args
+                && args.len() > 1
+            {
                 // Parse task arguments using clap
                 let task_command = Self::task_to_command(task_spec);
-                let matches = task_command.get_matches_from(task_args.unwrap());
+                let matches = task_command.get_matches_from(args);
 
                 for param_spec in task_spec.params.values() {
                     match param_spec.param_type {
@@ -704,10 +706,10 @@ impl Parser {
         // Add reverse dependencies from 'after' field
         for (task_name, task_spec) in &self.config_spec.tasks {
             for after_task in &task_spec.after {
-                if let Some(deps) = task_deps.get_mut(after_task) {
-                    if !deps.contains(task_name) {
-                        deps.push(task_name.clone());
-                    }
+                if let Some(deps) = task_deps.get_mut(after_task)
+                    && !deps.contains(task_name)
+                {
+                    deps.push(task_name.clone());
                 }
             }
         }

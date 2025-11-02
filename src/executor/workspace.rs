@@ -6,6 +6,8 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use super::state::{RunMetadata, StateManager};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionContext {
     pub prog: String,
@@ -268,7 +270,67 @@ impl Workspace {
             .await
             .map_err(|e| eyre!("Failed to write run.yaml: {}", e))?;
 
+        // Also try to record in database (graceful degradation if DB unavailable)
+        self.record_run_start_in_db(&context);
+
         Ok(())
+    }
+
+    /// Try to record run start in database (graceful - doesn't fail if DB unavailable)
+    fn record_run_start_in_db(&self, context: &ExecutionContext) {
+        if let Some(manager) = StateManager::try_new() {
+            // Convert ExecutionContext to RunMetadata
+            let metadata = RunMetadata::full(
+                context.ottofile.clone(),
+                context.hash.clone(),
+                context.timestamp,
+                Some(context.cwd.clone()),
+                Some(context.user.clone()),
+                None, // hostname not in ExecutionContext yet
+                Some(context.args.clone()),
+            );
+
+            // Try to record - log error but don't fail
+            if let Err(e) = manager.record_run_start(&metadata) {
+                log::warn!("Failed to record run start in database: {}", e);
+            }
+        }
+    }
+
+    /// Try to record run completion in database (graceful - doesn't fail if DB unavailable)
+    pub fn record_run_complete_in_db(&self, success: bool) {
+        if let Some(manager) = StateManager::try_new() {
+            let status = if success {
+                super::state::RunStatus::Success
+            } else {
+                super::state::RunStatus::Failed
+            };
+
+            // Try to calculate directory size
+            let size_bytes = Self::calculate_directory_size(&self.run).ok();
+
+            // Try to record - log error but don't fail
+            if let Err(e) = manager.record_run_complete(self.time, status, size_bytes) {
+                log::warn!("Failed to record run completion in database: {}", e);
+            }
+        }
+    }
+
+    /// Calculate the size of a directory recursively
+    fn calculate_directory_size(path: &Path) -> Result<u64> {
+        let mut total = 0u64;
+        if path.is_dir() {
+            for entry in std::fs::read_dir(path)? {
+                let entry = entry?;
+                let entry_path = entry.path();
+                if entry_path.is_dir() {
+                    total += Self::calculate_directory_size(&entry_path)?;
+                } else {
+                    total += entry.metadata()?.len();
+                }
+            }
+        }
+        Ok(total)
     }
 
     /// Save task-specific execution context to task directory

@@ -3,6 +3,7 @@ pub mod colors;
 pub mod graph;
 pub mod output;
 pub mod scheduler;
+pub mod state;
 pub mod task;
 pub mod visualizer;
 pub mod workspace;
@@ -14,6 +15,7 @@ pub use colors::{
 pub use graph::{DagVisualizer, GraphFormat, GraphOptions, NodeStyle};
 pub use output::TaskStreams;
 pub use scheduler::{TaskScheduler, TaskStatus};
+pub use state::{DatabaseManager, RunMetadata, RunRecord, RunStatus, StateManager};
 pub use task::{DAG, Task};
 pub use visualizer::OutputVisualizer;
 pub use workspace::Workspace;

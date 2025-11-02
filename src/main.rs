@@ -154,10 +154,15 @@ async fn execute_tasks(
         .collect();
 
     // Create task scheduler
-    let scheduler = TaskScheduler::new(executor_tasks, Arc::new(workspace), execution_context, jobs).await?;
+    let workspace_arc = Arc::new(workspace);
+    let scheduler = TaskScheduler::new(executor_tasks, workspace_arc.clone(), execution_context, jobs).await?;
 
     // Execute all tasks
-    scheduler.execute_all().await?;
+    let result = scheduler.execute_all().await;
 
-    Ok(())
+    // Record run completion in database (graceful - doesn't fail if DB unavailable)
+    workspace_arc.record_run_complete_in_db(result.is_ok());
+
+    // Return the result
+    result
 }
