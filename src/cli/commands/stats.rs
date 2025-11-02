@@ -1,6 +1,6 @@
 use chrono::TimeZone;
 use colored::Colorize;
-use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, Cell, CellAlignment, Table};
+use comfy_table::{Cell, CellAlignment, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
 use eyre::Result;
 
 use crate::executor::StateManager;
@@ -21,7 +21,6 @@ pub struct StatsCommand {
     #[arg(long)]
     pub json: bool,
 }
-
 
 impl StatsCommand {
     pub fn execute(&self) -> Result<()> {
@@ -72,8 +71,12 @@ impl StatsCommand {
         ]);
         table.add_row(vec![
             Cell::new("Successful").set_alignment(CellAlignment::Left),
-            Cell::new(format!("{} ({})", stats.successful_runs, format_percentage(success_rate)))
-                .set_alignment(CellAlignment::Right),
+            Cell::new(format!(
+                "{} ({})",
+                stats.successful_runs,
+                format_percentage(success_rate)
+            ))
+            .set_alignment(CellAlignment::Right),
         ]);
         table.add_row(vec![
             Cell::new("Failed").set_alignment(CellAlignment::Left),
@@ -184,8 +187,12 @@ impl StatsCommand {
         ]);
         table.add_row(vec![
             Cell::new("Successful").set_alignment(CellAlignment::Left),
-            Cell::new(format!("{} ({})", stats.successful_executions, format_percentage(success_rate)))
-                .set_alignment(CellAlignment::Right),
+            Cell::new(format!(
+                "{} ({})",
+                stats.successful_executions,
+                format_percentage(success_rate)
+            ))
+            .set_alignment(CellAlignment::Right),
         ]);
         table.add_row(vec![
             Cell::new("Failed").set_alignment(CellAlignment::Left),

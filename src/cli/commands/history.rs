@@ -1,6 +1,6 @@
 use chrono::{Local, TimeZone};
 use colored::Colorize;
-use console::{measure_text_width};
+use console::measure_text_width;
 use eyre::Result;
 
 use crate::executor::{RunStatus, StateManager};

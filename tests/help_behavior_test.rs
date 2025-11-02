@@ -1,4 +1,4 @@
-use assert_cmd::Command;
+use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
 use std::fs;
 use std::io::Write;
@@ -28,7 +28,7 @@ tasks:
     )
     .unwrap();
 
-    let mut cmd = Command::cargo_bin("otto").unwrap();
+    let mut cmd = cargo_bin_cmd!("otto");
     cmd.current_dir(&temp).arg("--help");
 
     cmd.assert()
@@ -60,7 +60,7 @@ fn test_help_without_ottofile_shows_normal_help_plus_error_message() {
     let temp = tempdir().unwrap();
     // No ottofile created - directory is empty
 
-    let mut cmd = Command::cargo_bin("otto").unwrap();
+    let mut cmd = cargo_bin_cmd!("otto");
     cmd.current_dir(&temp).arg("--help");
 
     cmd.assert()
@@ -96,7 +96,7 @@ fn test_help_with_short_flag_behaves_same_as_long_flag() {
     let temp = tempdir().unwrap();
     // No ottofile created - directory is empty
 
-    let mut cmd = Command::cargo_bin("otto").unwrap();
+    let mut cmd = cargo_bin_cmd!("otto");
     cmd.current_dir(&temp).arg("-h");
 
     cmd.assert()
@@ -149,7 +149,7 @@ tasks:
     )
     .unwrap();
 
-    let mut cmd = Command::cargo_bin("otto").unwrap();
+    let mut cmd = cargo_bin_cmd!("otto");
     cmd.current_dir(&temp).arg("--help");
 
     cmd.assert()
@@ -177,7 +177,7 @@ tasks:
 fn test_help_error_message_order_is_after_main_help() {
     let temp = tempdir().unwrap();
 
-    let mut cmd = Command::cargo_bin("otto").unwrap();
+    let mut cmd = cargo_bin_cmd!("otto");
     cmd.current_dir(&temp).arg("--help");
 
     let output = cmd.assert().failure().code(2);
@@ -220,7 +220,7 @@ tasks:
     let subdir = temp.path().join("subdir");
     fs::create_dir(&subdir).unwrap();
 
-    let mut cmd = Command::cargo_bin("otto").unwrap();
+    let mut cmd = cargo_bin_cmd!("otto");
     cmd.current_dir(&subdir).arg("--help");
 
     cmd.assert()
@@ -261,7 +261,7 @@ tasks:
         )
         .unwrap();
 
-        let mut cmd = Command::cargo_bin("otto").unwrap();
+        let mut cmd = cargo_bin_cmd!("otto");
         cmd.current_dir(&temp).arg("--help");
 
         cmd.assert()

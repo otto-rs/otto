@@ -1,4 +1,4 @@
-use assert_cmd::Command;
+use assert_cmd::cargo::cargo_bin_cmd;
 use tempfile::TempDir;
 
 #[test]
@@ -8,8 +8,7 @@ fn test_history_table_alignment() {
     let otto_path = temp_dir.path();
 
     // Set HOME to temp dir for consistent testing
-    let output = Command::cargo_bin("otto")
-        .unwrap()
+    let output = cargo_bin_cmd!("otto")
         .arg("history")
         .env("HOME", otto_path)
         .output()
@@ -88,12 +87,16 @@ fn test_column_format_consistency() {
     let path = "~/repos/scottidler/otto";
 
     // Header format
-    let header = format!("{:<19}  {:^6}  {:>8}  {:>8}  {:<8}  {}",
-        "Timestamp", "Status", "Duration", "Size", "User", "Path");
+    let header = format!(
+        "{:<19}  {:^6}  {:>8}  {:>8}  {:<8}  {}",
+        "Timestamp", "Status", "Duration", "Size", "User", "Path"
+    );
 
     // Data format (must match exactly)
-    let data = format!("{:<19}  {:^6}  {:>8}  {:>8}  {:<8}  {}",
-        timestamp, status, duration, size, user, path);
+    let data = format!(
+        "{:<19}  {:^6}  {:>8}  {:>8}  {:<8}  {}",
+        timestamp, status, duration, size, user, path
+    );
 
     println!("Header: |{}|", header);
     println!("Data:   |{}|", data);
@@ -148,4 +151,3 @@ fn test_column_format_consistency() {
 
     println!("✓ All column boundaries align correctly!");
 }
-

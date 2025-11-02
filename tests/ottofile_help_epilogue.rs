@@ -1,4 +1,4 @@
-use assert_cmd::Command;
+use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
 use std::fs;
 use std::io::Write;
@@ -7,7 +7,7 @@ use tempfile::tempdir;
 #[test]
 fn test_help_epilogue_when_ottofile_missing() {
     let temp = tempdir().unwrap();
-    let mut cmd = Command::cargo_bin("otto").unwrap();
+    let mut cmd = cargo_bin_cmd!("otto");
     cmd.current_dir(&temp).arg("--help");
     cmd.assert()
         .failure()
@@ -26,7 +26,7 @@ fn test_help_epilogue_not_present_when_ottofile_exists() {
     let mut file = fs::File::create(&ottofile_path).unwrap();
     writeln!(file, "otto:\n  api: 1\ntasks:\n  test:\n    action: echo test").unwrap();
 
-    let mut cmd = Command::cargo_bin("otto").unwrap();
+    let mut cmd = cargo_bin_cmd!("otto");
     cmd.current_dir(&temp).arg("--help");
     cmd.assert()
         .success()
