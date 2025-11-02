@@ -1,6 +1,7 @@
 pub mod cfg;
 pub mod cli;
 pub mod executor;
+pub mod tui;
 pub mod utils;
 
 pub use cfg::config::ConfigSpec;

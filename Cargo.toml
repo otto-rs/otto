@@ -47,6 +47,8 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 console = "0.15"
 comfy-table = "7.1"
 hostname = "0.4"
+ratatui = "0.29"
+crossterm = "0.29"
 
 [dev-dependencies]
 tokio-test = "0.4"
