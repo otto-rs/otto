@@ -635,6 +635,142 @@ impl StateManager {
         })
     }
 
+    /// Find old runs based on retention criteria
+    /// Returns runs that should be deleted according to the criteria
+    pub fn find_old_runs(
+        &self,
+        keep_days: u64,
+        keep_last: Option<usize>,
+        keep_failed_days: Option<u64>,
+        project_filter: Option<&str>,
+    ) -> Result<Vec<RunRecord>> {
+        let cutoff_timestamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .context("Failed to get current time")?
+            .as_secs()
+            .saturating_sub(keep_days * 24 * 60 * 60);
+
+        let failed_cutoff_timestamp = keep_failed_days.map(|days| {
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                .saturating_sub(days * 24 * 60 * 60)
+        });
+
+        self.db.with_connection(|conn| {
+            // First get all runs that match the basic criteria
+            let mut query = String::from(
+                "SELECT r.id, r.project_id, r.timestamp, r.status, r.duration_seconds,
+                        r.size_bytes, r.ottofile_path, r.cwd, r.user, r.hostname, r.args, r.ended_at
+                 FROM runs r",
+            );
+
+            if project_filter.is_some() {
+                query.push_str(" JOIN projects p ON r.project_id = p.id WHERE p.hash = ?1");
+            }
+
+            query.push_str(" ORDER BY r.timestamp DESC");
+
+            let mut stmt = conn.prepare(&query)?;
+            let rows = if let Some(project) = project_filter {
+                stmt.query_map(params![project], Self::row_to_run_record)?
+            } else {
+                stmt.query_map([], Self::row_to_run_record)?
+            };
+
+            let all_runs: Vec<RunRecord> = rows.collect::<Result<Vec<_>, _>>()?;
+
+            // Apply retention logic
+            let mut runs_to_delete = Vec::new();
+            let keep_count = keep_last.unwrap_or(0);
+
+            for (idx, run) in all_runs.iter().enumerate() {
+                // Always keep the N most recent runs if --keep-last is specified
+                if idx < keep_count {
+                    continue;
+                }
+
+                // Apply different cutoff for failed runs if specified
+                let cutoff = if matches!(run.status, RunStatus::Failed) {
+                    failed_cutoff_timestamp.unwrap_or(cutoff_timestamp)
+                } else {
+                    cutoff_timestamp
+                };
+
+                if run.timestamp < cutoff {
+                    runs_to_delete.push(run.clone());
+                }
+            }
+
+            // Sort runs_to_delete by timestamp (oldest first)
+            runs_to_delete.sort_by_key(|r| r.timestamp);
+
+            Ok(runs_to_delete)
+        })
+    }
+
+    /// Delete a run from the database and optionally from the filesystem
+    /// Returns the run information if successful
+    pub fn delete_run(&self, timestamp: u64, delete_filesystem: bool) -> Result<Option<RunRecord>> {
+        let run = self.db.with_connection(|conn| {
+            // First fetch the run to get its information
+            let run: Option<RunRecord> = conn
+                .query_row(
+                    "SELECT r.id, r.project_id, r.timestamp, r.status, r.duration_seconds,
+                            r.size_bytes, r.ottofile_path, r.cwd, r.user, r.hostname, r.args, r.ended_at
+                     FROM runs r
+                     WHERE r.timestamp = ?1",
+                    params![timestamp as i64],
+                    Self::row_to_run_record,
+                )
+                .optional()?;
+
+            if let Some(ref run_record) = run {
+                // Delete all tasks for this run (CASCADE will handle this, but explicit is clearer)
+                conn.execute("DELETE FROM tasks WHERE run_id = ?1", params![run_record.id])?;
+
+                // Delete the run
+                conn.execute("DELETE FROM runs WHERE id = ?1", params![run_record.id])?;
+
+                // Update project run_count
+                conn.execute(
+                    "UPDATE projects SET run_count = run_count - 1 WHERE id = ?1",
+                    params![run_record.project_id],
+                )?;
+            }
+
+            Ok(run)
+        })?;
+
+        // Optionally delete filesystem directory
+        if delete_filesystem && let Some(ref run_record) = run {
+            // Construct the path: ~/.otto/otto-<hash>/<timestamp>/
+            if let Some(home) = dirs::home_dir() {
+                // We need the project hash - query it
+                let project_hash = self.db.with_connection(|conn| {
+                    let hash = conn.query_row(
+                        "SELECT hash FROM projects WHERE id = ?1",
+                        params![run_record.project_id],
+                        |row| row.get::<_, String>(0),
+                    )?;
+                    Ok(hash)
+                })?;
+
+                let run_dir = home
+                    .join(".otto")
+                    .join(format!("otto-{}", project_hash))
+                    .join(timestamp.to_string());
+
+                if run_dir.exists() {
+                    std::fs::remove_dir_all(&run_dir).context("Failed to delete run directory")?;
+                }
+            }
+        }
+
+        Ok(run)
+    }
+
     /// Ensure a project exists in the database, creating it if necessary
     /// Returns the project ID
     fn ensure_project(&self, conn: &rusqlite::Connection, hash: &str, ottofile_path: Option<&PathBuf>) -> Result<i64> {
@@ -1003,6 +1139,294 @@ mod tests {
         assert!(task.started_at.is_some());
         assert!(task.ended_at.is_some());
         assert!(task.duration_seconds.is_some());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_old_runs_basic() -> Result<()> {
+        let (manager, _temp_dir) = create_test_manager()?;
+
+        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
+
+        // Create runs with different ages
+        let old_timestamp = now - (40 * 24 * 60 * 60); // 40 days old
+        let recent_timestamp = now - (10 * 24 * 60 * 60); // 10 days old
+
+        let metadata1 = RunMetadata::minimal(
+            Some(PathBuf::from("/test/otto.yml")),
+            "abc123".to_string(),
+            old_timestamp,
+        );
+        manager.record_run_start(&metadata1)?;
+        manager.record_run_complete(old_timestamp, RunStatus::Success, Some(1024))?;
+
+        let metadata2 = RunMetadata::minimal(
+            Some(PathBuf::from("/test/otto.yml")),
+            "abc123".to_string(),
+            recent_timestamp,
+        );
+        manager.record_run_start(&metadata2)?;
+        manager.record_run_complete(recent_timestamp, RunStatus::Success, Some(2048))?;
+
+        // Find runs older than 30 days
+        let old_runs = manager.find_old_runs(30, None, None, None)?;
+
+        assert_eq!(old_runs.len(), 1);
+        assert_eq!(old_runs[0].timestamp, old_timestamp);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_old_runs_with_keep_last() -> Result<()> {
+        let (manager, _temp_dir) = create_test_manager()?;
+
+        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
+
+        // Create 5 runs, all older than 30 days
+        for i in 0..5 {
+            let timestamp = now - ((40 + i) * 24 * 60 * 60);
+            let metadata = RunMetadata::minimal(Some(PathBuf::from("/test/otto.yml")), "abc123".to_string(), timestamp);
+            manager.record_run_start(&metadata)?;
+            manager.record_run_complete(timestamp, RunStatus::Success, Some(1024))?;
+        }
+
+        // Find old runs but keep the 2 most recent
+        let old_runs = manager.find_old_runs(30, Some(2), None, None)?;
+
+        // Should only return 3 runs (5 - 2 kept)
+        assert_eq!(old_runs.len(), 3);
+
+        // The oldest runs should be returned
+        assert!(old_runs[0].timestamp < old_runs[1].timestamp);
+        assert!(old_runs[1].timestamp < old_runs[2].timestamp);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_old_runs_with_keep_failed() -> Result<()> {
+        let (manager, _temp_dir) = create_test_manager()?;
+
+        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
+
+        // Create successful run 40 days old
+        let success_timestamp = now - (40 * 24 * 60 * 60);
+        let metadata1 = RunMetadata::minimal(
+            Some(PathBuf::from("/test/otto.yml")),
+            "abc123".to_string(),
+            success_timestamp,
+        );
+        manager.record_run_start(&metadata1)?;
+        manager.record_run_complete(success_timestamp, RunStatus::Success, Some(1024))?;
+
+        // Create failed run 40 days old
+        let failed_timestamp = now - (39 * 24 * 60 * 60);
+        let metadata2 = RunMetadata::minimal(
+            Some(PathBuf::from("/test/otto.yml")),
+            "abc123".to_string(),
+            failed_timestamp,
+        );
+        manager.record_run_start(&metadata2)?;
+        manager.record_run_complete(failed_timestamp, RunStatus::Failed, Some(2048))?;
+
+        // Find runs older than 30 days, but keep failed runs for 45 days
+        let old_runs = manager.find_old_runs(30, None, Some(45), None)?;
+
+        // Should only return the successful run (failed run kept longer)
+        assert_eq!(old_runs.len(), 1);
+        assert_eq!(old_runs[0].timestamp, success_timestamp);
+        assert_eq!(old_runs[0].status, RunStatus::Success);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_old_runs_with_project_filter() -> Result<()> {
+        let (manager, _temp_dir) = create_test_manager()?;
+
+        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
+        let old_timestamp = now - (40 * 24 * 60 * 60);
+
+        // Create old runs for two different projects
+        let metadata1 = RunMetadata::minimal(
+            Some(PathBuf::from("/test/otto.yml")),
+            "abc123".to_string(),
+            old_timestamp,
+        );
+        manager.record_run_start(&metadata1)?;
+        manager.record_run_complete(old_timestamp, RunStatus::Success, Some(1024))?;
+
+        let metadata2 = RunMetadata::minimal(
+            Some(PathBuf::from("/test/otto2.yml")),
+            "def456".to_string(),
+            old_timestamp + 1,
+        );
+        manager.record_run_start(&metadata2)?;
+        manager.record_run_complete(old_timestamp + 1, RunStatus::Success, Some(2048))?;
+
+        // Find old runs for specific project
+        let old_runs = manager.find_old_runs(30, None, None, Some("abc123"))?;
+
+        assert_eq!(old_runs.len(), 1);
+        assert_eq!(old_runs[0].timestamp, old_timestamp);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_delete_run_database_only() -> Result<()> {
+        let (manager, _temp_dir) = create_test_manager()?;
+
+        let metadata = RunMetadata::minimal(Some(PathBuf::from("/test/otto.yml")), "abc123".to_string(), 1234567890);
+        manager.record_run_start(&metadata)?;
+        manager.record_run_complete(1234567890, RunStatus::Success, Some(1024))?;
+
+        // Verify run exists
+        let runs_before = manager.get_recent_runs(10, None)?;
+        assert_eq!(runs_before.len(), 1);
+
+        // Delete run (database only)
+        let deleted = manager.delete_run(1234567890, false)?;
+        assert!(deleted.is_some());
+        assert_eq!(deleted.unwrap().timestamp, 1234567890);
+
+        // Verify run is deleted
+        let runs_after = manager.get_recent_runs(10, None)?;
+        assert_eq!(runs_after.len(), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_delete_run_with_tasks() -> Result<()> {
+        let (manager, _temp_dir) = create_test_manager()?;
+
+        let metadata = RunMetadata::minimal(Some(PathBuf::from("/test/otto.yml")), "abc123".to_string(), 1234567890);
+        let run_id = manager.record_run_start(&metadata)?;
+
+        // Add some tasks
+        let task_id1 = manager.record_task_start(run_id, "task1", None, None, None, None)?;
+        manager.record_task_complete(task_id1, 0, TaskStatus::Completed)?;
+
+        let task_id2 = manager.record_task_start(run_id, "task2", None, None, None, None)?;
+        manager.record_task_complete(task_id2, 1, TaskStatus::Failed)?;
+
+        // Verify tasks exist
+        let tasks_before = manager.get_run_tasks(run_id)?;
+        assert_eq!(tasks_before.len(), 2);
+
+        // Delete run (should cascade delete tasks)
+        manager.delete_run(1234567890, false)?;
+
+        // Verify tasks are also deleted
+        let tasks_after = manager.get_run_tasks(run_id)?;
+        assert_eq!(tasks_after.len(), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_delete_run_updates_project_count() -> Result<()> {
+        let (manager, _temp_dir) = create_test_manager()?;
+
+        // Create multiple runs for the same project
+        for i in 0..3 {
+            let metadata = RunMetadata::minimal(
+                Some(PathBuf::from("/test/otto.yml")),
+                "abc123".to_string(),
+                1234567890 + i,
+            );
+            manager.record_run_start(&metadata)?;
+        }
+
+        // Delete one run
+        manager.delete_run(1234567891, false)?;
+
+        // Verify project still exists with updated count
+        let runs = manager.get_recent_runs(10, Some("abc123"))?;
+        assert_eq!(runs.len(), 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_delete_nonexistent_run() -> Result<()> {
+        let (manager, _temp_dir) = create_test_manager()?;
+
+        // Try to delete a run that doesn't exist
+        let deleted = manager.delete_run(9999999999, false)?;
+        assert!(deleted.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_old_runs_empty_database() -> Result<()> {
+        let (manager, _temp_dir) = create_test_manager()?;
+
+        // Find old runs in empty database
+        let old_runs = manager.find_old_runs(30, None, None, None)?;
+        assert_eq!(old_runs.len(), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_old_runs_all_recent() -> Result<()> {
+        let (manager, _temp_dir) = create_test_manager()?;
+
+        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
+        let recent_timestamp = now - (5 * 24 * 60 * 60); // 5 days old
+
+        let metadata = RunMetadata::minimal(
+            Some(PathBuf::from("/test/otto.yml")),
+            "abc123".to_string(),
+            recent_timestamp,
+        );
+        manager.record_run_start(&metadata)?;
+        manager.record_run_complete(recent_timestamp, RunStatus::Success, Some(1024))?;
+
+        // Find runs older than 30 days (should find nothing)
+        let old_runs = manager.find_old_runs(30, None, None, None)?;
+        assert_eq!(old_runs.len(), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_old_runs_complex_policy() -> Result<()> {
+        let (manager, _temp_dir) = create_test_manager()?;
+
+        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
+
+        // Create 10 runs: 5 successful, 5 failed, all 40 days old
+        for i in 0..10 {
+            let timestamp = now - ((40 + i) * 24 * 60 * 60);
+            let metadata = RunMetadata::minimal(Some(PathBuf::from("/test/otto.yml")), "abc123".to_string(), timestamp);
+            manager.record_run_start(&metadata)?;
+            let status = if i % 2 == 0 { RunStatus::Success } else { RunStatus::Failed };
+            manager.record_run_complete(timestamp, status, Some(1024))?;
+        }
+
+        // Keep 3 most recent, delete successful runs older than 30 days, keep failed runs for 50 days
+        let old_runs = manager.find_old_runs(30, Some(3), Some(50), None)?;
+
+        // Should get 7 runs total (10 - 3 kept)
+        // But failed runs are kept for 50 days, so all failed runs in the deletable set should be excluded
+        assert!(old_runs.len() <= 7);
+
+        // All returned runs should be either:
+        // 1. Successful runs older than 30 days (not in the keep_last 3)
+        // 2. No failed runs should be in the list (they're kept for 50 days)
+        for run in &old_runs {
+            if run.status == RunStatus::Failed {
+                // Failed runs older than 50 days
+                let age_days = (now - run.timestamp) / (24 * 60 * 60);
+                assert!(age_days > 50, "Failed run should only be deleted if older than 50 days");
+            }
+        }
 
         Ok(())
     }
