@@ -2,8 +2,8 @@ use env_logger::Target;
 use eyre::{Report, Result};
 use log::info;
 use otto::{
-    cli::{CleanCommand, Parser},
-    executor::{DagVisualizer, TaskScheduler, Workspace},
+    cli::{CleanCommand, HistoryCommand, Parser, StatsCommand},
+    executor::{TaskScheduler, Workspace},
 };
 use std::env;
 use std::fs::OpenOptions;
@@ -38,6 +38,41 @@ async fn main() {
 
     let args: Vec<String> = env::args().collect();
 
+    // Check for built-in commands that don't require an ottofile
+    if args.len() > 1 {
+        match args[1].as_str() {
+            "clean" => {
+                if let Err(e) = execute_clean_command(&args[1..]).await {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+                return;
+            }
+            "graph" => {
+                if let Err(e) = execute_graph_command(&args[1..]).await {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+                return;
+            }
+            "history" => {
+                if let Err(e) = execute_history_command(&args[1..]) {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+                return;
+            }
+            "stats" => {
+                if let Err(e) = execute_stats_command(&args[1..]) {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+                return;
+            }
+            _ => {}
+        }
+    }
+
     // Create parser and parse arguments
     let mut parser = match Parser::new(args) {
         Ok(p) => p,
@@ -62,31 +97,98 @@ async fn main() {
     }
 }
 
-async fn execute_clean_from_task(task: &otto::cli::parser::Task) -> Result<(), Report> {
-    use otto::cfg::param::Value;
+async fn execute_clean_command(args: &[String]) -> Result<(), Report> {
+    use clap::Parser;
 
-    // Extract parameters from task values
-    let keep_days = if let Some(Value::Item(s)) = task.values.get("keep") {
-        s.parse::<u64>().unwrap_or(30)
-    } else {
-        30 // Default
+    let clean_cmd = CleanCommand::parse_from(args);
+    clean_cmd.execute().await?;
+    Ok(())
+}
+
+async fn execute_graph_command(args: &[String]) -> Result<(), Report> {
+    use otto::executor::{GraphFormat, GraphOptions, NodeStyle};
+
+    // Parse basic arguments for graph command
+    let mut format = GraphFormat::Ascii;
+    let mut output_path = None;
+
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--format" | "-f" => {
+                if i + 1 < args.len() {
+                    format = match args[i + 1].as_str() {
+                        "dot" => GraphFormat::Dot,
+                        "ascii" | "text" => GraphFormat::Ascii,
+                        _ => GraphFormat::Ascii,
+                    };
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            "--output" | "-o" => {
+                if i + 1 < args.len() {
+                    output_path = Some(std::path::PathBuf::from(&args[i + 1]));
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+
+    let options = GraphOptions {
+        show_details: true,
+        show_file_deps: true,
+        format,
+        style: NodeStyle::Detailed,
+        output_path,
     };
 
-    // Boolean flag: stored as Value::Item("true") or Value::Item("false")
-    let dry_run = task
-        .values
-        .get("dry-run")
-        .and_then(|v| if let Value::Item(s) = v { Some(s == "true") } else { None })
-        .unwrap_or(false);
+    // Need to parse ottofile to generate graph
+    let mut parser = otto::cli::Parser::new(vec!["otto".to_string()])?;
+    let (all_tasks, _, _) = parser.parse_all_tasks()?;
 
-    let project_filter = task
-        .values
-        .get("project")
-        .and_then(|v| if let Value::Item(s) = v { Some(s.clone()) } else { None });
+    // Convert parser tasks to executor tasks and create DAG
+    let dag = otto::executor::DagVisualizer::from_tasks(all_tasks)?;
 
-    let clean_cmd = CleanCommand::new(keep_days, dry_run, project_filter);
-    clean_cmd.execute().await?;
+    // Create visualizer with options
+    let visualizer = otto::executor::DagVisualizer::new(options.clone());
 
+    // Generate and display/save the graph
+    let output = match options.format {
+        GraphFormat::Ascii => visualizer.generate_ascii(&dag)?,
+        GraphFormat::Dot => visualizer.generate_dot(&dag)?,
+        _ => {
+            return Err(eyre::eyre!("Unsupported format. Use 'ascii' or 'dot'."));
+        }
+    };
+
+    if let Some(path) = &options.output_path {
+        std::fs::write(path, &output)?;
+        println!("Graph written to {}", path.display());
+    } else {
+        println!("{}", output);
+    }
+
+    Ok(())
+}
+
+fn execute_history_command(args: &[String]) -> Result<(), Report> {
+    use clap::Parser;
+
+    let history_cmd = HistoryCommand::parse_from(args);
+    history_cmd.execute()?;
+    Ok(())
+}
+
+fn execute_stats_command(args: &[String]) -> Result<(), Report> {
+    use clap::Parser;
+
+    let stats_cmd = StatsCommand::parse_from(args);
+    stats_cmd.execute()?;
     Ok(())
 }
 
@@ -101,23 +203,8 @@ async fn execute_tasks(
         return Ok(());
     }
 
-    // Check if any task is a clean command
-    let clean_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "clean").collect();
-    if !clean_tasks.is_empty() {
-        return execute_clean_from_task(clean_tasks[0]).await;
-    }
-
-    // Check if any task is a graph command
-    let graph_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "graph").collect();
-    if !graph_tasks.is_empty() {
-        return DagVisualizer::execute_command(graph_tasks[0]).await;
-    }
-
-    // Filter out built-in commands for normal execution
-    let execution_tasks: Vec<_> = tasks
-        .into_iter()
-        .filter(|task| task.name != "graph" && task.name != "clean")
-        .collect();
+    // All tasks should be executed normally (built-in commands are handled earlier)
+    let execution_tasks = tasks;
 
     if execution_tasks.is_empty() {
         println!("No tasks to execute");

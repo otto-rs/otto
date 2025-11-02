@@ -44,6 +44,8 @@ clap = { version = "4.5.41", features = ["derive", "env", "string"] }
 chrono = "0.4"
 rusqlite = { version = "0.32", features = ["bundled", "chrono"] }
 hostname = "0.4"
+comfy-table = "7.1"
+console = "0.15"
 
 [dev-dependencies]
 tokio-test = "0.4"

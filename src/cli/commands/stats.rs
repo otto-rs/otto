@@ -1,0 +1,327 @@
+use chrono::TimeZone;
+use colored::Colorize;
+use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, Cell, CellAlignment, Table};
+use eyre::Result;
+
+use crate::executor::StateManager;
+
+/// Show execution statistics
+#[derive(Debug, clap::Parser)]
+#[command(name = "stats")]
+pub struct StatsCommand {
+    /// Show stats for a specific task
+    #[arg(value_name = "TASK")]
+    pub task_name: Option<String>,
+
+    /// Limit number of tasks shown (when showing all tasks)
+    #[arg(short = 'n', long, default_value = "10")]
+    pub limit: usize,
+
+    /// Output as JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+
+impl StatsCommand {
+    pub fn execute(&self) -> Result<()> {
+        let manager = match StateManager::try_new() {
+            Some(m) => m,
+            None => {
+                eprintln!("{}", "No statistics database found. Run otto to create it.".yellow());
+                return Ok(());
+            }
+        };
+
+        if let Some(ref task_name) = self.task_name {
+            self.show_task_stats(&manager, task_name)
+        } else {
+            self.show_overall_stats(&manager)
+        }
+    }
+
+    fn show_overall_stats(&self, manager: &StateManager) -> Result<()> {
+        let stats = manager.get_overall_stats()?;
+
+        if self.json {
+            println!("{}", serde_json::to_string_pretty(&stats)?);
+            return Ok(());
+        }
+
+        // Show overall statistics
+        println!("\n{}", "Overall Statistics".bold());
+
+        let success_rate = if stats.total_runs > 0 {
+            (stats.successful_runs as f64 / stats.total_runs as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        let mut table = Table::new();
+        table
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_header(vec![
+                Cell::new("Metric").set_alignment(CellAlignment::Left),
+                Cell::new("Value").set_alignment(CellAlignment::Right),
+            ]);
+
+        table.add_row(vec![
+            Cell::new("Total Runs").set_alignment(CellAlignment::Left),
+            Cell::new(stats.total_runs.to_string()).set_alignment(CellAlignment::Right),
+        ]);
+        table.add_row(vec![
+            Cell::new("Successful").set_alignment(CellAlignment::Left),
+            Cell::new(format!("{} ({})", stats.successful_runs, format_percentage(success_rate)))
+                .set_alignment(CellAlignment::Right),
+        ]);
+        table.add_row(vec![
+            Cell::new("Failed").set_alignment(CellAlignment::Left),
+            Cell::new(stats.failed_runs.to_string()).set_alignment(CellAlignment::Right),
+        ]);
+        table.add_row(vec![
+            Cell::new("Running").set_alignment(CellAlignment::Left),
+            Cell::new(stats.running_runs.to_string()).set_alignment(CellAlignment::Right),
+        ]);
+        table.add_row(vec![
+            Cell::new("Total Tasks Executed").set_alignment(CellAlignment::Left),
+            Cell::new(stats.total_tasks.to_string()).set_alignment(CellAlignment::Right),
+        ]);
+        table.add_row(vec![
+            Cell::new("Total Disk Usage").set_alignment(CellAlignment::Left),
+            Cell::new(format_size(stats.total_disk_usage)).set_alignment(CellAlignment::Right),
+        ]);
+        table.add_row(vec![
+            Cell::new("Total Execution Time").set_alignment(CellAlignment::Left),
+            Cell::new(format_duration(stats.total_duration_seconds)).set_alignment(CellAlignment::Right),
+        ]);
+
+        println!("{}", table);
+
+        // Show top tasks
+        let task_stats = manager.get_all_task_stats(Some(self.limit))?;
+
+        if !task_stats.is_empty() {
+            println!("\n{}", format!("Top {} Tasks by Execution Count", self.limit).bold());
+
+            let mut task_table = Table::new();
+            task_table
+                .load_preset(UTF8_FULL)
+                .apply_modifier(UTF8_ROUND_CORNERS)
+                .set_header(vec![
+                    Cell::new("Task").set_alignment(CellAlignment::Left),
+                    Cell::new("Total").set_alignment(CellAlignment::Right),
+                    Cell::new("Success").set_alignment(CellAlignment::Right),
+                    Cell::new("Failed").set_alignment(CellAlignment::Right),
+                    Cell::new("Success Rate").set_alignment(CellAlignment::Right),
+                    Cell::new("Avg Duration").set_alignment(CellAlignment::Right),
+                ]);
+
+            for task in &task_stats {
+                let total_attempted = task.successful_executions + task.failed_executions;
+                let success_rate = if total_attempted > 0 {
+                    (task.successful_executions as f64 / total_attempted as f64) * 100.0
+                } else {
+                    0.0
+                };
+
+                task_table.add_row(vec![
+                    Cell::new(&task.task_name).set_alignment(CellAlignment::Left),
+                    Cell::new(task.total_executions.to_string()).set_alignment(CellAlignment::Right),
+                    Cell::new(task.successful_executions.to_string()).set_alignment(CellAlignment::Right),
+                    Cell::new(task.failed_executions.to_string()).set_alignment(CellAlignment::Right),
+                    Cell::new(format_percentage(success_rate)).set_alignment(CellAlignment::Right),
+                    Cell::new(
+                        task.avg_duration_seconds
+                            .map(format_duration)
+                            .unwrap_or_else(|| "-".to_string()),
+                    )
+                    .set_alignment(CellAlignment::Right),
+                ]);
+            }
+
+            println!("{}", task_table);
+        }
+
+        Ok(())
+    }
+
+    fn show_task_stats(&self, manager: &StateManager, task_name: &str) -> Result<()> {
+        let stats = match manager.get_task_stats(task_name)? {
+            Some(s) => s,
+            None => {
+                println!("{}", format!("No statistics found for task '{}'.", task_name).yellow());
+                return Ok(());
+            }
+        };
+
+        if self.json {
+            println!("{}", serde_json::to_string_pretty(&stats)?);
+            return Ok(());
+        }
+
+        println!("\n{} for task '{}'", "Statistics".bold(), task_name.cyan());
+
+        let total_attempted = stats.successful_executions + stats.failed_executions;
+        let success_rate = if total_attempted > 0 {
+            (stats.successful_executions as f64 / total_attempted as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        let mut table = Table::new();
+        table
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_header(vec![
+                Cell::new("Metric").set_alignment(CellAlignment::Left),
+                Cell::new("Value").set_alignment(CellAlignment::Right),
+            ]);
+
+        table.add_row(vec![
+            Cell::new("Total Executions").set_alignment(CellAlignment::Left),
+            Cell::new(stats.total_executions.to_string()).set_alignment(CellAlignment::Right),
+        ]);
+        table.add_row(vec![
+            Cell::new("Successful").set_alignment(CellAlignment::Left),
+            Cell::new(format!("{} ({})", stats.successful_executions, format_percentage(success_rate)))
+                .set_alignment(CellAlignment::Right),
+        ]);
+        table.add_row(vec![
+            Cell::new("Failed").set_alignment(CellAlignment::Left),
+            Cell::new(stats.failed_executions.to_string()).set_alignment(CellAlignment::Right),
+        ]);
+        table.add_row(vec![
+            Cell::new("Skipped").set_alignment(CellAlignment::Left),
+            Cell::new(stats.skipped_executions.to_string()).set_alignment(CellAlignment::Right),
+        ]);
+        table.add_row(vec![
+            Cell::new("Average Duration").set_alignment(CellAlignment::Left),
+            Cell::new(
+                stats
+                    .avg_duration_seconds
+                    .map(format_duration)
+                    .unwrap_or_else(|| "-".to_string()),
+            )
+            .set_alignment(CellAlignment::Right),
+        ]);
+        table.add_row(vec![
+            Cell::new("Min Duration").set_alignment(CellAlignment::Left),
+            Cell::new(
+                stats
+                    .min_duration_seconds
+                    .map(format_duration)
+                    .unwrap_or_else(|| "-".to_string()),
+            )
+            .set_alignment(CellAlignment::Right),
+        ]);
+        table.add_row(vec![
+            Cell::new("Max Duration").set_alignment(CellAlignment::Left),
+            Cell::new(
+                stats
+                    .max_duration_seconds
+                    .map(format_duration)
+                    .unwrap_or_else(|| "-".to_string()),
+            )
+            .set_alignment(CellAlignment::Right),
+        ]);
+        table.add_row(vec![
+            Cell::new("Last Executed").set_alignment(CellAlignment::Left),
+            Cell::new(
+                stats
+                    .last_executed
+                    .map(|t| {
+                        let dt = chrono::Local.timestamp_opt(t as i64, 0).unwrap();
+                        dt.format("%Y-%m-%d %H:%M:%S").to_string()
+                    })
+                    .unwrap_or_else(|| "-".to_string()),
+            )
+            .set_alignment(CellAlignment::Right),
+        ]);
+        table.add_row(vec![
+            Cell::new("Last Status").set_alignment(CellAlignment::Left),
+            Cell::new(
+                stats
+                    .last_status
+                    .map(|s| format_task_status(&s))
+                    .unwrap_or_else(|| "-".to_string()),
+            )
+            .set_alignment(CellAlignment::Right),
+        ]);
+
+        println!("{}", table);
+
+        Ok(())
+    }
+}
+
+fn format_duration(duration: f64) -> String {
+    if duration < 1.0 {
+        format!("{:.0}ms", duration * 1000.0)
+    } else if duration < 60.0 {
+        format!("{:.1}s", duration)
+    } else if duration < 3600.0 {
+        let minutes = (duration / 60.0) as u64;
+        let seconds = (duration % 60.0) as u64;
+        format!("{}m{}s", minutes, seconds)
+    } else {
+        let hours = (duration / 3600.0) as u64;
+        let minutes = ((duration % 3600.0) / 60.0) as u64;
+        format!("{}h{}m", hours, minutes)
+    }
+}
+
+fn format_size(size: u64) -> String {
+    if size < 1024 {
+        format!("{} B", size)
+    } else if size < 1024 * 1024 {
+        format!("{:.1} KB", size as f64 / 1024.0)
+    } else if size < 1024 * 1024 * 1024 {
+        format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.2} GB", size as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
+fn format_percentage(rate: f64) -> String {
+    format!("{:.1}%", rate)
+}
+
+fn format_task_status(status: &crate::executor::state::TaskStatus) -> String {
+    use crate::executor::state::TaskStatus;
+    match status {
+        TaskStatus::Completed => "✓ Completed".green().to_string(),
+        TaskStatus::Failed => "✗ Failed".red().to_string(),
+        TaskStatus::Running => "⋯ Running".yellow().to_string(),
+        TaskStatus::Skipped => "○ Skipped".blue().to_string(),
+        TaskStatus::Pending => "· Pending".dimmed().to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_duration() {
+        assert_eq!(format_duration(0.5), "500ms");
+        assert_eq!(format_duration(1.5), "1.5s");
+        assert_eq!(format_duration(65.0), "1m5s");
+        assert_eq!(format_duration(3665.0), "1h1m");
+    }
+
+    #[test]
+    fn test_format_size() {
+        assert_eq!(format_size(500), "500 B");
+        assert_eq!(format_size(1536), "1.5 KB");
+        assert_eq!(format_size(1572864), "1.5 MB");
+        assert_eq!(format_size(1610612736), "1.50 GB");
+    }
+
+    #[test]
+    fn test_format_percentage() {
+        assert_eq!(format_percentage(75.5), "75.5%");
+        assert_eq!(format_percentage(100.0), "100.0%");
+        assert_eq!(format_percentage(0.0), "0.0%");
+    }
+}

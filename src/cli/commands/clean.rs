@@ -6,10 +6,21 @@ use std::time::SystemTime;
 
 use crate::executor::state::RunMetadata;
 
+/// Clean old otto run directories
+#[derive(Debug, clap::Parser)]
+#[command(name = "clean")]
 pub struct CleanCommand {
-    keep_days: u64,
-    dry_run: bool,
-    project_filter: Option<String>,
+    /// Keep runs newer than this many days
+    #[arg(long, default_value = "30")]
+    pub keep_days: u64,
+
+    /// Dry run - show what would be deleted without deleting
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Filter by project hash
+    #[arg(long)]
+    pub project_filter: Option<String>,
 }
 
 struct RunInfo {
@@ -22,14 +33,6 @@ struct RunInfo {
 }
 
 impl CleanCommand {
-    pub fn new(keep_days: u64, dry_run: bool, project_filter: Option<String>) -> Self {
-        Self {
-            keep_days,
-            dry_run,
-            project_filter,
-        }
-    }
-
     pub async fn execute(&self) -> Result<()> {
         let otto_home = self.get_otto_home()?;
 
@@ -276,7 +279,11 @@ mod tests {
     #[tokio::test]
     async fn test_scan_empty_directory() -> Result<()> {
         let temp_dir = TempDir::new()?;
-        let cmd = CleanCommand::new(30, true, None);
+        let cmd = CleanCommand {
+            keep_days: 30,
+            dry_run: true,
+            project_filter: None,
+        };
 
         let runs = cmd.scan_for_old_runs(temp_dir.path())?;
         assert_eq!(runs.len(), 0);
@@ -295,7 +302,11 @@ mod tests {
         create_test_run(temp_dir.path(), "abc123", old_timestamp, 100)?;
         create_test_run(temp_dir.path(), "abc123", recent_timestamp, 50)?;
 
-        let cmd = CleanCommand::new(30, true, None);
+        let cmd = CleanCommand {
+            keep_days: 30,
+            dry_run: true,
+            project_filter: None,
+        };
         let runs = cmd.scan_for_old_runs(temp_dir.path())?;
 
         // Should only find the 40-day-old run
@@ -327,7 +338,11 @@ mod tests {
         create_test_run(temp_dir.path(), "abc123", old_timestamp, 100)?;
         create_test_run(temp_dir.path(), "def456", old_timestamp, 100)?;
 
-        let cmd = CleanCommand::new(30, true, Some("abc123".to_string()));
+        let cmd = CleanCommand {
+            keep_days: 30,
+            dry_run: true,
+            project_filter: Some("abc123".to_string()),
+        };
         let runs = cmd.scan_for_old_runs(temp_dir.path())?;
 
         // Should only find runs from abc123 project
@@ -351,7 +366,11 @@ mod tests {
         let yaml_content = serde_yaml::to_string(&metadata)?;
         fs::write(run_dir.join("run.yaml"), yaml_content)?;
 
-        let cmd = CleanCommand::new(30, true, None);
+        let cmd = CleanCommand {
+            keep_days: 30,
+            dry_run: true,
+            project_filter: None,
+        };
         let ottofile_path = cmd.read_ottofile_path(&run_dir);
 
         assert_eq!(ottofile_path, Some(PathBuf::from("/path/to/otto.yml")));
@@ -364,7 +383,11 @@ mod tests {
         let run_dir = temp_dir.path().join("test_run");
         fs::create_dir_all(&run_dir)?;
 
-        let cmd = CleanCommand::new(30, true, None);
+        let cmd = CleanCommand {
+            keep_days: 30,
+            dry_run: true,
+            project_filter: None,
+        };
         let ottofile_path = cmd.read_ottofile_path(&run_dir);
 
         assert_eq!(ottofile_path, None);
@@ -382,7 +405,11 @@ mod tests {
         let yaml_content = serde_yaml::to_string(&metadata)?;
         fs::write(run_dir.join("run.yaml"), yaml_content)?;
 
-        let cmd = CleanCommand::new(30, true, None);
+        let cmd = CleanCommand {
+            keep_days: 30,
+            dry_run: true,
+            project_filter: None,
+        };
         let ottofile_path = cmd.read_ottofile_path(&run_dir);
 
         assert_eq!(ottofile_path, None);
@@ -398,7 +425,11 @@ mod tests {
         // Create malformed YAML
         fs::write(run_dir.join("run.yaml"), "invalid: yaml: content: {")?;
 
-        let cmd = CleanCommand::new(30, true, None);
+        let cmd = CleanCommand {
+            keep_days: 30,
+            dry_run: true,
+            project_filter: None,
+        };
         let ottofile_path = cmd.read_ottofile_path(&run_dir);
 
         assert_eq!(ottofile_path, None);
@@ -407,7 +438,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_format_timestamp() -> Result<()> {
-        let cmd = CleanCommand::new(30, true, None);
+        let cmd = CleanCommand {
+            keep_days: 30,
+            dry_run: true,
+            project_filter: None,
+        };
 
         // Test a known timestamp
         let timestamp = 1609459200; // 2021-01-01 00:00:00 UTC
@@ -419,7 +454,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_format_size_bytes() -> Result<()> {
-        let cmd = CleanCommand::new(30, true, None);
+        let cmd = CleanCommand {
+            keep_days: 30,
+            dry_run: true,
+            project_filter: None,
+        };
 
         assert_eq!(cmd.format_size(0), "0 B");
         assert_eq!(cmd.format_size(512), "512 B");
@@ -429,7 +468,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_format_size_kilobytes() -> Result<()> {
-        let cmd = CleanCommand::new(30, true, None);
+        let cmd = CleanCommand {
+            keep_days: 30,
+            dry_run: true,
+            project_filter: None,
+        };
 
         assert_eq!(cmd.format_size(1024), "1.0 KB");
         assert_eq!(cmd.format_size(2048), "2.0 KB");
@@ -440,7 +483,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_format_size_megabytes() -> Result<()> {
-        let cmd = CleanCommand::new(30, true, None);
+        let cmd = CleanCommand {
+            keep_days: 30,
+            dry_run: true,
+            project_filter: None,
+        };
 
         assert_eq!(cmd.format_size(1024 * 1024), "1.0 MB");
         assert_eq!(cmd.format_size(5 * 1024 * 1024), "5.0 MB");
@@ -451,7 +498,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_format_size_gigabytes() -> Result<()> {
-        let cmd = CleanCommand::new(30, true, None);
+        let cmd = CleanCommand {
+            keep_days: 30,
+            dry_run: true,
+            project_filter: None,
+        };
 
         assert_eq!(cmd.format_size(1024 * 1024 * 1024), "1.0 GB");
         assert_eq!(cmd.format_size(5 * 1024 * 1024 * 1024), "5.0 GB");
@@ -473,7 +524,11 @@ mod tests {
         create_test_run(temp_dir.path(), "abc123", timestamp1, 100)?;
         create_test_run(temp_dir.path(), "abc123", timestamp3, 100)?;
 
-        let cmd = CleanCommand::new(30, true, None);
+        let cmd = CleanCommand {
+            keep_days: 30,
+            dry_run: true,
+            project_filter: None,
+        };
         let mut runs = cmd.scan_for_old_runs(temp_dir.path())?;
 
         // Sort by timestamp
@@ -513,7 +568,11 @@ mod tests {
         let yaml_content = serde_yaml::to_string(&metadata)?;
         fs::write(run_dir.join("run.yaml"), yaml_content)?;
 
-        let cmd = CleanCommand::new(30, true, None);
+        let cmd = CleanCommand {
+            keep_days: 30,
+            dry_run: true,
+            project_filter: None,
+        };
         let runs = cmd.scan_for_old_runs(temp_dir.path())?;
 
         assert_eq!(runs.len(), 1);
@@ -533,7 +592,11 @@ mod tests {
         // Create run without metadata (old run)
         create_test_run(temp_dir.path(), "def456", old_timestamp, 100)?;
 
-        let cmd = CleanCommand::new(30, true, None);
+        let cmd = CleanCommand {
+            keep_days: 30,
+            dry_run: true,
+            project_filter: None,
+        };
         let runs = cmd.scan_for_old_runs(temp_dir.path())?;
 
         assert_eq!(runs.len(), 1);

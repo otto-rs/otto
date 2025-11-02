@@ -5,7 +5,7 @@ use rusqlite::Connection;
 pub const SCHEMA_VERSION: i64 = 1;
 
 /// Status of a run
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum RunStatus {
     Running,
     Success,
@@ -32,7 +32,7 @@ impl RunStatus {
 }
 
 /// Status of a task
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum TaskStatus {
     Pending,
     Running,

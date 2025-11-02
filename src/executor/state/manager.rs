@@ -13,7 +13,7 @@ pub struct StateManager {
 }
 
 /// A run record from the database
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct RunRecord {
     pub id: i64,
     pub project_id: i64,
@@ -30,7 +30,7 @@ pub struct RunRecord {
 }
 
 /// A task record from the database
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct TaskRecord {
     pub id: i64,
     pub run_id: i64,
@@ -44,6 +44,33 @@ pub struct TaskRecord {
     pub stdout_path: Option<PathBuf>,
     pub stderr_path: Option<PathBuf>,
     pub script_path: Option<PathBuf>,
+}
+
+/// Overall system statistics
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct OverallStats {
+    pub total_runs: u64,
+    pub successful_runs: u64,
+    pub failed_runs: u64,
+    pub running_runs: u64,
+    pub total_tasks: u64,
+    pub total_disk_usage: u64,
+    pub total_duration_seconds: f64,
+}
+
+/// Task-specific statistics
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TaskStats {
+    pub task_name: String,
+    pub total_executions: u64,
+    pub successful_executions: u64,
+    pub failed_executions: u64,
+    pub skipped_executions: u64,
+    pub avg_duration_seconds: Option<f64>,
+    pub min_duration_seconds: Option<f64>,
+    pub max_duration_seconds: Option<f64>,
+    pub last_executed: Option<u64>,
+    pub last_status: Option<TaskStatus>,
 }
 
 impl StateManager {
@@ -326,6 +353,285 @@ impl StateManager {
             stdout_path: row.get::<_, Option<String>>(9)?.map(PathBuf::from),
             stderr_path: row.get::<_, Option<String>>(10)?.map(PathBuf::from),
             script_path: row.get::<_, Option<String>>(11)?.map(PathBuf::from),
+        })
+    }
+
+    /// Get overall system statistics
+    pub fn get_overall_stats(&self) -> Result<OverallStats> {
+        self.db.with_connection(|conn| {
+            let total_runs: u64 = conn.query_row("SELECT COUNT(*) FROM runs", [], |row| row.get(0))?;
+
+            let successful_runs: u64 =
+                conn.query_row("SELECT COUNT(*) FROM runs WHERE status = 'success'", [], |row| {
+                    row.get(0)
+                })?;
+
+            let failed_runs: u64 = conn.query_row("SELECT COUNT(*) FROM runs WHERE status = 'failed'", [], |row| {
+                row.get(0)
+            })?;
+
+            let running_runs: u64 =
+                conn.query_row("SELECT COUNT(*) FROM runs WHERE status = 'running'", [], |row| {
+                    row.get(0)
+                })?;
+
+            let total_tasks: u64 = conn.query_row("SELECT COUNT(*) FROM tasks", [], |row| row.get(0))?;
+
+            let total_disk_usage: i64 = conn
+                .query_row("SELECT COALESCE(SUM(size_bytes), 0) FROM runs", [], |row| row.get(0))
+                .unwrap_or(0);
+
+            let total_duration_seconds: f64 = conn
+                .query_row("SELECT COALESCE(SUM(duration_seconds), 0) FROM runs", [], |row| {
+                    row.get(0)
+                })
+                .unwrap_or(0.0);
+
+            Ok(OverallStats {
+                total_runs,
+                successful_runs,
+                failed_runs,
+                running_runs,
+                total_tasks,
+                total_disk_usage: total_disk_usage as u64,
+                total_duration_seconds,
+            })
+        })
+    }
+
+    /// Get statistics for a specific task
+    pub fn get_task_stats(&self, task_name: &str) -> Result<Option<TaskStats>> {
+        self.db.with_connection(|conn| {
+            let total_executions: u64 = conn.query_row(
+                "SELECT COUNT(*) FROM tasks WHERE name = ?1",
+                params![task_name],
+                |row| row.get(0),
+            )?;
+
+            if total_executions == 0 {
+                return Ok(None);
+            }
+
+            let successful_executions: u64 = conn.query_row(
+                "SELECT COUNT(*) FROM tasks WHERE name = ?1 AND status = 'completed'",
+                params![task_name],
+                |row| row.get(0),
+            )?;
+
+            let failed_executions: u64 = conn.query_row(
+                "SELECT COUNT(*) FROM tasks WHERE name = ?1 AND status = 'failed'",
+                params![task_name],
+                |row| row.get(0),
+            )?;
+
+            let skipped_executions: u64 = conn.query_row(
+                "SELECT COUNT(*) FROM tasks WHERE name = ?1 AND status = 'skipped'",
+                params![task_name],
+                |row| row.get(0),
+            )?;
+
+            let avg_duration_seconds: Option<f64> = conn
+                .query_row(
+                    "SELECT AVG(duration_seconds) FROM tasks WHERE name = ?1 AND duration_seconds IS NOT NULL",
+                    params![task_name],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .flatten();
+
+            let min_duration_seconds: Option<f64> = conn
+                .query_row(
+                    "SELECT MIN(duration_seconds) FROM tasks WHERE name = ?1 AND duration_seconds IS NOT NULL",
+                    params![task_name],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .flatten();
+
+            let max_duration_seconds: Option<f64> = conn
+                .query_row(
+                    "SELECT MAX(duration_seconds) FROM tasks WHERE name = ?1 AND duration_seconds IS NOT NULL",
+                    params![task_name],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .flatten();
+
+            let (last_executed, last_status_str): (Option<i64>, Option<String>) = conn
+                .query_row(
+                    "SELECT started_at, status FROM tasks WHERE name = ?1 ORDER BY started_at DESC LIMIT 1",
+                    params![task_name],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?
+                .unwrap_or((None, None));
+
+            let last_status = last_status_str.and_then(|s| TaskStatus::parse(&s));
+
+            Ok(Some(TaskStats {
+                task_name: task_name.to_string(),
+                total_executions,
+                successful_executions,
+                failed_executions,
+                skipped_executions,
+                avg_duration_seconds,
+                min_duration_seconds,
+                max_duration_seconds,
+                last_executed: last_executed.map(|t| t as u64),
+                last_status,
+            }))
+        })
+    }
+
+    /// Get statistics for all tasks, ordered by execution count
+    pub fn get_all_task_stats(&self, limit: Option<usize>) -> Result<Vec<TaskStats>> {
+        self.db.with_connection(|conn| {
+            let query = if let Some(limit) = limit {
+                format!(
+                    "SELECT DISTINCT name FROM tasks ORDER BY (SELECT COUNT(*) FROM tasks t2 WHERE t2.name = tasks.name) DESC LIMIT {}",
+                    limit
+                )
+            } else {
+                "SELECT DISTINCT name FROM tasks ORDER BY (SELECT COUNT(*) FROM tasks t2 WHERE t2.name = tasks.name) DESC".to_string()
+            };
+
+            let mut stmt = conn.prepare(&query)?;
+            let task_names: Vec<String> = stmt.query_map([], |row| row.get(0))?.collect::<Result<Vec<_>, _>>()?;
+
+            let mut stats = Vec::new();
+            for task_name in task_names {
+                // Calculate stats for this task within the same connection
+                let total_executions: u64 = conn.query_row(
+                    "SELECT COUNT(*) FROM tasks WHERE name = ?1",
+                    params![&task_name],
+                    |row| row.get(0),
+                )?;
+
+                if total_executions == 0 {
+                    continue;
+                }
+
+                let successful_executions: u64 = conn.query_row(
+                    "SELECT COUNT(*) FROM tasks WHERE name = ?1 AND status = 'completed'",
+                    params![&task_name],
+                    |row| row.get(0),
+                )?;
+
+                let failed_executions: u64 = conn.query_row(
+                    "SELECT COUNT(*) FROM tasks WHERE name = ?1 AND status = 'failed'",
+                    params![&task_name],
+                    |row| row.get(0),
+                )?;
+
+                let skipped_executions: u64 = conn.query_row(
+                    "SELECT COUNT(*) FROM tasks WHERE name = ?1 AND status = 'skipped'",
+                    params![&task_name],
+                    |row| row.get(0),
+                )?;
+
+                let avg_duration_seconds: Option<f64> = conn
+                    .query_row(
+                        "SELECT AVG(duration_seconds) FROM tasks WHERE name = ?1 AND duration_seconds IS NOT NULL",
+                        params![&task_name],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+                    .flatten();
+
+                let min_duration_seconds: Option<f64> = conn
+                    .query_row(
+                        "SELECT MIN(duration_seconds) FROM tasks WHERE name = ?1 AND duration_seconds IS NOT NULL",
+                        params![&task_name],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+                    .flatten();
+
+                let max_duration_seconds: Option<f64> = conn
+                    .query_row(
+                        "SELECT MAX(duration_seconds) FROM tasks WHERE name = ?1 AND duration_seconds IS NOT NULL",
+                        params![&task_name],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+                    .flatten();
+
+                let (last_executed, last_status_str): (Option<i64>, Option<String>) = conn
+                    .query_row(
+                        "SELECT started_at, status FROM tasks WHERE name = ?1 ORDER BY started_at DESC LIMIT 1",
+                        params![&task_name],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()?
+                    .unwrap_or((None, None));
+
+                let last_status = last_status_str.and_then(|s| TaskStatus::parse(&s));
+
+                stats.push(TaskStats {
+                    task_name: task_name.clone(),
+                    total_executions,
+                    successful_executions,
+                    failed_executions,
+                    skipped_executions,
+                    avg_duration_seconds,
+                    min_duration_seconds,
+                    max_duration_seconds,
+                    last_executed: last_executed.map(|t| t as u64),
+                    last_status,
+                });
+            }
+
+            Ok(stats)
+        })
+    }
+
+    /// Get runs with flexible filtering
+    pub fn get_runs_with_filters(
+        &self,
+        status_filter: Option<RunStatus>,
+        project_filter: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<RunRecord>> {
+        self.db.with_connection(|conn| {
+            let mut query = String::from(
+                "SELECT r.id, r.project_id, r.timestamp, r.status, r.duration_seconds,
+                        r.size_bytes, r.ottofile_path, r.cwd, r.user, r.hostname, r.args, r.ended_at
+                 FROM runs r",
+            );
+
+            let mut conditions = Vec::new();
+            if project_filter.is_some() {
+                query.push_str(" JOIN projects p ON r.project_id = p.id");
+                conditions.push("p.hash = ?1".to_string());
+            }
+            if status_filter.is_some() {
+                let param_num = if project_filter.is_some() { 2 } else { 1 };
+                conditions.push(format!("r.status = ?{}", param_num));
+            }
+
+            if !conditions.is_empty() {
+                query.push_str(" WHERE ");
+                query.push_str(&conditions.join(" AND "));
+            }
+
+            query.push_str(" ORDER BY r.timestamp DESC LIMIT ?");
+            let limit_param_num = 1 + project_filter.is_some() as usize + status_filter.is_some() as usize;
+            query = query.replace("LIMIT ?", &format!("LIMIT ?{}", limit_param_num));
+
+            let mut stmt = conn.prepare(&query)?;
+
+            let rows = match (project_filter, status_filter) {
+                (Some(project), Some(status)) => {
+                    stmt.query_map(params![project, status.as_str(), limit as i64], Self::row_to_run_record)?
+                }
+                (Some(project), None) => stmt.query_map(params![project, limit as i64], Self::row_to_run_record)?,
+                (None, Some(status)) => {
+                    stmt.query_map(params![status.as_str(), limit as i64], Self::row_to_run_record)?
+                }
+                (None, None) => stmt.query_map(params![limit as i64], Self::row_to_run_record)?,
+            };
+
+            rows.collect::<Result<Vec<_>, _>>().context("Failed to fetch runs")
         })
     }
 
