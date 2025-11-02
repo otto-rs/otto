@@ -3,7 +3,7 @@ use eyre::{Report, Result};
 use log::info;
 use otto::{
     cli::{CleanCommand, HistoryCommand, Parser, StatsCommand},
-    executor::{TaskScheduler, Workspace},
+    executor::{DagVisualizer, TaskScheduler, Workspace},
 };
 use std::env;
 use std::fs::OpenOptions;
@@ -48,13 +48,6 @@ async fn main() {
                 }
                 return;
             }
-            "graph" => {
-                if let Err(e) = execute_graph_command(&args[1..]).await {
-                    eprintln!("{e}");
-                    std::process::exit(1);
-                }
-                return;
-            }
             "history" => {
                 if let Err(e) = execute_history_command(&args[1..]) {
                     eprintln!("{e}");
@@ -82,7 +75,7 @@ async fn main() {
         }
     };
 
-    let (tasks, hash, ottofile_path, jobs) = match parser.parse() {
+    let (tasks, hash, ottofile_path, jobs, tui_mode) = match parser.parse() {
         Ok(result) => result,
         Err(e) => {
             eprintln!("{e}");
@@ -91,108 +84,68 @@ async fn main() {
     };
 
     // Execute tasks
-    if let Err(e) = execute_tasks(tasks, hash, ottofile_path, jobs).await {
+    if let Err(e) = execute_tasks(tasks, hash, ottofile_path, jobs, tui_mode).await {
         eprintln!("{e}");
         std::process::exit(1);
     }
 }
 
-async fn execute_clean_command(args: &[String]) -> Result<(), Report> {
-    use clap::Parser;
+async fn execute_clean_from_task(task: &otto::cli::parser::Task) -> Result<(), Report> {
+    use otto::cfg::param::Value;
 
-    let clean_cmd = CleanCommand::parse_from(args);
-    clean_cmd.execute().await?;
-    Ok(())
-}
-
-async fn execute_graph_command(args: &[String]) -> Result<(), Report> {
-    use otto::executor::{GraphFormat, GraphOptions, NodeStyle};
-
-    // Parse basic arguments for graph command
-    let mut format = GraphFormat::Ascii;
-    let mut output_path = None;
-
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--format" | "-f" => {
-                if i + 1 < args.len() {
-                    format = match args[i + 1].as_str() {
-                        "dot" => GraphFormat::Dot,
-                        "ascii" | "text" => GraphFormat::Ascii,
-                        _ => GraphFormat::Ascii,
-                    };
-                    i += 2;
-                } else {
-                    i += 1;
-                }
-            }
-            "--output" | "-o" => {
-                if i + 1 < args.len() {
-                    output_path = Some(std::path::PathBuf::from(&args[i + 1]));
-                    i += 2;
-                } else {
-                    i += 1;
-                }
-            }
-            _ => i += 1,
-        }
-    }
-
-    let options = GraphOptions {
-        show_details: true,
-        show_file_deps: true,
-        format,
-        style: NodeStyle::Detailed,
-        output_path,
-    };
-
-    // Need to parse ottofile to generate graph
-    let mut parser = otto::cli::Parser::new(vec!["otto".to_string()])?;
-    let (all_tasks, _, _) = parser.parse_all_tasks()?;
-
-    // Convert parser tasks to executor tasks and create DAG
-    let dag = otto::executor::DagVisualizer::from_tasks(all_tasks)?;
-
-    // Create visualizer with options
-    let visualizer = otto::executor::DagVisualizer::new(options.clone());
-
-    // Generate and display/save the graph
-    let output = match options.format {
-        GraphFormat::Ascii => visualizer.generate_ascii(&dag)?,
-        GraphFormat::Dot => visualizer.generate_dot(&dag)?,
-        _ => {
-            return Err(eyre::eyre!("Unsupported format. Use 'ascii' or 'dot'."));
-        }
-    };
-
-    if let Some(path) = &options.output_path {
-        std::fs::write(path, &output)?;
-        println!("Graph written to {}", path.display());
+    // Extract parameters from task values
+    let keep_days = if let Some(Value::Item(s)) = task.values.get("keep") {
+        s.parse::<u64>().unwrap_or(30)
     } else {
-        println!("{}", output);
-    }
+        30 // Default
+    };
 
-    Ok(())
-}
+    // Boolean flag: stored as Value::Item("true") or Value::Item("false")
+    let dry_run = task
+        .values
+        .get("dry-run")
+        .and_then(|v| if let Value::Item(s) = v { Some(s == "true") } else { None })
+        .unwrap_or(false);
 
-fn execute_history_command(args: &[String]) -> Result<(), Report> {
-    use clap::Parser;
+    let project_filter = task
+        .values
+        .get("project")
+        .and_then(|v| if let Value::Item(s) = v { Some(s.clone()) } else { None });
 
-    let history_cmd = HistoryCommand::parse_from(args);
-    history_cmd.execute()?;
-    Ok(())
-}
+    let clean_cmd = CleanCommand {
+        keep_days,
+        keep_last: None,
+        keep_failed: None,
+        dry_run,
+        project_filter,
+        no_db: false,
+    };
+    clean_cmd.execute().await?;
 
-fn execute_stats_command(args: &[String]) -> Result<(), Report> {
-    use clap::Parser;
-
-    let stats_cmd = StatsCommand::parse_from(args);
-    stats_cmd.execute()?;
     Ok(())
 }
 
 async fn execute_tasks(
+    tasks: Vec<otto::cli::parser::Task>,
+    hash: String,
+    ottofile_path: Option<std::path::PathBuf>,
+    jobs: usize,
+    tui_mode: bool,
+) -> Result<(), Report> {
+    if tui_mode {
+        // Check if we have a TTY
+        if !atty::is(atty::Stream::Stdout) {
+            eprintln!("Warning: --tui requires a TTY, falling back to standard output");
+            return execute_with_terminal_output(tasks, hash, ottofile_path, jobs).await;
+        }
+
+        execute_with_tui(tasks, hash, ottofile_path, jobs).await
+    } else {
+        execute_with_terminal_output(tasks, hash, ottofile_path, jobs).await
+    }
+}
+
+async fn execute_with_terminal_output(
     tasks: Vec<otto::cli::parser::Task>,
     hash: String,
     ottofile_path: Option<std::path::PathBuf>,
@@ -203,8 +156,23 @@ async fn execute_tasks(
         return Ok(());
     }
 
-    // All tasks should be executed normally (built-in commands are handled earlier)
-    let execution_tasks = tasks;
+    // Check if any task is a clean command
+    let clean_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "clean").collect();
+    if !clean_tasks.is_empty() {
+        return execute_clean_from_task(clean_tasks[0]).await;
+    }
+
+    // Check if any task is a graph command
+    let graph_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "graph").collect();
+    if !graph_tasks.is_empty() {
+        return DagVisualizer::execute_command(graph_tasks[0]).await;
+    }
+
+    // Filter out built-in commands for normal execution
+    let execution_tasks: Vec<_> = tasks
+        .into_iter()
+        .filter(|task| task.name != "graph" && task.name != "clean")
+        .collect();
 
     if execution_tasks.is_empty() {
         println!("No tasks to execute");
@@ -241,15 +209,43 @@ async fn execute_tasks(
         .collect();
 
     // Create task scheduler
-    let workspace_arc = Arc::new(workspace);
-    let scheduler = TaskScheduler::new(executor_tasks, workspace_arc.clone(), execution_context, jobs).await?;
+    let scheduler = TaskScheduler::new(executor_tasks, Arc::new(workspace), execution_context, jobs).await?;
 
     // Execute all tasks
-    let result = scheduler.execute_all().await;
+    scheduler.execute_all().await?;
 
-    // Record run completion in database (graceful - doesn't fail if DB unavailable)
-    workspace_arc.record_run_complete_in_db(result.is_ok());
+    Ok(())
+}
 
-    // Return the result
-    result
+async fn execute_with_tui(
+    _tasks: Vec<otto::cli::parser::Task>,
+    _hash: String,
+    _ottofile_path: Option<std::path::PathBuf>,
+    _jobs: usize,
+) -> Result<(), Report> {
+    todo!("TUI mode not yet implemented")
+}
+
+async fn execute_clean_command(args: &[String]) -> Result<(), Report> {
+    use clap::Parser;
+
+    let clean_cmd = CleanCommand::parse_from(args);
+    clean_cmd.execute().await?;
+    Ok(())
+}
+
+fn execute_history_command(args: &[String]) -> Result<(), Report> {
+    use clap::Parser;
+
+    let history_cmd = HistoryCommand::parse_from(args);
+    history_cmd.execute()?;
+    Ok(())
+}
+
+fn execute_stats_command(args: &[String]) -> Result<(), Report> {
+    use clap::Parser;
+
+    let stats_cmd = StatsCommand::parse_from(args);
+    stats_cmd.execute()?;
+    Ok(())
 }

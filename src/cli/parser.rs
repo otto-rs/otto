@@ -233,7 +233,8 @@ impl Parser {
         })
     }
 
-    pub fn parse(&mut self) -> Result<(Vec<Task>, String, Option<PathBuf>, usize)> {
+    #[allow(clippy::type_complexity)]
+    pub fn parse(&mut self) -> Result<(Vec<Task>, String, Option<PathBuf>, usize, bool)> {
         // Check if help was requested
         let help_requested = self.args.contains(&"--help".to_string()) || self.args.contains(&"-h".to_string());
 
@@ -319,6 +320,9 @@ impl Parser {
             num_cpus::get()
         });
 
+        // Extract tui flag
+        let tui_mode = matches.get_flag("tui");
+
         let ottofile_path = Self::divine_ottofile(ottofile_value)?;
         let (config_spec, hash, ottofile) = Self::load_config_from_path(ottofile_path)?;
 
@@ -355,7 +359,7 @@ impl Parser {
         // Process tasks and build DAG
         let tasks = self.process_tasks_with_filter(&tasks_to_run)?;
 
-        Ok((tasks, self.hash.clone(), self.ottofile.clone(), self.jobs))
+        Ok((tasks, self.hash.clone(), self.ottofile.clone(), self.jobs, tui_mode))
     }
 
     pub fn parse_all_tasks(&mut self) -> Result<(Vec<Task>, String, Option<PathBuf>)> {
@@ -377,13 +381,12 @@ impl Parser {
                     self.hash = hash;
                     self.ottofile = ottofile;
 
-                    // Get all task names (excluding builtins)
-                    let builtin_commands = ["graph", "clean", "history", "stats"];
+                    // Get all task names (excluding graph)
                     let all_task_names: Vec<String> = self
                         .config_spec
                         .tasks
                         .keys()
-                        .filter(|name| !builtin_commands.contains(&name.as_str()))
+                        .filter(|name| *name != "graph")
                         .cloned()
                         .collect();
 
@@ -408,13 +411,12 @@ impl Parser {
             self.ottofile = ottofile;
         }
 
-        // Get all task names (excluding builtins)
-        let builtin_commands = ["graph", "clean", "history", "stats"];
+        // Get all task names (excluding graph)
         let all_task_names: Vec<String> = self
             .config_spec
             .tasks
             .keys()
-            .filter(|name| !builtin_commands.contains(&name.as_str()))
+            .filter(|name| *name != "graph")
             .cloned()
             .collect();
 
@@ -477,6 +479,13 @@ impl Parser {
                 Arg::new("no-deps")
                     .long("no-deps")
                     .help("Don't run dependencies")
+                    .action(clap::ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("tui")
+                    .short('t')
+                    .long("tui")
+                    .help("Enable interactive TUI dashboard for task monitoring")
                     .action(clap::ArgAction::SetTrue),
             )
             .allow_external_subcommands(true)
@@ -550,12 +559,11 @@ impl Parser {
         for task_pattern in default_tasks {
             if task_pattern == "*" {
                 // "*" means all tasks
-                let builtin_commands = ["graph", "clean", "history", "stats"];
                 resolved_tasks.extend(
                     self.config_spec
                         .tasks
                         .keys()
-                        .filter(|name| !builtin_commands.contains(&name.as_str())) // Exclude builtins
+                        .filter(|name| *name != "graph") // Exclude meta-tasks
                         .cloned(),
                 );
             } else {
@@ -856,7 +864,7 @@ impl Parser {
         // Add tasks as subcommands
         if !self.config_spec.tasks.is_empty() {
             // Separate regular tasks from built-in commands
-            let builtin_commands = ["graph", "clean", "history", "stats"];
+            let builtin_commands = ["graph", "clean"];
             let mut regular_tasks: Vec<_> = self
                 .config_spec
                 .tasks
@@ -1086,171 +1094,9 @@ impl Parser {
         self.config_spec.tasks.insert("clean".to_string(), clean_task);
     }
 
-    fn inject_history_meta_task(&mut self) {
-        use crate::cfg::param::{Nargs, ParamType};
-
-        // Add history meta-task to the configuration
-        let history_task = TaskSpec {
-            name: "history".to_string(),
-            help: Some("[built-in] Show execution history".to_string()),
-            after: vec![],
-            before: vec![],
-            input: vec![],
-            output: vec![],
-            envs: HashMap::new(),
-            params: {
-                let mut params = HashMap::new();
-
-                // Add -n/--limit parameter
-                params.insert(
-                    "limit".to_string(),
-                    ParamSpec {
-                        name: "limit".to_string(),
-                        short: Some('n'),
-                        long: Some("limit".to_string()),
-                        param_type: ParamType::OPT,
-                        dest: None,
-                        metavar: Some("N".to_string()),
-                        default: Some("20".to_string()),
-                        constant: Value::Empty,
-                        choices: vec![],
-                        nargs: Nargs::One,
-                        help: Some("Limit number of results".to_string()),
-                        value: Value::Empty,
-                    },
-                );
-
-                // Add -s/--status parameter
-                params.insert(
-                    "status".to_string(),
-                    ParamSpec {
-                        name: "status".to_string(),
-                        short: Some('s'),
-                        long: Some("status".to_string()),
-                        param_type: ParamType::OPT,
-                        dest: None,
-                        metavar: Some("STATUS".to_string()),
-                        default: None,
-                        constant: Value::Empty,
-                        choices: vec![],
-                        nargs: Nargs::One,
-                        help: Some("Filter by status (success, failed, running)".to_string()),
-                        value: Value::Empty,
-                    },
-                );
-
-                // Add -p/--project parameter
-                params.insert(
-                    "project".to_string(),
-                    ParamSpec {
-                        name: "project".to_string(),
-                        short: Some('p'),
-                        long: Some("project".to_string()),
-                        param_type: ParamType::OPT,
-                        dest: None,
-                        metavar: Some("HASH".to_string()),
-                        default: None,
-                        constant: Value::Empty,
-                        choices: vec![],
-                        nargs: Nargs::One,
-                        help: Some("Filter by project hash".to_string()),
-                        value: Value::Empty,
-                    },
-                );
-
-                // Add --json parameter
-                params.insert(
-                    "json".to_string(),
-                    ParamSpec {
-                        name: "json".to_string(),
-                        short: None,
-                        long: Some("json".to_string()),
-                        param_type: ParamType::FLG,
-                        dest: None,
-                        metavar: None,
-                        default: None,
-                        constant: Value::Empty,
-                        choices: vec![],
-                        nargs: Nargs::Zero,
-                        help: Some("Output as JSON".to_string()),
-                        value: Value::Empty,
-                    },
-                );
-
-                params
-            },
-            action: "# Built-in history command".to_string(),
-        };
-
-        self.config_spec.tasks.insert("history".to_string(), history_task);
-    }
-
-    fn inject_stats_meta_task(&mut self) {
-        use crate::cfg::param::{Nargs, ParamType};
-
-        // Add stats meta-task to the configuration
-        let stats_task = TaskSpec {
-            name: "stats".to_string(),
-            help: Some("[built-in] Show execution statistics".to_string()),
-            after: vec![],
-            before: vec![],
-            input: vec![],
-            output: vec![],
-            envs: HashMap::new(),
-            params: {
-                let mut params = HashMap::new();
-
-                // Add -n/--limit parameter
-                params.insert(
-                    "limit".to_string(),
-                    ParamSpec {
-                        name: "limit".to_string(),
-                        short: Some('n'),
-                        long: Some("limit".to_string()),
-                        param_type: ParamType::OPT,
-                        dest: None,
-                        metavar: Some("N".to_string()),
-                        default: Some("10".to_string()),
-                        constant: Value::Empty,
-                        choices: vec![],
-                        nargs: Nargs::One,
-                        help: Some("Limit number of tasks shown".to_string()),
-                        value: Value::Empty,
-                    },
-                );
-
-                // Add --json parameter
-                params.insert(
-                    "json".to_string(),
-                    ParamSpec {
-                        name: "json".to_string(),
-                        short: None,
-                        long: Some("json".to_string()),
-                        param_type: ParamType::FLG,
-                        dest: None,
-                        metavar: None,
-                        default: None,
-                        constant: Value::Empty,
-                        choices: vec![],
-                        nargs: Nargs::Zero,
-                        help: Some("Output as JSON".to_string()),
-                        value: Value::Empty,
-                    },
-                );
-
-                params
-            },
-            action: "# Built-in stats command".to_string(),
-        };
-
-        self.config_spec.tasks.insert("stats".to_string(), stats_task);
-    }
-
     fn inject_builtin_commands(&mut self) {
         self.inject_graph_meta_task();
         self.inject_clean_meta_task();
-        self.inject_history_meta_task();
-        self.inject_stats_meta_task();
     }
 
     fn find_ottofile(path: &Path) -> Result<Option<PathBuf>> {
@@ -1506,11 +1352,9 @@ mod tests {
 
     #[test]
     fn test_task_to_command_mixed_parameters() {
-        let mut task_spec = TaskSpec {
-            name: "build".to_string(),
-            help: Some("Build the project".to_string()),
-            ..Default::default()
-        };
+        let mut task_spec = TaskSpec::default();
+        task_spec.name = "build".to_string();
+        task_spec.help = Some("Build the project".to_string());
 
         // Add boolean flag
         let verbose_param = create_test_param_spec("verbose", ParamType::FLG, Some('v'), Some("verbose"));
@@ -1544,10 +1388,8 @@ mod tests {
 
     #[test]
     fn test_task_to_command_boolean_flags_only() {
-        let mut task_spec = TaskSpec {
-            name: "test".to_string(),
-            ..Default::default()
-        };
+        let mut task_spec = TaskSpec::default();
+        task_spec.name = "test".to_string();
 
         // Add multiple boolean flags
         let verbose_param = create_test_param_spec("verbose", ParamType::FLG, Some('v'), Some("verbose"));
@@ -1606,7 +1448,7 @@ mod tests {
         let mut parser = Parser::new(args).unwrap();
         let result = parser.parse();
         assert!(result.is_ok());
-        let (_, _, _, jobs) = result.unwrap();
+        let (_, _, _, jobs, _) = result.unwrap();
         assert_eq!(jobs, 4);
     }
 
@@ -1631,7 +1473,7 @@ mod tests {
         let mut parser = Parser::new(args).unwrap();
         let result = parser.parse();
         assert!(result.is_ok());
-        let (_, _, _, jobs) = result.unwrap();
+        let (_, _, _, jobs, _) = result.unwrap();
         assert_eq!(jobs, num_cpus::get());
     }
 
@@ -1658,7 +1500,7 @@ mod tests {
         let mut parser = Parser::new(args).unwrap();
         let result = parser.parse();
         assert!(result.is_ok());
-        let (_, _, _, jobs) = result.unwrap();
+        let (_, _, _, jobs, _) = result.unwrap();
         assert_eq!(jobs, num_cpus::get());
     }
 }
