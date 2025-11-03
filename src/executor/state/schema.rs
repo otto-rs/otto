@@ -151,22 +151,18 @@ mod tests {
         let conn = Connection::open_in_memory()?;
         init_schema(&conn)?;
 
-        // Verify schema_version table exists
         let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'")?;
         let exists = stmt.exists([])?;
         assert!(exists);
 
-        // Verify projects table exists
         let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='projects'")?;
         let exists = stmt.exists([])?;
         assert!(exists);
 
-        // Verify runs table exists
         let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='runs'")?;
         let exists = stmt.exists([])?;
         assert!(exists);
 
-        // Verify tasks table exists
         let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'")?;
         let exists = stmt.exists([])?;
         assert!(exists);

@@ -5,7 +5,6 @@ use eyre::Result;
 
 use crate::executor::{RunStatus, StateManager};
 
-/// Calculate display width of a string (accounts for unicode & ignores ANSI)
 fn display_width(s: &str) -> usize {
     measure_text_width(s)
 }

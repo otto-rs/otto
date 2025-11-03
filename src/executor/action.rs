@@ -78,7 +78,6 @@ impl ActionProcessor {
         let prologue = processor.generate_prologue(&task.task_deps, task)?;
         let epilogue = processor.generate_epilogue()?;
 
-        // Build script with shebang first, then prologue, user content, epilogue
         let script = if shebang.is_empty() {
             format!("{prologue}\n{user_content}\n{epilogue}")
         } else {
@@ -115,7 +114,6 @@ impl ActionProcessor {
             }
         }
 
-        // Create symlink in task directory
         let script_path = self
             .workspace
             .task_script_file(&self.task_name, processor.get_file_extension());
@@ -125,12 +123,10 @@ impl ActionProcessor {
             std::fs::create_dir_all(parent)?;
         }
 
-        // Remove existing symlink if it exists
         if script_path.exists() {
             std::fs::remove_file(&script_path)?;
         }
 
-        // Create symlink from task directory to cache
         #[cfg(unix)]
         {
             use std::os::unix::fs;
@@ -155,19 +151,14 @@ impl ActionProcessor {
 
 /// Trait for script-specific processing logic
 pub trait ScriptProcessor {
-    /// Generate the prologue code that sets up OTTO_INPUT, environment, and CLI parsing
     fn generate_prologue(&self, dependencies: &[String], task: &Task) -> Result<String>;
 
-    /// Generate the epilogue code that serializes OTTO_OUTPUT to JSON
     fn generate_epilogue(&self) -> Result<String>;
 
-    /// Get the interpreter command for this script type
     fn get_interpreter(&self) -> &str;
 
-    /// Get the file extension for this script type
     fn get_file_extension(&self) -> &str;
 
-    /// Create builtin functions file
     fn create_builtins(&self) -> Result<()>;
 }
 
@@ -689,7 +680,6 @@ mod tests {
 
         let processor = ActionProcessor::new(workspace.clone(), "test_task")?;
 
-        // Create a test task with parameters
         let mut task_envs = HashMap::new();
         task_envs.insert("greeting".to_string(), "hello".to_string());
 
@@ -709,7 +699,6 @@ mod tests {
         // Process the action
         let result = processor.process(&task.action, &task)?;
 
-        // Verify the result
         match result {
             ProcessedAction::Bash { path, script, hash } => {
                 assert!(path.exists());
@@ -721,14 +710,12 @@ mod tests {
                 assert!(script.contains("echo \"${greeting} world\""));
                 assert!(script.contains("otto_serialize_output \"test_task\""));
 
-                // Verify hash is calculated correctly from the generated script
                 assert_eq!(hash.len(), 8, "Hash should be 8 characters");
                 assert!(
                     hash.chars().all(|c| c.is_ascii_hexdigit()),
                     "Hash should be hexadecimal"
                 );
 
-                // Verify hash matches the script content
                 let mut hasher = sha2::Sha256::new();
                 hasher.update(script.as_bytes());
                 let expected_hash = hex::encode(hasher.finalize())[..8].to_string();
@@ -749,7 +736,6 @@ mod tests {
 
         let processor = ActionProcessor::new(workspace.clone(), "test_task")?;
 
-        // Create a test task with parameters
         let mut task_envs = HashMap::new();
         task_envs.insert("name".to_string(), "world".to_string());
 
@@ -769,7 +755,6 @@ mod tests {
         // Process the action
         let result = processor.process(&task.action, &task)?;
 
-        // Verify the result - now should properly detect Python3
         match result {
             ProcessedAction::Python3 { path, script, hash } => {
                 assert!(path.exists());
@@ -781,14 +766,12 @@ mod tests {
                 assert!(script.contains("print(f\"Hello {name}\")"));
                 assert!(script.contains("otto_serialize_output(\"test_task\")"));
 
-                // Verify hash is calculated correctly from the generated script
                 assert_eq!(hash.len(), 8, "Hash should be 8 characters");
                 assert!(
                     hash.chars().all(|c| c.is_ascii_hexdigit()),
                     "Hash should be hexadecimal"
                 );
 
-                // Verify hash matches the script content
                 let mut hasher = sha2::Sha256::new();
                 hasher.update(script.as_bytes());
                 let expected_hash = hex::encode(hasher.finalize())[..8].to_string();
@@ -809,7 +792,6 @@ mod tests {
 
         let processor = ActionProcessor::new(workspace.clone(), "test_task")?;
 
-        // Create a test task with no shebang (should default to bash)
         let mut task_envs = HashMap::new();
         task_envs.insert("message".to_string(), "hello".to_string());
 
@@ -829,7 +811,6 @@ mod tests {
         // Process the action
         let result = processor.process(&task.action, &task)?;
 
-        // Verify the result defaults to Bash
         match result {
             ProcessedAction::Bash { path, script, hash } => {
                 assert!(path.exists());
@@ -840,14 +821,12 @@ mod tests {
                 assert!(script.contains("echo \"${message} from default bash\""));
                 assert!(script.contains("otto_serialize_output \"test_task\""));
 
-                // Verify hash is calculated correctly from the generated script
                 assert_eq!(hash.len(), 8, "Hash should be 8 characters");
                 assert!(
                     hash.chars().all(|c| c.is_ascii_hexdigit()),
                     "Hash should be hexadecimal"
                 );
 
-                // Verify hash matches the script content
                 let mut hasher = sha2::Sha256::new();
                 hasher.update(script.as_bytes());
                 let expected_hash = hex::encode(hasher.finalize())[..8].to_string();

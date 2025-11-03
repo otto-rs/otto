@@ -63,17 +63,14 @@ pub struct DagVisualizer {
 }
 
 impl DagVisualizer {
-    /// Create a new DAG visualizer
     pub fn new(options: GraphOptions) -> Self {
         Self { options }
     }
 
-    /// Create with default options
     pub fn with_defaults() -> Self {
         Self::new(GraphOptions::default())
     }
 
-    /// Execute the graph command with the given task parameters
     pub async fn execute_command(task: &crate::cli::parser::Task) -> Result<()> {
         // Parse graph command arguments
         let format = task
@@ -112,10 +109,8 @@ impl DagVisualizer {
         let mut parser = Parser::new(args)?;
         let (all_tasks, _, _) = parser.parse_all_tasks()?;
 
-        // Convert parser tasks to executor tasks and create DAG
         let dag = Self::from_tasks(all_tasks)?;
 
-        // Create visualizer and generate output
         let visualizer = DagVisualizer::new(options);
         let result = visualizer.visualize(&dag)?;
 
@@ -124,7 +119,6 @@ impl DagVisualizer {
         Ok(())
     }
 
-    /// Create a DAG from a collection of tasks
     pub fn from_tasks(tasks: Vec<crate::cli::parser::Task>) -> Result<DAG<Task>> {
         // Convert parser tasks to executor tasks
         let executor_tasks: Vec<Task> = tasks
@@ -146,7 +140,6 @@ impl DagVisualizer {
         Self::create_dag_from_tasks(executor_tasks)
     }
 
-    /// Create a DAG from executor tasks
     fn create_dag_from_tasks(mut tasks: Vec<Task>) -> Result<DAG<Task>> {
         use daggy::Dag;
 
@@ -156,14 +149,11 @@ impl DagVisualizer {
         // Sort tasks alphabetically for consistent ordering
         tasks.sort_by(|a, b| a.name.cmp(&b.name));
 
-        // Add all tasks as nodes
         for task in tasks {
             let index = dag.add_node(task.clone());
             task_indices.insert(task.name.clone(), index);
         }
 
-        // Add edges for dependencies
-        // First, collect all the edges we need to add
         let mut edges_to_add = Vec::new();
         for (node_index, node_data) in dag.raw_nodes().iter().enumerate() {
             let task = &node_data.weight;
@@ -176,7 +166,6 @@ impl DagVisualizer {
             }
         }
 
-        // Now add all the edges
         for (dep_index, current_index, task_name) in edges_to_add {
             dag.add_edge(dep_index, current_index, ())
                 .map_err(|e| eyre!("Failed to add edge to {}: {:?}", task_name, e))?;
@@ -194,15 +183,12 @@ impl DagVisualizer {
         }
     }
 
-    /// Generate and save image using Graphviz
     pub fn generate_image(&self, dag: &DAG<Task>) -> Result<String> {
-        // First generate DOT content
         let dot_content = self.generate_dot(dag)?;
 
         // Determine output format and path
         let (format, output_path) = self.determine_output_format()?;
 
-        // Check if graphviz is available
         if !self.is_graphviz_available() {
             return Err(eyre!(
                 "Graphviz not found. Please install graphviz to generate images.\n\
@@ -215,7 +201,6 @@ impl DagVisualizer {
             ));
         }
 
-        // Create temporary DOT file
         let temp_dir = tempfile::tempdir()?;
         let dot_file = temp_dir.path().join("otto_graph.dot");
         std::fs::write(&dot_file, &dot_content)?;
@@ -242,7 +227,6 @@ impl DagVisualizer {
         ))
     }
 
-    /// Generate DOT format representation of the DAG
     pub fn generate_dot(&self, dag: &DAG<Task>) -> Result<String> {
         let mut dot = String::new();
 
@@ -272,11 +256,9 @@ impl DagVisualizer {
         dot.push_str("  ];\n");
         dot.push_str("  \n");
 
-        // Create a mapping from task names to node IDs
         let mut task_to_id = HashMap::new();
         let mut file_nodes = std::collections::HashSet::new();
 
-        // Add task nodes
         for (idx, node) in dag.raw_nodes().iter().enumerate() {
             let task = &node.weight;
             let node_id = format!("task_{idx}");
@@ -299,7 +281,6 @@ impl DagVisualizer {
 
         dot.push_str("  \n");
 
-        // Add task dependency edges
         for node in dag.raw_nodes() {
             let task = &node.weight;
             if let Some(target_id) = task_to_id.get(&task.name) {
@@ -313,7 +294,6 @@ impl DagVisualizer {
             }
         }
 
-        // Add file dependencies if enabled
         if self.options.show_file_deps {
             self.add_file_dependencies_to_dot(&mut dot, dag, &task_to_id, &mut file_nodes)?;
         }
@@ -323,7 +303,6 @@ impl DagVisualizer {
         Ok(dot)
     }
 
-    /// Generate ASCII art representation of the DAG
     pub fn generate_ascii(&self, dag: &DAG<Task>) -> Result<String> {
         let mut output = String::new();
 
@@ -369,7 +348,6 @@ impl DagVisualizer {
             )?;
         }
 
-        // Add legend
         output.push_str("\n┌─────────────────────────────────────┐\n");
         output.push_str("│ Legend:                             │\n");
         output.push_str("│ ├─ Task name [inputs:N] [outputs:M] │\n");
@@ -379,7 +357,6 @@ impl DagVisualizer {
         Ok(output)
     }
 
-    /// Create a formatted label for a task node
     fn create_node_label(&self, task: &Task) -> String {
         match self.options.style {
             NodeStyle::Simple => task.name.clone(),
@@ -419,7 +396,6 @@ impl DagVisualizer {
             .replace('}', "\\}")
     }
 
-    /// Add file dependencies to DOT output
     fn add_file_dependencies_to_dot(
         &self,
         dot: &mut String,
@@ -432,7 +408,6 @@ impl DagVisualizer {
         for node in dag.raw_nodes() {
             let task = &node.weight;
             if let Some(task_id) = task_to_id.get(&task.name) {
-                // Add input file nodes
                 for file_dep in &task.file_deps {
                     let file_id = format!("file_{}", file_dep.replace(['/', '.', '*', '-', '$', '{', '}'], "_"));
 
@@ -449,7 +424,6 @@ impl DagVisualizer {
                     ));
                 }
 
-                // Add output file nodes
                 for output_dep in &task.output_deps {
                     let file_id = format!(
                         "output_{}",
@@ -474,7 +448,6 @@ impl DagVisualizer {
         Ok(())
     }
 
-    /// Render ASCII subtree recursively
     fn render_ascii_subtree(
         output: &mut String,
         task: &Task,
@@ -519,7 +492,6 @@ impl DagVisualizer {
         Ok(())
     }
 
-    /// Check if Graphviz is available
     fn is_graphviz_available(&self) -> bool {
         Command::new("dot")
             .arg("-V")
@@ -528,7 +500,6 @@ impl DagVisualizer {
             .unwrap_or(false)
     }
 
-    /// Determine output format and path
     fn determine_output_format(&self) -> Result<(String, std::path::PathBuf)> {
         let (format, extension) = match &self.options.format {
             GraphFormat::Svg => ("svg", "svg"),
@@ -558,14 +529,12 @@ impl DagVisualizer {
         Ok((format.to_string(), output_path))
     }
 
-    /// Write DOT output to a file
     pub fn write_dot_file(&self, dag: &DAG<Task>, path: &Path) -> Result<()> {
         let dot_content = self.generate_dot(dag)?;
         std::fs::write(path, dot_content)?;
         Ok(())
     }
 
-    /// Write ASCII output to a file
     pub fn write_ascii_file(&self, dag: &DAG<Task>, path: &Path) -> Result<()> {
         let ascii_content = self.generate_ascii(dag)?;
         std::fs::write(path, ascii_content)?;

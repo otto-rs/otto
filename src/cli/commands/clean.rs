@@ -53,7 +53,6 @@ impl CleanCommand {
             return Ok(());
         }
 
-        // Try database-backed cleanup first (unless --no-db is specified)
         if !self.no_db {
             if let Some(manager) = StateManager::try_new() {
                 return self.execute_with_database(&manager).await;
@@ -118,7 +117,6 @@ impl CleanCommand {
             let mut deleted_size = 0u64;
 
             for run in &runs_to_delete {
-                // Delete from database and filesystem
                 match manager.delete_run(run.timestamp, true) {
                     Ok(Some(_)) => {
                         deleted_size += run.size_bytes.unwrap_or(0);
@@ -161,7 +159,6 @@ impl CleanCommand {
             return Ok(());
         }
 
-        // Sort by timestamp (oldest first)
         runs_to_delete.sort_by_key(|r| r.timestamp);
 
         // Apply --keep-last logic if specified
@@ -394,7 +391,6 @@ mod tests {
             .join("tasks");
         fs::create_dir_all(&run_dir)?;
 
-        // Create a file with specified size
         let file_path = run_dir.join("test.log");
         let content = vec![0u8; size_kb * 1024];
         fs::write(file_path, content)?;
@@ -423,7 +419,6 @@ mod tests {
     async fn test_scan_with_old_runs() -> Result<()> {
         let temp_dir = TempDir::new()?;
 
-        // Create runs with different ages
         let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
         let old_timestamp = now - (40 * 86400); // 40 days old
         let recent_timestamp = now - (10 * 86400); // 10 days old
@@ -492,7 +487,6 @@ mod tests {
         let run_dir = temp_dir.path().join("test_run");
         fs::create_dir_all(&run_dir)?;
 
-        // Create run.yaml with ottofile path
         let metadata = RunMetadata::minimal(
             Some(PathBuf::from("/path/to/otto.yml")),
             "abc123".to_string(),
@@ -541,7 +535,6 @@ mod tests {
         let run_dir = temp_dir.path().join("test_run");
         fs::create_dir_all(&run_dir)?;
 
-        // Create run.yaml without ottofile field
         let metadata = RunMetadata::minimal(None, "abc123".to_string(), 1234567890);
         let yaml_content = serde_yaml::to_string(&metadata)?;
         fs::write(run_dir.join("run.yaml"), yaml_content)?;
@@ -566,7 +559,6 @@ mod tests {
         let run_dir = temp_dir.path().join("test_run");
         fs::create_dir_all(&run_dir)?;
 
-        // Create malformed YAML
         fs::write(run_dir.join("run.yaml"), "invalid: yaml: content: {")?;
 
         let cmd = CleanCommand {
@@ -677,7 +669,6 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
 
-        // Create runs with different timestamps in random order
         let timestamp1 = now - (60 * 86400); // 60 days old
         let timestamp2 = now - (45 * 86400); // 45 days old
         let timestamp3 = now - (50 * 86400); // 50 days old
@@ -713,18 +704,15 @@ mod tests {
         let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
         let old_timestamp = now - (40 * 86400);
 
-        // Create run with metadata
         let project_dir = temp_dir.path().join("otto-abc123");
         let run_dir = project_dir.join(old_timestamp.to_string());
         let tasks_dir = run_dir.join("tasks");
         fs::create_dir_all(&tasks_dir)?;
 
-        // Create test file
         let file_path = tasks_dir.join("test.log");
         let content = vec![0u8; 100 * 1024];
         fs::write(file_path, content)?;
 
-        // Create run.yaml with ottofile path
         let metadata = RunMetadata::minimal(
             Some(PathBuf::from("/test/project/otto.yml")),
             "abc123".to_string(),
@@ -757,7 +745,6 @@ mod tests {
         let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
         let old_timestamp = now - (40 * 86400);
 
-        // Create run without metadata (old run)
         create_test_run(temp_dir.path(), "def456", old_timestamp, 100)?;
 
         let cmd = CleanCommand {

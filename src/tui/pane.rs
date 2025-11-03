@@ -44,13 +44,11 @@ impl PaneStatus {
 
 /// Trait for renderable panes
 pub trait Pane {
-    /// Render the pane to the given area
     fn render(&self, frame: &mut Frame, area: Rect, focused: bool);
 
     /// Get the pane's identifier (task name)
     fn id(&self) -> &str;
 
-    /// Update pane state (receive from broadcast channel)
     fn update(&mut self);
 
     /// Get current status
@@ -62,7 +60,6 @@ pub trait Pane {
     /// Scroll down
     fn scroll_down(&mut self, visible_height: u16);
 
-    /// Reset scroll to top
     fn reset_scroll(&mut self);
 }
 
@@ -117,7 +114,6 @@ impl TaskPane {
 
 impl Pane for TaskPane {
     fn render(&self, frame: &mut Frame, area: Rect, focused: bool) {
-        // Create border with task name, status, and duration
         let mut title = format!(" {} {} ", self.task_name, self.status.symbol());
 
         if let Some(dur) = &self.duration {
@@ -156,7 +152,6 @@ impl Pane for TaskPane {
 
         for line in self.output_buffer.iter().skip(start_line).take(end_line - start_line) {
             if line.len() <= max_width {
-                // Line fits, add as-is
                 wrapped_lines.push(Line::from(line.as_str()));
             } else {
                 // Line is too long, wrap it
@@ -183,7 +178,6 @@ impl Pane for TaskPane {
     }
 
     fn update(&mut self) {
-        // Process status messages first
         if let Some(rx) = &mut self.message_rx {
             while let Ok(message) = rx.try_recv() {
                 match message {
@@ -201,7 +195,6 @@ impl Pane for TaskPane {
                     TaskMessage::StatusChange { task_name, status, .. } => {
                         if task_name == self.task_name {
                             self.status = Self::tui_status_to_pane_status(&status);
-                            // Add status change message to output buffer
                             let status_msg = match status {
                                 TuiTaskStatus::Skipped => "○ Task skipped (up to date)",
                                 TuiTaskStatus::Running => "● Task running",
@@ -219,7 +212,6 @@ impl Pane for TaskPane {
                         if task_name == self.task_name {
                             self.status = PaneStatus::Running;
                             self.start_time = Some(timestamp);
-                            // Add start message to output buffer
                             self.output_buffer.push_back("● Task started".to_string());
                             if self.output_buffer.len() > self.max_buffer_lines {
                                 self.output_buffer.pop_front();
@@ -235,7 +227,6 @@ impl Pane for TaskPane {
                         if task_name == self.task_name {
                             self.status = Self::tui_status_to_pane_status(&status);
                             self.duration = Some(Duration::from_millis(duration_ms));
-                            // Add completion message to output buffer
                             let status_msg = match status {
                                 TuiTaskStatus::Completed => "✓ Task completed successfully",
                                 TuiTaskStatus::Failed => "✗ Task failed",
@@ -256,7 +247,6 @@ impl Pane for TaskPane {
         while let Ok(output) = self.output_rx.try_recv() {
             // Only process output for this task
             if output.task_name == self.task_name {
-                // Split content by lines and add to buffer
                 for line in output.content.lines() {
                     self.output_buffer.push_back(line.to_string());
 

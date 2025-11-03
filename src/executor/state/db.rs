@@ -24,7 +24,6 @@ impl DatabaseManager {
             std::fs::create_dir_all(parent).context("Failed to create database directory")?;
         }
 
-        // Open or create database
         let conn = Connection::open(&db_path).context(format!("Failed to open database at {}", db_path.display()))?;
 
         // Enable WAL mode for better concurrency
@@ -53,7 +52,6 @@ impl DatabaseManager {
     /// Get the default database path (~/.otto/otto.db)
     /// Can be overridden with OTTO_DB_PATH environment variable
     pub fn default_db_path() -> Result<PathBuf> {
-        // Check for OTTO_DB_PATH override (useful for testing)
         if let Ok(db_path) = std::env::var("OTTO_DB_PATH") {
             return Ok(PathBuf::from(db_path));
         }
@@ -82,10 +80,8 @@ impl DatabaseManager {
         f(&conn)
     }
 
-    /// Check if the database is accessible and healthy
     pub fn health_check(&self) -> Result<()> {
         self.with_connection(|conn| {
-            // Simple query to verify database is working
             conn.query_row("SELECT 1", [], |_| Ok(()))?;
             Ok(())
         })
@@ -217,7 +213,6 @@ mod tests {
         let db = DatabaseManager::new(db_path)?;
 
         db.with_connection(|conn| {
-            // Verify all expected tables exist
             let tables: Vec<String> = conn
                 .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")?
                 .query_map([], |row| row.get(0))?

@@ -109,7 +109,6 @@ impl PaneLayout {
             _ => (4, 4), // Max 16 visible panes per page
         };
 
-        // Create row constraints
         let row_constraints: Vec<Constraint> = (0..rows).map(|_| Constraint::Percentage(100 / rows as u16)).collect();
 
         let row_layout = Layout::default()
@@ -117,7 +116,6 @@ impl PaneLayout {
             .constraints(row_constraints)
             .split(area);
 
-        // Create column constraints for each row
         let col_constraints: Vec<Constraint> = (0..cols).map(|_| Constraint::Percentage(100 / cols as u16)).collect();
 
         let mut grid_areas = Vec::new();

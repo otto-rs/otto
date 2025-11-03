@@ -45,7 +45,6 @@ pub struct OutputVisualizer {
 }
 
 impl OutputVisualizer {
-    /// Create a new output visualizer
     pub fn new(output_rx: broadcast::Receiver<TaskOutput>, config: VisualizerConfig) -> Self {
         Self {
             output_rx,
@@ -65,13 +64,11 @@ impl OutputVisualizer {
         Ok(())
     }
 
-    /// Process a new output line
     async fn process_output(&self, output: TaskOutput) -> Result<()> {
         let mut buffers = self.output_buffers.lock().await;
 
         let buffer = buffers.entry(output.task_name.clone()).or_insert_with(Vec::new);
 
-        // Add new output
         buffer.push(output.clone());
 
         // Trim buffer if needed
@@ -86,7 +83,6 @@ impl OutputVisualizer {
         Ok(())
     }
 
-    /// Format an output line according to configuration
     fn format_output(&self, output: &TaskOutput) -> String {
         let mut parts = Vec::new();
 
@@ -115,7 +111,6 @@ impl OutputVisualizer {
         parts.join(" ")
     }
 
-    /// Get recent output for a specific task
     pub async fn get_task_output(&self, task_name: &str) -> Vec<TaskOutput> {
         let buffers = self.output_buffers.lock().await;
         buffers.get(task_name).cloned().unwrap_or_default()
@@ -171,7 +166,6 @@ mod tests {
 
         let visualizer = OutputVisualizer::new(rx, config);
 
-        // Add three outputs (should only keep latest two)
         for i in 1..=3 {
             let output = TaskOutput {
                 task_name: "test_task".to_string(),

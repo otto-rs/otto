@@ -4,9 +4,7 @@ use std::time::SystemTime;
 
 use super::schema::{SCHEMA_VERSION, init_schema};
 
-/// Get the current schema version from the database
 pub fn get_current_version(conn: &Connection) -> Result<i64> {
-    // First check if schema_version table exists
     let table_exists: bool = conn
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_version'",
@@ -34,7 +32,6 @@ pub fn get_current_version(conn: &Connection) -> Result<i64> {
     }
 }
 
-/// Set the schema version in the database
 fn set_version(conn: &Connection, version: i64) -> Result<()> {
     let timestamp = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -55,7 +52,6 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     let current_version = get_current_version(conn)?;
 
     if current_version == 0 {
-        // First-time setup
         init_schema(conn).context("Failed to initialize schema")?;
         set_version(conn, SCHEMA_VERSION)?;
     } else if current_version < SCHEMA_VERSION {
@@ -102,7 +98,6 @@ mod tests {
         let version = get_current_version(&conn)?;
         assert_eq!(version, SCHEMA_VERSION);
 
-        // Verify tables were created
         let mut stmt = conn
             .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('projects', 'runs', 'tasks')")?;
         let count = stmt
@@ -118,7 +113,6 @@ mod tests {
     fn test_migrate_idempotent() -> Result<()> {
         let conn = Connection::open_in_memory()?;
 
-        // First migration
         migrate(&conn)?;
         let version1 = get_current_version(&conn)?;
 
@@ -135,7 +129,6 @@ mod tests {
     fn test_set_version() -> Result<()> {
         let conn = Connection::open_in_memory()?;
 
-        // First initialize the schema (which creates schema_version table)
         init_schema(&conn)?;
 
         set_version(&conn, 1)?;
@@ -143,7 +136,6 @@ mod tests {
         let version = get_current_version(&conn)?;
         assert_eq!(version, 1);
 
-        // Verify applied_at was set
         let applied_at: i64 = conn.query_row("SELECT applied_at FROM schema_version WHERE version = 1", [], |row| {
             row.get(0)
         })?;

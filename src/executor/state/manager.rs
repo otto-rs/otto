@@ -74,13 +74,11 @@ pub struct TaskStats {
 }
 
 impl StateManager {
-    /// Create a new StateManager with the default database location
     pub fn new() -> Result<Self> {
         let db = DatabaseManager::open_default()?;
         Ok(Self { db })
     }
 
-    /// Create a StateManager with a custom database path
     pub fn with_db_path(db_path: PathBuf) -> Result<Self> {
         let db = DatabaseManager::new(db_path)?;
         Ok(Self { db })
@@ -92,8 +90,6 @@ impl StateManager {
         Self::new().ok()
     }
 
-    /// Record the start of a run
-    /// Returns the database run ID if successful
     pub fn record_run_start(&self, metadata: &RunMetadata) -> Result<i64> {
         self.db.with_connection(|conn| {
             // First, ensure project exists
@@ -126,7 +122,6 @@ impl StateManager {
 
             let run_id = conn.last_insert_rowid();
 
-            // Update project last_seen and run_count
             conn.execute(
                 "UPDATE projects
                  SET last_seen = ?1, run_count = run_count + 1
@@ -164,8 +159,6 @@ impl StateManager {
         })
     }
 
-    /// Record the start of a task
-    /// Returns the database task ID if successful
     pub fn record_task_start(
         &self,
         run_id: i64,
@@ -210,7 +203,6 @@ impl StateManager {
             .as_secs();
 
         self.db.with_connection(|conn| {
-            // Get the started_at time to calculate duration
             let started_at: i64 =
                 conn.query_row("SELECT started_at FROM tasks WHERE id = ?1", params![task_id], |row| {
                     row.get(0)
@@ -273,7 +265,6 @@ impl StateManager {
         })
     }
 
-    /// Get tasks for a specific run
     pub fn get_run_tasks(&self, run_id: i64) -> Result<Vec<TaskRecord>> {
         self.db.with_connection(|conn| {
             let mut stmt = conn.prepare(
@@ -291,7 +282,6 @@ impl StateManager {
         })
     }
 
-    /// Get task history by task name across all runs
     pub fn get_task_history(&self, task_name: &str, limit: usize) -> Result<Vec<TaskRecord>> {
         self.db.with_connection(|conn| {
             let mut stmt = conn.prepare(
@@ -585,7 +575,6 @@ impl StateManager {
         })
     }
 
-    /// Get runs with flexible filtering
     pub fn get_runs_with_filters(
         &self,
         status_filter: Option<RunStatus>,
@@ -635,8 +624,6 @@ impl StateManager {
         })
     }
 
-    /// Find old runs based on retention criteria
-    /// Returns runs that should be deleted according to the criteria
     pub fn find_old_runs(
         &self,
         keep_days: u64,
@@ -659,7 +646,6 @@ impl StateManager {
         });
 
         self.db.with_connection(|conn| {
-            // First get all runs that match the basic criteria
             let mut query = String::from(
                 "SELECT r.id, r.project_id, r.timestamp, r.status, r.duration_seconds,
                         r.size_bytes, r.ottofile_path, r.cwd, r.user, r.hostname, r.args, r.ended_at
@@ -703,18 +689,14 @@ impl StateManager {
                 }
             }
 
-            // Sort runs_to_delete by timestamp (oldest first)
             runs_to_delete.sort_by_key(|r| r.timestamp);
 
             Ok(runs_to_delete)
         })
     }
 
-    /// Delete a run from the database and optionally from the filesystem
-    /// Returns the run information if successful
     pub fn delete_run(&self, timestamp: u64, delete_filesystem: bool) -> Result<Option<RunRecord>> {
         let run = self.db.with_connection(|conn| {
-            // First fetch the run to get its information
             let run: Option<RunRecord> = conn
                 .query_row(
                     "SELECT r.id, r.project_id, r.timestamp, r.status, r.duration_seconds,
@@ -730,10 +712,8 @@ impl StateManager {
                 // Delete all tasks for this run (CASCADE will handle this, but explicit is clearer)
                 conn.execute("DELETE FROM tasks WHERE run_id = ?1", params![run_record.id])?;
 
-                // Delete the run
                 conn.execute("DELETE FROM runs WHERE id = ?1", params![run_record.id])?;
 
-                // Update project run_count
                 conn.execute(
                     "UPDATE projects SET run_count = run_count - 1 WHERE id = ?1",
                     params![run_record.project_id],
@@ -786,7 +766,6 @@ impl StateManager {
             return Ok(id);
         }
 
-        // Create new project
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .context("Failed to get current time")?
@@ -841,7 +820,6 @@ mod tests {
         manager.record_run_start(&metadata)?;
         manager.record_run_complete(1234567890, RunStatus::Success, Some(1024))?;
 
-        // Verify the run was updated
         let runs = manager.get_recent_runs(1, None)?;
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].status, RunStatus::Success);
@@ -855,7 +833,6 @@ mod tests {
     fn test_get_recent_runs() -> Result<()> {
         let (manager, _temp_dir) = create_test_manager()?;
 
-        // Create multiple runs
         for i in 0..5 {
             let metadata = RunMetadata::minimal(
                 Some(PathBuf::from("/test/otto.yml")),
@@ -865,11 +842,9 @@ mod tests {
             manager.record_run_start(&metadata)?;
         }
 
-        // Get recent runs with limit
         let runs = manager.get_recent_runs(3, None)?;
         assert_eq!(runs.len(), 3);
 
-        // Should be ordered by timestamp descending (newest first)
         assert!(runs[0].timestamp > runs[1].timestamp);
         assert!(runs[1].timestamp > runs[2].timestamp);
 
@@ -880,7 +855,6 @@ mod tests {
     fn test_get_recent_runs_with_project_filter() -> Result<()> {
         let (manager, _temp_dir) = create_test_manager()?;
 
-        // Create runs for different projects
         for i in 0..3 {
             let metadata1 = RunMetadata::minimal(
                 Some(PathBuf::from("/test/otto.yml")),
@@ -897,7 +871,6 @@ mod tests {
             manager.record_run_start(&metadata2)?;
         }
 
-        // Get runs for specific project
         let runs = manager.get_recent_runs(10, Some("abc123"))?;
         assert_eq!(runs.len(), 3);
 
@@ -975,7 +948,6 @@ mod tests {
 
         assert!(task_id > 0);
 
-        // Verify task was recorded
         let tasks = manager.get_run_tasks(run_id)?;
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].name, "test-task");
@@ -995,7 +967,6 @@ mod tests {
         let task_id = manager.record_task_start(run_id, "test-task", None, None, None, None)?;
         manager.record_task_complete(task_id, 0, TaskStatus::Completed)?;
 
-        // Verify task was updated
         let tasks = manager.get_run_tasks(run_id)?;
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].status, TaskStatus::Completed);
@@ -1016,7 +987,6 @@ mod tests {
         let task_id = manager.record_task_start(run_id, "test-task", None, None, None, None)?;
         manager.record_task_complete(task_id, 1, TaskStatus::Failed)?;
 
-        // Verify task was updated with failure
         let tasks = manager.get_run_tasks(run_id)?;
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].status, TaskStatus::Failed);
@@ -1035,7 +1005,6 @@ mod tests {
         let task_id = manager.record_task_skipped(run_id, "test-task", Some("hash123"))?;
         assert!(task_id > 0);
 
-        // Verify task was recorded as skipped
         let tasks = manager.get_run_tasks(run_id)?;
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].name, "test-task");
@@ -1052,7 +1021,6 @@ mod tests {
         let metadata = RunMetadata::minimal(Some(PathBuf::from("/test/otto.yml")), "abc123".to_string(), 1234567890);
         let run_id = manager.record_run_start(&metadata)?;
 
-        // Create multiple tasks
         let task_id1 = manager.record_task_start(run_id, "task-1", None, None, None, None)?;
         let task_id2 = manager.record_task_start(run_id, "task-2", None, None, None, None)?;
         let task_id3 = manager.record_task_start(run_id, "task-3", None, None, None, None)?;
@@ -1061,7 +1029,6 @@ mod tests {
         manager.record_task_complete(task_id2, 1, TaskStatus::Failed)?;
         manager.record_task_complete(task_id3, 0, TaskStatus::Completed)?;
 
-        // Get all tasks for the run
         let tasks = manager.get_run_tasks(run_id)?;
         assert_eq!(tasks.len(), 3);
 
@@ -1077,7 +1044,6 @@ mod tests {
     fn test_get_task_history() -> Result<()> {
         let (manager, _temp_dir) = create_test_manager()?;
 
-        // Create multiple runs with the same task name
         for i in 0..5 {
             let metadata = RunMetadata::minimal(
                 Some(PathBuf::from("/test/otto.yml")),
@@ -1089,11 +1055,9 @@ mod tests {
             let task_id = manager.record_task_start(run_id, "build", None, None, None, None)?;
             manager.record_task_complete(task_id, 0, TaskStatus::Completed)?;
 
-            // Add a small sleep to ensure different timestamps
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
-        // Get history for the build task
         let history = manager.get_task_history("build", 3)?;
         assert_eq!(history.len(), 3);
 
@@ -1149,7 +1113,6 @@ mod tests {
 
         let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
 
-        // Create runs with different ages
         let old_timestamp = now - (40 * 24 * 60 * 60); // 40 days old
         let recent_timestamp = now - (10 * 24 * 60 * 60); // 10 days old
 
@@ -1184,7 +1147,6 @@ mod tests {
 
         let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
 
-        // Create 5 runs, all older than 30 days
         for i in 0..5 {
             let timestamp = now - ((40 + i) * 24 * 60 * 60);
             let metadata = RunMetadata::minimal(Some(PathBuf::from("/test/otto.yml")), "abc123".to_string(), timestamp);
@@ -1211,7 +1173,6 @@ mod tests {
 
         let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
 
-        // Create successful run 40 days old
         let success_timestamp = now - (40 * 24 * 60 * 60);
         let metadata1 = RunMetadata::minimal(
             Some(PathBuf::from("/test/otto.yml")),
@@ -1221,7 +1182,6 @@ mod tests {
         manager.record_run_start(&metadata1)?;
         manager.record_run_complete(success_timestamp, RunStatus::Success, Some(1024))?;
 
-        // Create failed run 40 days old
         let failed_timestamp = now - (39 * 24 * 60 * 60);
         let metadata2 = RunMetadata::minimal(
             Some(PathBuf::from("/test/otto.yml")),
@@ -1249,7 +1209,6 @@ mod tests {
         let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
         let old_timestamp = now - (40 * 24 * 60 * 60);
 
-        // Create old runs for two different projects
         let metadata1 = RunMetadata::minimal(
             Some(PathBuf::from("/test/otto.yml")),
             "abc123".to_string(),
@@ -1283,16 +1242,13 @@ mod tests {
         manager.record_run_start(&metadata)?;
         manager.record_run_complete(1234567890, RunStatus::Success, Some(1024))?;
 
-        // Verify run exists
         let runs_before = manager.get_recent_runs(10, None)?;
         assert_eq!(runs_before.len(), 1);
 
-        // Delete run (database only)
         let deleted = manager.delete_run(1234567890, false)?;
         assert!(deleted.is_some());
         assert_eq!(deleted.unwrap().timestamp, 1234567890);
 
-        // Verify run is deleted
         let runs_after = manager.get_recent_runs(10, None)?;
         assert_eq!(runs_after.len(), 0);
 
@@ -1306,21 +1262,17 @@ mod tests {
         let metadata = RunMetadata::minimal(Some(PathBuf::from("/test/otto.yml")), "abc123".to_string(), 1234567890);
         let run_id = manager.record_run_start(&metadata)?;
 
-        // Add some tasks
         let task_id1 = manager.record_task_start(run_id, "task1", None, None, None, None)?;
         manager.record_task_complete(task_id1, 0, TaskStatus::Completed)?;
 
         let task_id2 = manager.record_task_start(run_id, "task2", None, None, None, None)?;
         manager.record_task_complete(task_id2, 1, TaskStatus::Failed)?;
 
-        // Verify tasks exist
         let tasks_before = manager.get_run_tasks(run_id)?;
         assert_eq!(tasks_before.len(), 2);
 
-        // Delete run (should cascade delete tasks)
         manager.delete_run(1234567890, false)?;
 
-        // Verify tasks are also deleted
         let tasks_after = manager.get_run_tasks(run_id)?;
         assert_eq!(tasks_after.len(), 0);
 
@@ -1331,7 +1283,6 @@ mod tests {
     fn test_delete_run_updates_project_count() -> Result<()> {
         let (manager, _temp_dir) = create_test_manager()?;
 
-        // Create multiple runs for the same project
         for i in 0..3 {
             let metadata = RunMetadata::minimal(
                 Some(PathBuf::from("/test/otto.yml")),
@@ -1341,10 +1292,8 @@ mod tests {
             manager.record_run_start(&metadata)?;
         }
 
-        // Delete one run
         manager.delete_run(1234567891, false)?;
 
-        // Verify project still exists with updated count
         let runs = manager.get_recent_runs(10, Some("abc123"))?;
         assert_eq!(runs.len(), 2);
 
@@ -1401,7 +1350,6 @@ mod tests {
 
         let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
 
-        // Create 10 runs: 5 successful, 5 failed, all 40 days old
         for i in 0..10 {
             let timestamp = now - ((40 + i) * 24 * 60 * 60);
             let metadata = RunMetadata::minimal(Some(PathBuf::from("/test/otto.yml")), "abc123".to_string(), timestamp);

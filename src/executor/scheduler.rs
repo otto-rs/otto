@@ -63,7 +63,6 @@ pub struct TaskScheduler {
 }
 
 impl TaskScheduler {
-    /// Create a new task scheduler
     pub async fn new(
         tasks: Vec<Task>,
         workspace: Arc<Workspace>,
@@ -89,7 +88,6 @@ impl TaskScheduler {
         })
     }
 
-    /// Set the message broadcast channel for TUI updates
     pub fn set_message_channel(&mut self, tx: tokio::sync::broadcast::Sender<TaskMessage>) {
         self.message_tx = Some(tx);
     }
@@ -118,7 +116,6 @@ impl TaskScheduler {
         }
     }
 
-    /// Execute all tasks in the graph
     pub async fn execute_all(&self) -> Result<()> {
         let (tx, mut rx) = mpsc::channel(32);
 
@@ -159,7 +156,6 @@ impl TaskScheduler {
             while active_tasks.len() < max_concurrent && !ready_queue.is_empty() {
                 let task = ready_queue.pop_front().unwrap();
 
-                // Double-check dependencies
                 let deps_completed = task.task_deps.iter().all(|dep| completed_set.contains(dep));
                 if !deps_completed {
                     // Put it back at the end of the queue
@@ -172,7 +168,6 @@ impl TaskScheduler {
                     continue;
                 }
 
-                // Check file dependencies to see if task needs to run
                 match self.needs_rebuild(&task).await {
                     Ok(true) => {
                         // Task needs to run
@@ -216,7 +211,6 @@ impl TaskScheduler {
                         completed_set.insert(task.name.clone());
                         completed_tasks += 1;
 
-                        // Check if any blocked tasks are now ready due to this "completion"
                         blocked_tasks.retain(|blocked_task| {
                             let task_deps_completed = blocked_task
                                 .task_deps
@@ -280,7 +274,6 @@ impl TaskScheduler {
                     completed_tasks += 1;
                     active_tasks.remove(&completed_task);
 
-                    // Check if any blocked tasks are now ready
                     blocked_tasks.retain(|task| {
                         let task_deps_completed =
                             task.task_deps.iter().all(|task_dep| completed_set.contains(task_dep));
@@ -293,7 +286,6 @@ impl TaskScheduler {
                         false // Remove from blocked list
                     });
 
-                    // Update in-degree for dependent tasks
                     for remaining_task in &blocked_tasks {
                         if remaining_task.task_deps.contains(&completed_task)
                             && let Some(degree) = in_degree.get_mut(&remaining_task.name)
@@ -336,7 +328,6 @@ impl TaskScheduler {
         Ok(())
     }
 
-    /// Execute a single task
     async fn execute_task(&self, task: Task, tx: mpsc::Sender<Result<String>>) -> Result<JoinHandle<Result<()>>> {
         let semaphore = self.semaphore.clone();
 
@@ -355,7 +346,6 @@ impl TaskScheduler {
             // Acquire semaphore permit
             let _permit = semaphore.acquire().await?;
 
-            // Double-check dependencies are still complete before starting
             {
                 let statuses = task_statuses.lock().await;
                 for dep in &task_deps {
@@ -378,7 +368,6 @@ impl TaskScheduler {
 
             info!("Starting task {task_name}");
 
-            // Create task directory only (no subdirectories)
             tokio::fs::create_dir_all(&task_dir).await?;
 
             // Setup dependency input files (symlink outputs from dependencies)
@@ -388,7 +377,6 @@ impl TaskScheduler {
 
                 // Only create symlink if dependency output exists
                 if dep_output_file.exists() {
-                    // Remove existing symlink/file if it exists
                     if current_input_file.exists() {
                         tokio::fs::remove_file(&current_input_file).await.ok();
                     }
@@ -467,7 +455,6 @@ impl TaskScheduler {
                 let stdout = child.stdout.take().ok_or_else(|| eyre!("Failed to capture stdout"))?;
                 let stderr = child.stderr.take().ok_or_else(|| eyre!("Failed to capture stderr"))?;
 
-                // Use pre-created streams if available (TUI mode), otherwise create new ones
                 let streams = if let Some(streams_map) = &task_streams {
                     streams_map
                         .get(&task_name)
@@ -592,18 +579,15 @@ impl TaskScheduler {
         }))
     }
 
-    /// Get all task statuses
     pub async fn get_task_statuses(&self) -> HashMap<String, TaskStatus> {
         self.task_statuses.lock().await.clone()
     }
 
-    /// Get the status of a specific task
     pub async fn get_task_status(&self, task_name: &str) -> TaskStatus {
         let statuses = self.task_statuses.lock().await;
         statuses.get(task_name).cloned().unwrap_or(TaskStatus::Pending)
     }
 
-    /// Check if a task needs to be rebuilt based on file dependencies
     pub async fn needs_rebuild(&self, task: &Task) -> Result<bool> {
         // If no file dependencies, always run (traditional task-only mode)
         if task.file_deps.is_empty() {
@@ -611,7 +595,6 @@ impl TaskScheduler {
             return Ok(true);
         }
 
-        // Get output files from the task
         let output_files = &task.output_deps;
 
         // If no output files exist, need to run
@@ -620,7 +603,6 @@ impl TaskScheduler {
             return Ok(true);
         }
 
-        // Check if any output files are missing
         for output_path in output_files {
             if !Path::new(output_path).exists() {
                 debug!(
@@ -631,7 +613,6 @@ impl TaskScheduler {
             }
         }
 
-        // Get timestamps for all files
         let input_timestamps = self.get_file_timestamps(&task.file_deps).await?;
         let output_timestamps = self.get_file_timestamps(output_files).await?;
 
@@ -660,7 +641,6 @@ impl TaskScheduler {
         }
     }
 
-    /// Get file timestamps for a list of file paths
     async fn get_file_timestamps(&self, file_paths: &[String]) -> Result<Vec<(String, Option<std::time::SystemTime>)>> {
         let mut timestamps = Vec::new();
 
@@ -818,12 +798,10 @@ mod tests {
         let work_dir = PathBuf::from(temp_dir.path());
         setup_test_db(&work_dir);
 
-        // Create a test input file
         let input_file = work_dir.join("input.txt");
         let output_file = work_dir.join("output.txt");
         tokio::fs::write(&input_file, "test content").await?;
 
-        // Create task with file dependencies
         let task = Task::new(
             "copy_task".to_string(),
             vec![],
@@ -845,14 +823,12 @@ mod tests {
         )
         .await?;
 
-        // First run should execute (no output file exists)
         let needs_rebuild = scheduler.needs_rebuild(&task).await?;
         assert!(needs_rebuild, "Task should need to run when output doesn't exist");
 
         // Simulate file creation with newer timestamp
         tokio::fs::write(&output_file, "output content").await?;
 
-        // Set output file to be newer than input file
         let now = std::time::SystemTime::now();
         let future_time = filetime::FileTime::from_system_time(now + std::time::Duration::from_secs(1));
         filetime::set_file_times(&output_file, future_time, future_time)?;
@@ -876,7 +852,6 @@ mod tests {
         let file1 = work_dir.join("file1.txt");
         let file2 = work_dir.join("file2.txt");
 
-        // Create files with known content
         tokio::fs::write(&file1, "content1").await?;
         tokio::fs::write(&file2, "content2").await?;
 
@@ -905,7 +880,6 @@ mod tests {
         let nonexistent_file = work_dir.join("nonexistent.txt");
         let output_file = work_dir.join("output.txt");
 
-        // Create task with nonexistent input file
         let task = Task::new(
             "test_nonexistent".to_string(),
             vec![],
@@ -940,7 +914,6 @@ mod tests {
         let work_dir = PathBuf::from(temp_dir.path());
         setup_test_db(&work_dir);
 
-        // Create multiple input files with different timestamps
         let input1 = work_dir.join("input1.txt");
         let input2 = work_dir.join("input2.txt");
         let input3 = work_dir.join("input3.txt");
@@ -993,7 +966,6 @@ mod tests {
         let needs_rebuild = scheduler.needs_rebuild(&task).await?;
         assert!(needs_rebuild, "Task should need to run when outputs don't exist");
 
-        // Create output files that are newer than all inputs
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         tokio::fs::write(&output1, "combined output").await?;
         tokio::fs::write(&output2, "combined output copy").await?;
@@ -1070,13 +1042,11 @@ mod tests {
         // Execute all tasks
         scheduler.execute_all().await?;
 
-        // Verify both tasks completed
         let task1_status = scheduler.get_task_status("step1").await;
         let task2_status = scheduler.get_task_status("step2").await;
         assert_eq!(task1_status, TaskStatus::Completed);
         assert_eq!(task2_status, TaskStatus::Completed);
 
-        // Verify files were created
         assert!(intermediate_file.exists(), "Intermediate file should exist");
         assert!(output_file.exists(), "Output file should exist");
 
@@ -1091,10 +1061,8 @@ mod tests {
         let input_file = work_dir.join("input.txt");
         let output_file = work_dir.join("output.txt");
 
-        // Create input file
         tokio::fs::write(&input_file, "content").await?;
 
-        // Create output file with same timestamp (within same millisecond)
         tokio::fs::write(&output_file, "output").await?;
 
         let task = Task::new(
@@ -1166,7 +1134,6 @@ mod tests {
         let work_dir = PathBuf::from(temp_dir.path());
         setup_test_db(&work_dir);
 
-        // Create a directory with files
         let src_dir = work_dir.join("src");
         tokio::fs::create_dir_all(&src_dir).await?;
         tokio::fs::write(src_dir.join("file1.txt"), "content1").await?;
@@ -1212,7 +1179,6 @@ mod tests {
         let work_dir = PathBuf::from(temp_dir.path());
         setup_test_db(&work_dir);
 
-        // Create many input files
         let mut input_files = Vec::new();
         for i in 0..100 {
             let file = work_dir.join(format!("input_{i:03}.txt"));
@@ -1307,7 +1273,6 @@ mod tests {
         let input_file = work_dir.join("source.txt");
         let output_file = work_dir.join("result.txt");
 
-        // Create input file with known content
         tokio::fs::write(&input_file, "Hello, World!").await?;
 
         let task = Task::new(
@@ -1331,13 +1296,11 @@ mod tests {
         )
         .await?;
 
-        // First execution - should run because output doesn't exist
         let needs_rebuild_1 = scheduler.needs_rebuild(&task).await?;
         assert!(needs_rebuild_1, "Should need to run initially");
 
         scheduler.execute_all().await?;
 
-        // Verify task completed and output file was created
         let status = scheduler.get_task_status("real_execution").await;
         assert_eq!(status, TaskStatus::Completed);
         assert!(output_file.exists(), "Output file should exist after execution");
@@ -1345,7 +1308,6 @@ mod tests {
         let output_content = tokio::fs::read_to_string(&output_file).await?;
         assert_eq!(output_content, "Hello, World!", "Output should match input");
 
-        // Second check - should not need to run because output is newer
         let needs_rebuild_2 = scheduler.needs_rebuild(&task).await?;
         assert!(!needs_rebuild_2, "Should not need to run when output is up-to-date");
 
@@ -1353,7 +1315,6 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         tokio::fs::write(&input_file, "Modified content!").await?;
 
-        // Third check - should need to run because input is newer
         let needs_rebuild_3 = scheduler.needs_rebuild(&task).await?;
         assert!(needs_rebuild_3, "Should need to run when input is modified");
 
@@ -1365,7 +1326,6 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let work_dir = temp_dir.path().to_path_buf();
 
-        // Create tasks that sleep for a bit to test concurrency
         let mut tasks = vec![];
         for i in 1..=4 {
             let task = Task::new(
@@ -1383,16 +1343,13 @@ mod tests {
         let workspace = Workspace::new(work_dir).await?;
         workspace.init().await?;
 
-        // Create scheduler with limit of 2 parallel jobs
         let scheduler = TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), 2, false).await?;
 
-        // Verify semaphore has 2 permits
         assert_eq!(scheduler.semaphore.available_permits(), 2);
 
         // Execute all tasks
         scheduler.execute_all().await?;
 
-        // Verify all tasks completed
         for i in 1..=4 {
             let status = scheduler.get_task_status(&format!("task{i}")).await;
             assert_eq!(status, TaskStatus::Completed);
@@ -1424,7 +1381,6 @@ mod tests {
             let scheduler =
                 TaskScheduler::new(tasks, Arc::new(workspace), ExecutionContext::new(), max_parallel, false).await?;
 
-            // Verify semaphore has correct number of permits
             assert_eq!(
                 scheduler.semaphore.available_permits(),
                 max_parallel,

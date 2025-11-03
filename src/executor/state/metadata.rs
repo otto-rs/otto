@@ -47,7 +47,6 @@ impl RunMetadata {
         }
     }
 
-    /// Create full metadata with all available information
     pub fn full(
         ottofile: Option<PathBuf>,
         hash: String,

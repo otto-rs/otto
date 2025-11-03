@@ -49,7 +49,6 @@ impl TuiApp {
         &mut self.layout
     }
 
-    /// Run the TUI event loop
     pub fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> io::Result<()> {
         loop {
             // Draw UI
@@ -86,13 +85,11 @@ impl TuiApp {
                 self.handle_key_event(key.code);
             }
 
-            // Update tick
             if self.last_tick.elapsed() >= self.tick_rate {
                 self.on_tick();
                 self.last_tick = Instant::now();
             }
 
-            // Check for Ctrl+C signal
             if let Some(ref flag) = self.shutdown_flag
                 && flag.load(std::sync::atomic::Ordering::SeqCst)
             {

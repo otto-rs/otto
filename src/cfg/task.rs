@@ -68,10 +68,8 @@ impl<'de> Deserialize<'de> for TaskSpec {
     {
         let helper = TaskSpecHelper::deserialize(deserializer)?;
 
-        // Determine which script field was provided and add appropriate shebang
         let action = if let Some(bash_script) = helper.bash {
             let bash_script = deserialize_script_string(&bash_script);
-            // Add bash shebang if not present
             if bash_script.trim_start().starts_with("#!") {
                 bash_script
             } else {
@@ -79,7 +77,6 @@ impl<'de> Deserialize<'de> for TaskSpec {
             }
         } else if let Some(python_script) = helper.python {
             let python_script = deserialize_script_string(&python_script);
-            // Add python shebang if not present
             if python_script.trim_start().starts_with("#!") {
                 python_script
             } else {
@@ -117,7 +114,6 @@ fn deserialize_script_string(s: &str) -> String {
         .min()
         .unwrap_or(0);
 
-    // Remove common indentation from each line
     let dedented: Vec<String> = lines
         .iter()
         .map(|line| {

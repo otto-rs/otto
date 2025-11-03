@@ -86,7 +86,6 @@ fn evaluate_single_env_value(
     // Pass env_context to prevent parent environment pollution
     result = resolve_shell_commands_with_env(&result, working_dir, env_context)?;
 
-    // Step 2: Resolve environment variable references ${VAR} and $VAR
     result = resolve_env_variables(&result, env_context)?;
 
     Ok(result)
@@ -113,7 +112,6 @@ fn resolve_shell_commands_with_env(
     Ok(result)
 }
 
-/// Execute a shell command with controlled environment
 fn execute_shell_command_with_env(
     command_str: &str,
     working_dir: Option<&std::path::Path>,
@@ -130,7 +128,6 @@ fn execute_shell_command_with_env(
     // This is critical for preventing Otto's environment from leaking into subprocesses
     cmd.env_clear();
 
-    // Add essential system variables that commands need to function
     let essential_vars = ["PATH", "HOME", "USER", "SHELL", "TERM", "LANG", "LC_ALL"];
     for var in &essential_vars {
         if let Ok(value) = env::var(var) {
@@ -163,7 +160,6 @@ fn execute_shell_command_with_env(
 fn resolve_env_variables(input: &str, env_context: &HashMap<String, String>) -> Result<String> {
     let mut result = input.to_string();
 
-    // Handle ${VAR} pattern first (more specific)
     let re_braced = Regex::new(r"\$\{([^}]+)\}").unwrap();
     for captures in re_braced.captures_iter(input) {
         let full_match = &captures[0];
@@ -227,7 +223,6 @@ mod tests {
         let mut envs = HashMap::new();
         envs.insert("GREETING".to_string(), "Hello ${TEST_USER}".to_string());
 
-        // Set a test-specific environment variable
         unsafe {
             env::set_var("TEST_USER", "testuser");
         }

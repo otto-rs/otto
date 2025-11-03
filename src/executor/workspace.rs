@@ -26,7 +26,6 @@ impl Default for ExecutionContext {
 }
 
 impl ExecutionContext {
-    /// Create a minimal execution context for testing
     pub fn new() -> Self {
         Self {
             prog: "otto".to_string(),
@@ -61,9 +60,7 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    /// Create new workspace for a project
     pub async fn new(root: PathBuf) -> Result<Self> {
-        // Expand any ~ in the root path first
         let root = expanduser(root.to_string_lossy())?;
 
         // Get canonical project root, creating parent dirs if needed
@@ -99,7 +96,6 @@ impl Workspace {
                 "otto_project".to_string()
             });
 
-        // Calculate project path hash - use only first 8 chars
         let mut hasher = Sha256::new();
         hasher.update(root.to_string_lossy().as_bytes());
         let hash = format!("{:x}", hasher.finalize());
@@ -108,12 +104,9 @@ impl Workspace {
         Self::new_with_hash(root, hash).await
     }
 
-    /// Create new workspace with a specific hash
     pub async fn new_with_hash(root: PathBuf, hash: String) -> Result<Self> {
-        // Get timestamp for this run
         let time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
 
-        // Get absolute path to ~/.otto by expanding HOME
         let home_dir = std::env::var("HOME").map_err(|e| eyre!("Failed to get HOME directory: {}", e))?;
         let home = PathBuf::from(home_dir).join(".otto");
 
@@ -136,14 +129,12 @@ impl Workspace {
 
     /// Initialize workspace directories
     pub async fn init(&self) -> Result<()> {
-        // Create all required directories
         for path in [&self.home, &self.project, &self.cache, &self.run] {
             tokio::fs::create_dir_all(path)
                 .await
                 .map_err(|e| eyre!("Failed to create directory {}: {}", path.display(), e))?;
         }
 
-        // Create tasks directory
         tokio::fs::create_dir_all(self.run.join("tasks"))
             .await
             .map_err(|e| eyre!("Failed to create tasks directory: {}", e))?;
@@ -192,22 +183,18 @@ impl Workspace {
         self.run.join(format!("{name}.yaml"))
     }
 
-    /// Verify a task's directory structure exists
     pub async fn verify_task(&self, name: &str) -> Result<()> {
         let task_dir = self.task(name);
 
-        // Check if task directory exists
         if !task_dir.exists() {
             return Err(eyre!("Task directory does not exist: {}", task_dir.display()));
         }
 
-        // Verify script symlink
         let script = task_dir.join("script.*");
         if !script.exists() {
             return Err(eyre!("Task script not found: {}", script.display()));
         }
 
-        // Verify it's a valid symlink
         let script_target = tokio::fs::read_link(&script)
             .await
             .map_err(|e| eyre!("Failed to read script symlink: {}", e))?;
@@ -224,7 +211,6 @@ impl Workspace {
         &self.root
     }
 
-    /// Get the run directory for this execution
     pub fn run(&self) -> &PathBuf {
         &self.run
     }
@@ -254,7 +240,6 @@ impl Workspace {
             })
     }
 
-    /// Check if a path is within the project root
     pub fn is_in_project<P: AsRef<Path>>(&self, path: P) -> bool {
         path.as_ref().starts_with(&self.root)
     }
@@ -264,7 +249,6 @@ impl Workspace {
         self.root.join(path)
     }
 
-    /// Save execution context metadata to run.yaml
     pub async fn save_execution_context(&self, context: ExecutionContext) -> Result<()> {
         let run_yaml_path = self.metadata("run");
         let yaml_content =
@@ -280,7 +264,6 @@ impl Workspace {
         Ok(())
     }
 
-    /// Try to record run start in database (graceful - doesn't fail if DB unavailable)
     fn record_run_start_in_db(&self, context: &ExecutionContext) {
         if let Some(manager) = StateManager::try_new() {
             // Convert ExecutionContext to RunMetadata
@@ -314,7 +297,6 @@ impl Workspace {
         self.db_run_id.lock().ok().and_then(|guard| *guard)
     }
 
-    /// Try to record run completion in database (graceful - doesn't fail if DB unavailable)
     pub fn record_run_complete_in_db(&self, success: bool) {
         if let Some(manager) = StateManager::try_new() {
             let status = if success {
@@ -333,7 +315,6 @@ impl Workspace {
         }
     }
 
-    /// Calculate the size of a directory recursively
     fn calculate_directory_size(path: &Path) -> Result<u64> {
         let mut total = 0u64;
         if path.is_dir() {
@@ -350,7 +331,6 @@ impl Workspace {
         Ok(total)
     }
 
-    /// Save task-specific execution context to task directory
     pub async fn save_task_context(&self, task_name: &str, context: &ExecutionContext) -> Result<()> {
         let task_run_yaml = self.task(task_name).join("run.yaml");
         let yaml_content =

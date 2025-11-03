@@ -120,7 +120,6 @@ impl Task {
         // Resolve output globs to canonical paths using explicit cwd
         let output_deps = Self::resolve_file_globs(&task_spec.output, cwd);
 
-        // Evaluate environment variables with two-level merging: global then task-level
         let evaluated_envs = Self::evaluate_merged_envs(global_envs, &task_spec.envs, cwd).unwrap_or_else(|e| {
             eprintln!("Warning: Failed to evaluate environment variables for task '{name}': {e}");
             HashMap::new()
@@ -141,7 +140,6 @@ impl Task {
     ) -> Result<HashMap<String, String>> {
         let mut merged_envs = HashMap::new();
 
-        // First, evaluate and add global environment variables
         for (key, value) in global_envs {
             merged_envs.insert(key.clone(), value.clone());
         }
@@ -235,10 +233,8 @@ impl Parser {
 
     #[allow(clippy::type_complexity)]
     pub fn parse(&mut self) -> Result<(Vec<Task>, String, Option<PathBuf>, usize, bool)> {
-        // Check if help was requested
         let help_requested = self.args.contains(&"--help".to_string()) || self.args.contains(&"-h".to_string());
 
-        // FIRST PASS: Parse global options and extract ottofile
         let otto_cmd = Self::otto_command();
         let matches = match otto_cmd.try_get_matches_from(&self.args) {
             Ok(m) => m,
@@ -250,7 +246,6 @@ impl Parser {
                         std::process::exit(0);
                     }
                     ErrorKind::DisplayHelp => {
-                        // Always show help, but add error message if no ottofile found
                         if help_requested {
                             let ottofile_value = ".".to_string();
                             let ottofile_path = Self::divine_ottofile(ottofile_value);
@@ -381,7 +376,6 @@ impl Parser {
                     self.hash = hash;
                     self.ottofile = ottofile;
 
-                    // Get all task names (excluding graph)
                     let all_task_names: Vec<String> = self
                         .config_spec
                         .tasks
@@ -411,7 +405,6 @@ impl Parser {
             self.ottofile = ottofile;
         }
 
-        // Get all task names (excluding graph)
         let all_task_names: Vec<String> = self
             .config_spec
             .tasks
@@ -519,7 +512,6 @@ impl Parser {
             return args[0] == "help";
         }
 
-        // Empty args - check if we have default tasks
         let default_tasks = &self.config_spec.otto.tasks;
         default_tasks.is_empty()
             || (default_tasks.len() == 1 && default_tasks[0] == "*" && self.config_spec.tasks.is_empty())
@@ -577,7 +569,6 @@ impl Parser {
             }
         }
 
-        // Remove duplicates and sort
         resolved_tasks.sort();
         resolved_tasks.dedup();
 
@@ -612,13 +603,11 @@ impl Parser {
         // Step 1: Compute all task dependencies using simple linear algorithm
         let task_deps = self.compute_task_deps()?;
 
-        // Step 2: Find all tasks we need (requested + their transitive dependencies)
         let mut tasks_needed = HashSet::new();
         for task_name in requested_tasks {
             Self::collect_transitive_deps(task_name, &task_deps, &mut tasks_needed)?;
         }
 
-        // Step 3: Build task list from needed tasks
         let mut tasks = Vec::new();
         for task_name in &tasks_needed {
             let task_spec = self
@@ -715,7 +704,6 @@ impl Parser {
             task_deps.insert(task_name.clone(), task_spec.before.clone());
         }
 
-        // Add reverse dependencies from 'after' field
         for (task_name, task_spec) in &self.config_spec.tasks {
             for after_task in &task_spec.after {
                 if let Some(deps) = task_deps.get_mut(after_task)
@@ -789,12 +777,10 @@ impl Parser {
                 // Argument with value
                 arg = arg.value_parser(value_parser!(String));
 
-                // Add default value if specified
                 if let Some(ref default) = param_spec.default {
                     arg = arg.default_value(default.clone());
                 }
 
-                // Add choices validation if specified
                 if !param_spec.choices.is_empty() {
                     let choices: Vec<String> = param_spec.choices.to_vec();
                     arg = arg.value_parser(clap::builder::PossibleValuesParser::new(choices));
@@ -869,7 +855,6 @@ impl Parser {
             )
             .allow_external_subcommands(true);
 
-        // Add tasks as subcommands
         if !self.config_spec.tasks.is_empty() {
             // Separate regular tasks from built-in commands
             let builtin_commands = ["graph", "clean", "history", "stats"];
@@ -881,7 +866,6 @@ impl Parser {
                 .collect();
             regular_tasks.sort_by_key(|(name, _)| name.as_str());
 
-            // Add regular tasks first (sorted alphabetically)
             for (_, task_spec) in regular_tasks {
                 cmd = cmd.subcommand(Self::task_to_command(task_spec));
             }
@@ -895,7 +879,6 @@ impl Parser {
                 .collect();
             builtins.sort_by_key(|(name, _)| name.as_str());
 
-            // Add built-in commands at the end (sorted alphabetically)
             for (_, task_spec) in builtins {
                 cmd = cmd.subcommand(Self::task_to_command(task_spec));
             }
@@ -965,7 +948,6 @@ impl Parser {
     fn inject_graph_meta_task(&mut self) {
         use crate::cfg::param::{Nargs, ParamType};
 
-        // Add graph meta-task to the configuration
         let graph_task = TaskSpec {
             name: "graph".to_string(),
             help: Some("[built-in] Visualize the task dependency graph".to_string()),
@@ -977,7 +959,6 @@ impl Parser {
             params: {
                 let mut params = HashMap::new();
 
-                // Add --format parameter
                 params.insert(
                     "format".to_string(),
                     ParamSpec {
@@ -1002,7 +983,6 @@ impl Parser {
                     },
                 );
 
-                // Add --output parameter
                 params.insert(
                     "output".to_string(),
                     ParamSpec {
@@ -1032,7 +1012,6 @@ impl Parser {
     fn inject_clean_meta_task(&mut self) {
         use crate::cfg::param::{Nargs, ParamType};
 
-        // Add clean meta-task to the configuration
         let clean_task = TaskSpec {
             name: "clean".to_string(),
             help: Some("[built-in] Clean old runs from ~/.otto/".to_string()),
@@ -1044,7 +1023,6 @@ impl Parser {
             params: {
                 let mut params = HashMap::new();
 
-                // Add --keep parameter
                 params.insert(
                     "keep".to_string(),
                     ParamSpec {
@@ -1063,7 +1041,6 @@ impl Parser {
                     },
                 );
 
-                // Add --dry-run parameter
                 params.insert(
                     "dry-run".to_string(),
                     ParamSpec {
@@ -1082,7 +1059,6 @@ impl Parser {
                     },
                 );
 
-                // Add --project parameter
                 params.insert(
                     "project".to_string(),
                     ParamSpec {
@@ -1112,7 +1088,6 @@ impl Parser {
     fn inject_history_meta_task(&mut self) {
         use crate::cfg::param::{Nargs, ParamType};
 
-        // Add history meta-task to the configuration
         let history_task = TaskSpec {
             name: "history".to_string(),
             help: Some("[built-in] View execution history".to_string()),
@@ -1124,7 +1099,6 @@ impl Parser {
             params: {
                 let mut params = HashMap::new();
 
-                // Add --task parameter
                 params.insert(
                     "task".to_string(),
                     ParamSpec {
@@ -1143,7 +1117,6 @@ impl Parser {
                     },
                 );
 
-                // Add --limit parameter
                 params.insert(
                     "limit".to_string(),
                     ParamSpec {
@@ -1162,7 +1135,6 @@ impl Parser {
                     },
                 );
 
-                // Add --status parameter
                 params.insert(
                     "status".to_string(),
                     ParamSpec {
@@ -1181,7 +1153,6 @@ impl Parser {
                     },
                 );
 
-                // Add --project parameter
                 params.insert(
                     "project".to_string(),
                     ParamSpec {
@@ -1200,7 +1171,6 @@ impl Parser {
                     },
                 );
 
-                // Add --json parameter
                 params.insert(
                     "json".to_string(),
                     ParamSpec {
@@ -1230,7 +1200,6 @@ impl Parser {
     fn inject_stats_meta_task(&mut self) {
         use crate::cfg::param::{Nargs, ParamType};
 
-        // Add stats meta-task to the configuration
         let stats_task = TaskSpec {
             name: "stats".to_string(),
             help: Some("[built-in] View execution statistics".to_string()),
@@ -1242,7 +1211,6 @@ impl Parser {
             params: {
                 let mut params = HashMap::new();
 
-                // Add --task parameter
                 params.insert(
                     "task".to_string(),
                     ParamSpec {
@@ -1261,7 +1229,6 @@ impl Parser {
                     },
                 );
 
-                // Add --limit parameter
                 params.insert(
                     "limit".to_string(),
                     ParamSpec {
@@ -1280,7 +1247,6 @@ impl Parser {
                     },
                 );
 
-                // Add --json parameter
                 params.insert(
                     "json".to_string(),
                     ParamSpec {
@@ -1571,11 +1537,9 @@ mod tests {
         task_spec.name = "build".to_string();
         task_spec.help = Some("Build the project".to_string());
 
-        // Add boolean flag
         let verbose_param = create_test_param_spec("verbose", ParamType::FLG, Some('v'), Some("verbose"));
         task_spec.params.insert("verbose".to_string(), verbose_param);
 
-        // Add argument flag
         let mut env_param = create_test_param_spec("env", ParamType::OPT, Some('e'), Some("env"));
         env_param.default = Some("development".to_string());
         env_param.choices = vec![
@@ -1585,7 +1549,6 @@ mod tests {
         ];
         task_spec.params.insert("env".to_string(), env_param);
 
-        // Add positional argument
         let filename_param = create_test_param_spec("filename", ParamType::POS, None, None);
         task_spec.params.insert("filename".to_string(), filename_param);
 
@@ -1606,7 +1569,6 @@ mod tests {
         let mut task_spec = TaskSpec::default();
         task_spec.name = "test".to_string();
 
-        // Add multiple boolean flags
         let verbose_param = create_test_param_spec("verbose", ParamType::FLG, Some('v'), Some("verbose"));
         task_spec.params.insert("verbose".to_string(), verbose_param);
 
@@ -1645,7 +1607,6 @@ mod tests {
         use std::fs;
         use tempfile::TempDir;
 
-        // Create a temporary directory with a minimal ottofile
         let temp_dir = TempDir::new().unwrap();
         let ottofile_path = temp_dir.path().join("otto.yml");
         fs::write(&ottofile_path, "tasks:\n  test:\n    action: echo test\n").unwrap();
@@ -1672,7 +1633,6 @@ mod tests {
         use std::fs;
         use tempfile::TempDir;
 
-        // Create a temporary directory with a minimal ottofile
         let temp_dir = TempDir::new().unwrap();
         let ottofile_path = temp_dir.path().join("otto.yml");
         fs::write(&ottofile_path, "tasks:\n  test:\n    action: echo test\n").unwrap();
@@ -1697,7 +1657,6 @@ mod tests {
         use std::fs;
         use tempfile::TempDir;
 
-        // Create a temporary directory with a minimal ottofile
         let temp_dir = TempDir::new().unwrap();
         let ottofile_path = temp_dir.path().join("otto.yml");
         fs::write(&ottofile_path, "tasks:\n  test:\n    action: echo test\n").unwrap();

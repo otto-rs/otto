@@ -29,7 +29,6 @@ fn setup_logging() -> Result<(), Report> {
 
 #[tokio::main]
 async fn main() {
-    // Setup logging first
     if let Err(e) = setup_logging() {
         eprintln!("Failed to setup logging: {e}");
         std::process::exit(1);
@@ -38,7 +37,6 @@ async fn main() {
 
     let args: Vec<String> = env::args().collect();
 
-    // Check for built-in commands that don't require an ottofile
     if args.len() > 1 {
         match args[1].as_str() {
             "clean" => {
@@ -66,7 +64,6 @@ async fn main() {
         }
     }
 
-    // Create parser and parse arguments
     let mut parser = match Parser::new(args) {
         Ok(p) => p,
         Err(e) => {
@@ -211,7 +208,6 @@ async fn execute_tasks(
     tui_mode: bool,
 ) -> Result<(), Report> {
     if tui_mode {
-        // Check if we have a TTY
         if !atty::is(atty::Stream::Stdout) {
             eprintln!("Warning: --tui requires a TTY, falling back to standard output");
             return execute_with_terminal_output(tasks, hash, ottofile_path, jobs).await;
@@ -234,25 +230,21 @@ async fn execute_with_terminal_output(
         return Ok(());
     }
 
-    // Check if any task is a clean command
     let clean_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "clean").collect();
     if !clean_tasks.is_empty() {
         return execute_clean_from_task(clean_tasks[0]).await;
     }
 
-    // Check if any task is a graph command
     let graph_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "graph").collect();
     if !graph_tasks.is_empty() {
         return DagVisualizer::execute_command(graph_tasks[0]).await;
     }
 
-    // Check if any task is a history command
     let history_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "history").collect();
     if !history_tasks.is_empty() {
         return execute_history_from_task(history_tasks[0]);
     }
 
-    // Check if any task is a stats command
     let stats_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "stats").collect();
     if !stats_tasks.is_empty() {
         return execute_stats_from_task(stats_tasks[0]);
@@ -269,12 +261,10 @@ async fn execute_with_terminal_output(
         return Ok(());
     }
 
-    // Create workspace
     let cwd = env::current_dir()?;
     let workspace = Workspace::new(cwd).await?;
     workspace.init().await?;
 
-    // Create execution context with ottofile path
     let mut execution_context = otto::executor::workspace::ExecutionContext::new();
     execution_context.ottofile = ottofile_path;
     execution_context.hash = hash;
@@ -298,7 +288,6 @@ async fn execute_with_terminal_output(
         })
         .collect();
 
-    // Create task scheduler
     let scheduler = TaskScheduler::new(executor_tasks, Arc::new(workspace), execution_context, jobs, false).await?;
 
     // Execute all tasks
@@ -331,12 +320,10 @@ async fn execute_with_tui(
         return Ok(());
     }
 
-    // Create workspace
     let cwd = env::current_dir()?;
     let workspace = Workspace::new(cwd).await?;
     workspace.init().await?;
 
-    // Create execution context with ottofile path
     let mut execution_context = otto::executor::workspace::ExecutionContext::new();
     execution_context.ottofile = ottofile_path;
     execution_context.hash = hash;
@@ -344,7 +331,6 @@ async fn execute_with_tui(
     // Save execution context to run directory
     workspace.save_execution_context(execution_context.clone()).await?;
 
-    // Convert parser tasks to executor tasks and create TaskStreams
     let mut executor_tasks = Vec::new();
     let mut task_streams_map = std::collections::HashMap::new();
     let output_dir = workspace.run().join("tasks");
@@ -352,11 +338,9 @@ async fn execute_with_tui(
     for parser_task in execution_tasks {
         let task_name = parser_task.name.clone();
 
-        // Create TaskStreams for this task
         let streams = otto::executor::output::TaskStreams::new(&task_name, &output_dir).await?;
         task_streams_map.insert(task_name.clone(), streams);
 
-        // Create executor task
         let executor_task = otto::executor::Task::new(
             parser_task.name,
             parser_task.task_deps,
@@ -377,7 +361,6 @@ async fn execute_with_tui(
     // Create message broadcast channel for status updates (larger buffer for fast tasks)
     let (message_tx, _) = tokio::sync::broadcast::channel::<otto::executor::output::TaskMessage>(1000);
 
-    // Create pane for each task
     for task in &executor_tasks {
         if let Some(streams) = task_streams_map.get(&task.name) {
             let mut pane = TaskPane::new(task.name.clone(), streams.output_tx.clone());
@@ -409,7 +392,6 @@ async fn execute_with_tui(
 
     let scheduler_handle = tokio::spawn(async move { scheduler.execute_all().await });
 
-    // Set up Ctrl+C handler flag
     let ctrl_c_pressed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let ctrl_c_flag = ctrl_c_pressed.clone();
 
@@ -419,7 +401,6 @@ async fn execute_with_tui(
         }
     });
 
-    // Set the Ctrl+C flag in the app
     app.set_shutdown_flag(ctrl_c_pressed);
 
     // Run TUI (blocks until user quits or Ctrl+C)

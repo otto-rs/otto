@@ -52,7 +52,6 @@ impl Task {
         let _name = task_spec.name.clone();
         let _task_deps = task_spec.before.clone();
 
-        // Get current working directory for glob resolution
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
         Self::from_task_with_cwd_and_global_envs(task_spec, &cwd, &HashMap::new())
@@ -78,7 +77,6 @@ impl Task {
         // Resolve output globs to canonical paths using explicit cwd
         let output_deps = Self::resolve_file_globs(&task_spec.output, cwd);
 
-        // Evaluate environment variables with two-level merging: global then task-level
         let evaluated_envs = Self::evaluate_merged_envs(global_envs, &task_spec.envs, cwd).unwrap_or_else(|e| {
             eprintln!("Warning: Failed to evaluate environment variables for task '{name}': {e}");
             HashMap::new()
@@ -97,11 +95,9 @@ impl Task {
         task_envs: &HashMap<String, String>,
         working_dir: &std::path::Path,
     ) -> Result<HashMap<String, String>> {
-        // Step 1: Create merged environment for task evaluation (global + task)
         let mut merged_envs = global_envs.clone();
         merged_envs.extend(task_envs.iter().map(|(k, v)| (k.clone(), v.clone())));
 
-        // Step 2: Evaluate the merged environment (task envs can reference global envs)
         let evaluated_merged = if merged_envs.is_empty() {
             HashMap::new()
         } else {
@@ -132,7 +128,6 @@ impl Task {
                         if let Ok(canonical) = path.canonicalize() {
                             resolved_files.push(canonical.to_string_lossy().to_string());
                         } else {
-                            // If canonicalize fails, still add the path as-is
                             resolved_files.push(path.to_string_lossy().to_string());
                         }
                     }

@@ -27,7 +27,6 @@ const COLOR_COMBINATIONS: [(Color, Color); 15] = [
 /// Global task ordering context for consistent color assignment
 static TASK_ORDER: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 
-/// Set the global task order for consistent color assignment
 pub fn set_global_task_order(task_names: Vec<String>) {
     let mut sorted_names = task_names;
     sorted_names.sort();
@@ -37,9 +36,7 @@ pub fn set_global_task_order(task_names: Vec<String>) {
     }
 }
 
-/// Get the color combination (bracket_color, text_color) for a task using alphabetical ordering
 pub fn get_task_color_combination(task_name: &str) -> (Color, Color) {
-    // Try to use global task order first
     if let Some(task_order) = TASK_ORDER.get()
         && let Ok(order) = task_order.lock()
         && let Some(position) = order.iter().position(|name| name == task_name)
@@ -70,7 +67,6 @@ pub fn get_task_color_with_context(task_name: &str, all_task_names: &[String]) -
         return COLOR_COMBINATIONS[(hash as usize) % COLOR_COMBINATIONS.len()].0;
     }
 
-    // Create a sorted list of all task names for consistent ordering
     let mut sorted_names = all_task_names.to_vec();
     sorted_names.sort();
 

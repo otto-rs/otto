@@ -86,7 +86,6 @@ pub struct TeeWriter {
 }
 
 impl TeeWriter {
-    /// Create a new TeeWriter
     pub async fn new(file: File, is_stderr: bool, task_name: String, suppress_terminal: bool) -> Self {
         Self {
             file,
@@ -96,7 +95,6 @@ impl TeeWriter {
         }
     }
 
-    /// Write data to both file and terminal
     pub async fn write(&mut self, data: &[u8]) -> Result<()> {
         // Always write to file (no colors)
         self.file.write_all(data).await?;
@@ -136,9 +134,7 @@ pub struct TaskStreams {
 }
 
 impl TaskStreams {
-    /// Create new output streams for a task
     pub async fn new(task_name: &str, output_dir: &Path) -> Result<Self> {
-        // Create task directory if it doesn't exist
         let task_dir = output_dir.join(task_name);
         if !task_dir.exists() {
             tokio::fs::create_dir_all(&task_dir).await?;
@@ -147,7 +143,6 @@ impl TaskStreams {
         let stdout_file = task_dir.join("stdout.log");
         let stderr_file = task_dir.join("stderr.log");
 
-        // Create empty log files
         File::create(&stdout_file).await?;
         File::create(&stderr_file).await?;
 
@@ -161,7 +156,6 @@ impl TaskStreams {
         })
     }
 
-    /// Process an output stream and write to file and terminal
     pub async fn process_output(
         &self,
         task_name: String,
@@ -209,7 +203,6 @@ impl TaskStreams {
         Ok(())
     }
 
-    /// Read all output from a specific stream
     pub async fn read_output(&self, output_type: OutputType) -> Result<Vec<String>> {
         let file_path = match output_type {
             OutputType::Stdout => &self.stdout_file,
@@ -239,7 +232,6 @@ mod tests {
 
         let streams = TaskStreams::new("test_task", &output_dir).await.unwrap();
 
-        // Create a test reader with some output
         let test_output = "line 1\nline 2\nline 3\n";
         let mut rx = streams.output_tx.subscribe();
 
@@ -250,12 +242,10 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify file contents
         let contents = streams.read_output(OutputType::Stdout).await.unwrap();
         assert_eq!(contents.len(), 3);
         assert_eq!(contents[0], "line 1");
 
-        // Verify broadcast channel
         let received = rx.try_recv().unwrap();
         assert_eq!(received.task_name, "test_task");
         assert_eq!(received.content, "line 1\n");
@@ -286,7 +276,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify separate files
         let stdout_contents = streams.read_output(OutputType::Stdout).await.unwrap();
         let stderr_contents = streams.read_output(OutputType::Stderr).await.unwrap();
 
