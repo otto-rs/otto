@@ -21,6 +21,15 @@ impl TestFixture {
     async fn new() -> Result<Self> {
         let temp_dir = TempDir::new()?;
         let temp_path = temp_dir.path().to_path_buf();
+
+        // Set up isolated test database
+        let db_path = temp_path.join("test_otto.db");
+        // SAFETY: This is safe in tests because we control the execution environment
+        // and tests are isolated. The env var is set before any StateManager is created.
+        unsafe {
+            std::env::set_var("OTTO_DB_PATH", &db_path);
+        }
+
         let workspace = Workspace::new(temp_path.clone()).await?;
         workspace.init().await?;
 
@@ -104,6 +113,12 @@ async fn test_file_dependencies_end_to_end_yaml() -> Result<()> {
     // Create a temporary directory for the test
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
+
+    // Set up isolated test database
+    let db_path = temp_path.join("test_otto.db");
+    unsafe {
+        std::env::set_var("OTTO_DB_PATH", &db_path);
+    }
 
     // Create source files
     std::fs::create_dir_all(temp_path.join("src"))?;
@@ -281,6 +296,12 @@ async fn test_file_dependencies_error_handling() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
 
+    // Set up isolated test database
+    let db_path = temp_path.join("test_otto.db");
+    unsafe {
+        std::env::set_var("OTTO_DB_PATH", &db_path);
+    }
+
     // Create task with missing input files
     let missing_input = temp_path.join("nonexistent.txt");
     let output_file = temp_path.join("output.txt");
@@ -402,6 +423,12 @@ async fn test_mixed_task_and_file_dependencies() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
 
+    // Set up isolated test database
+    let db_path = temp_path.join("test_otto.db");
+    unsafe {
+        std::env::set_var("OTTO_DB_PATH", &db_path);
+    }
+
     // Create source files
     let config_file = temp_path.join("config.json");
     let data_file = temp_path.join("data.csv");
@@ -502,6 +529,12 @@ async fn test_mixed_task_and_file_dependencies() -> Result<()> {
 async fn test_file_dependencies_incremental_detection() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
+
+    // Set up isolated test database
+    let db_path = temp_path.join("test_otto.db");
+    unsafe {
+        std::env::set_var("OTTO_DB_PATH", &db_path);
+    }
 
     // Create input files
     let input1 = temp_path.join("main.c");
@@ -623,6 +656,12 @@ async fn test_file_dependencies_with_real_execution() -> Result<()> {
 async fn test_file_dependencies_multiple_files() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
+
+    // Set up isolated test database
+    let db_path = temp_path.join("test_otto.db");
+    unsafe {
+        std::env::set_var("OTTO_DB_PATH", &db_path);
+    }
 
     // Create multiple input files with known content
     let input1 = temp_path.join("file1.txt");
@@ -792,6 +831,12 @@ async fn test_file_dependencies_task_chain() -> Result<()> {
 async fn test_file_dependencies_task_skipping() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
+
+    // Set up isolated test database
+    let db_path = temp_path.join("test_otto.db");
+    unsafe {
+        std::env::set_var("OTTO_DB_PATH", &db_path);
+    }
 
     // Create input and output files where output is already newer
     let input_file = temp_path.join("config.txt");

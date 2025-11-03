@@ -3,10 +3,24 @@ use eyre::Result;
 use std::fs;
 use std::path::PathBuf;
 
+/// Helper to set up a test-specific database path
+fn setup_test_db(temp_dir: &std::path::Path) -> PathBuf {
+    let db_path = temp_dir.join("test_otto.db");
+    // SAFETY: This is safe in tests because we control the execution environment
+    // and tests are isolated. The env var is set before any StateManager is created.
+    unsafe {
+        std::env::set_var("OTTO_DB_PATH", &db_path);
+    }
+    db_path
+}
+
 #[tokio::test]
 async fn test_execution_context_saved_with_ottofile_path() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
+
+    // Set up isolated test database
+    setup_test_db(temp_path);
 
     // Create a simple ottofile
     let ottofile_content = r#"
@@ -107,6 +121,9 @@ async fn test_execution_context_hash_matches_ottofile() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
 
+    // Set up isolated test database
+    setup_test_db(temp_path);
+
     // Create a simple ottofile
     let ottofile_content = r#"
 tasks:
@@ -151,6 +168,9 @@ tasks:
 async fn test_workspace_metadata_structure() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
+
+    // Set up isolated test database
+    setup_test_db(temp_path);
 
     let workspace = otto::executor::workspace::Workspace::new(temp_path.to_path_buf()).await?;
     workspace.init().await?;

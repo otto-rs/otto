@@ -51,7 +51,13 @@ impl DatabaseManager {
     }
 
     /// Get the default database path (~/.otto/otto.db)
+    /// Can be overridden with OTTO_DB_PATH environment variable
     pub fn default_db_path() -> Result<PathBuf> {
+        // Check for OTTO_DB_PATH override (useful for testing)
+        if let Ok(db_path) = std::env::var("OTTO_DB_PATH") {
+            return Ok(PathBuf::from(db_path));
+        }
+
         let home = std::env::var("HOME").context("Failed to get HOME environment variable")?;
         Ok(PathBuf::from(home).join(".otto").join("otto.db"))
     }
