@@ -150,15 +150,31 @@ impl Pane for TaskPane {
         };
         let end_line = (start_line + visible_height).min(total_lines);
 
-        let visible_lines: Vec<Line> = self
-            .output_buffer
-            .iter()
-            .skip(start_line)
-            .take(end_line - start_line)
-            .map(|s| Line::from(s.as_str()))
-            .collect();
+        // Wrap long lines to fit terminal width
+        let max_width = inner_area.width as usize;
+        let mut wrapped_lines: Vec<Line> = Vec::new();
 
-        let paragraph = Paragraph::new(visible_lines);
+        for line in self.output_buffer.iter().skip(start_line).take(end_line - start_line) {
+            if line.len() <= max_width {
+                // Line fits, add as-is
+                wrapped_lines.push(Line::from(line.as_str()));
+            } else {
+                // Line is too long, wrap it
+                let mut remaining = line.as_str();
+                while !remaining.is_empty() {
+                    let end_idx = remaining
+                        .char_indices()
+                        .nth(max_width)
+                        .map(|(idx, _)| idx)
+                        .unwrap_or(remaining.len());
+
+                    wrapped_lines.push(Line::from(&remaining[..end_idx]));
+                    remaining = &remaining[end_idx..];
+                }
+            }
+        }
+
+        let paragraph = Paragraph::new(wrapped_lines);
         frame.render_widget(paragraph, inner_area);
     }
 

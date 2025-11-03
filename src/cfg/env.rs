@@ -15,7 +15,14 @@ pub fn evaluate_envs(
     const MAX_ITERATIONS: usize = 100; // Prevent infinite loops
 
     // Get current environment for variable resolution
+    // Start with system environment, but input envs will override
     let mut current_env: HashMap<String, String> = env::vars().collect();
+
+    // Remove any keys from current_env that are defined in input envs
+    // This ensures input envs take precedence and prevents outer environment pollution
+    for key in envs.keys() {
+        current_env.remove(key);
+    }
 
     while !pending.is_empty() && iterations < MAX_ITERATIONS {
         iterations += 1;

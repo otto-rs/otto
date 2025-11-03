@@ -8,6 +8,8 @@ use ratatui::{
 pub struct PaneLayout {
     panes: Vec<Box<dyn Pane>>,
     focused_index: usize,
+    page: usize,
+    panes_per_page: usize,
 }
 
 impl PaneLayout {
@@ -15,7 +17,33 @@ impl PaneLayout {
         Self {
             panes: Vec::new(),
             focused_index: 0,
+            page: 0,
+            panes_per_page: 16,
         }
+    }
+
+    pub fn next_page(&mut self) {
+        let total_pages = self.panes.len().div_ceil(self.panes_per_page);
+        if total_pages > 1 {
+            self.page = (self.page + 1) % total_pages;
+            self.focused_index = 0;
+        }
+    }
+
+    pub fn prev_page(&mut self) {
+        let total_pages = self.panes.len().div_ceil(self.panes_per_page);
+        if total_pages > 1 {
+            self.page = if self.page == 0 { total_pages - 1 } else { self.page - 1 };
+            self.focused_index = 0;
+        }
+    }
+
+    pub fn current_page(&self) -> usize {
+        self.page
+    }
+
+    pub fn total_pages(&self) -> usize {
+        self.panes.len().div_ceil(self.panes_per_page)
     }
 
     pub fn add_pane(&mut self, pane: Box<dyn Pane>) {
@@ -33,9 +61,18 @@ impl PaneLayout {
             return;
         }
 
-        let grid_areas = self.calculate_grid(area);
+        // Calculate which panes to show on current page
+        let start_idx = self.page * self.panes_per_page;
+        let end_idx = (start_idx + self.panes_per_page).min(self.panes.len());
+        let visible_panes: Vec<&Box<dyn Pane>> = self.panes[start_idx..end_idx].iter().collect();
 
-        for (i, pane) in self.panes.iter().enumerate() {
+        if visible_panes.is_empty() {
+            return;
+        }
+
+        let grid_areas = self.calculate_grid_for_count(area, visible_panes.len());
+
+        for (i, pane) in visible_panes.iter().enumerate() {
             if let Some(pane_area) = grid_areas.get(i) {
                 let focused = i == self.focused_index;
                 pane.render(frame, *pane_area, focused);
@@ -48,15 +85,15 @@ impl PaneLayout {
             return;
         }
 
-        // Render only the focused pane in fullscreen
-        if let Some(pane) = self.panes.get(self.focused_index) {
+        // Render only the focused pane in fullscreen (accounting for pagination)
+        let start_idx = self.page * self.panes_per_page;
+        let absolute_index = start_idx + self.focused_index;
+        if let Some(pane) = self.panes.get(absolute_index) {
             pane.render(frame, area, true);
         }
     }
 
-    fn calculate_grid(&self, area: Rect) -> Vec<Rect> {
-        let num_panes = self.panes.len();
-
+    fn calculate_grid_for_count(&self, area: Rect, num_panes: usize) -> Vec<Rect> {
         if num_panes == 0 {
             return vec![];
         }
@@ -69,7 +106,7 @@ impl PaneLayout {
             5..=6 => (2, 3),
             7..=9 => (3, 3),
             10..=12 => (3, 4),
-            _ => (4, 4), // Max 16 visible panes
+            _ => (4, 4), // Max 16 visible panes per page
         };
 
         // Create row constraints
@@ -99,23 +136,29 @@ impl PaneLayout {
     }
 
     pub fn focus_next(&mut self) {
-        if !self.panes.is_empty() {
-            self.focused_index = (self.focused_index + 1) % self.panes.len();
+        let start_idx = self.page * self.panes_per_page;
+        let end_idx = (start_idx + self.panes_per_page).min(self.panes.len());
+        let visible_count = end_idx - start_idx;
+
+        if visible_count > 0 {
+            self.focused_index = (self.focused_index + 1) % visible_count;
         }
     }
 
     pub fn focus_prev(&mut self) {
-        if !self.panes.is_empty() {
-            self.focused_index = if self.focused_index == 0 {
-                self.panes.len() - 1
-            } else {
-                self.focused_index - 1
-            };
+        let start_idx = self.page * self.panes_per_page;
+        let end_idx = (start_idx + self.panes_per_page).min(self.panes.len());
+        let visible_count = end_idx - start_idx;
+
+        if visible_count > 0 {
+            self.focused_index = if self.focused_index == 0 { visible_count - 1 } else { self.focused_index - 1 };
         }
     }
 
     pub fn focused_pane_mut(&mut self) -> Option<&mut Box<dyn Pane>> {
-        self.panes.get_mut(self.focused_index)
+        let start_idx = self.page * self.panes_per_page;
+        let absolute_index = start_idx + self.focused_index;
+        self.panes.get_mut(absolute_index)
     }
 }
 

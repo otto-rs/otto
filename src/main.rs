@@ -407,16 +407,28 @@ async fn execute_with_tui(
         app.layout_mut().render(f, f.area());
     })?;
 
-    // Give TUI a moment to fully initialize
-    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-
     let scheduler_handle = tokio::spawn(async move { scheduler.execute_all().await });
 
-    // Run TUI (blocks until user quits)
+    // Set up Ctrl+C handler flag
+    let ctrl_c_pressed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let ctrl_c_flag = ctrl_c_pressed.clone();
+
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            ctrl_c_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    });
+
+    // Set the Ctrl+C flag in the app
+    app.set_shutdown_flag(ctrl_c_pressed);
+
+    // Run TUI (blocks until user quits or Ctrl+C)
     let tui_result = app.run(&mut terminal);
 
-    // Restore terminal
-    otto::tui::restore_terminal(&mut terminal)?;
+    // Always restore terminal, even on Ctrl+C or error
+    if let Err(e) = otto::tui::restore_terminal(&mut terminal) {
+        eprintln!("Warning: Failed to restore terminal: {}", e);
+    }
 
     // Handle TUI errors
     tui_result.map_err(|e| eyre::eyre!("TUI error: {}", e))?;

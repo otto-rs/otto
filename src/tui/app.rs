@@ -20,6 +20,7 @@ pub struct TuiApp {
     last_tick: Instant,
     tick_rate: Duration,
     fullscreen_mode: bool,
+    shutdown_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl Default for TuiApp {
@@ -36,7 +37,12 @@ impl TuiApp {
             last_tick: Instant::now(),
             tick_rate: Duration::from_millis(TUI_TICK_RATE_MS),
             fullscreen_mode: false,
+            shutdown_flag: None,
         }
+    }
+
+    pub fn set_shutdown_flag(&mut self, flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+        self.shutdown_flag = Some(flag);
     }
 
     pub fn layout_mut(&mut self) -> &mut PaneLayout {
@@ -86,6 +92,13 @@ impl TuiApp {
                 self.last_tick = Instant::now();
             }
 
+            // Check for Ctrl+C signal
+            if let Some(ref flag) = self.shutdown_flag
+                && flag.load(std::sync::atomic::Ordering::SeqCst)
+            {
+                self.should_quit = true;
+            }
+
             if self.should_quit {
                 break;
             }
@@ -100,10 +113,30 @@ impl TuiApp {
     }
 
     fn render_status_bar(&self, frame: &mut ratatui::Frame, area: ratatui::layout::Rect) {
-        let help_text = if self.fullscreen_mode {
-            "f/Enter: Exit Fullscreen | ↑↓/jk: Scroll | Home: Top | q/Esc: Quit"
+        let total_pages = self.layout.total_pages();
+        let current_page = self.layout.current_page() + 1; // 1-indexed for display
+
+        let page_info = if total_pages > 1 {
+            format!(" [Page {}/{}] ", current_page, total_pages)
         } else {
-            "f/Enter: Fullscreen | Tab/←→: Switch Pane | ↑↓/jk: Scroll | Home: Top | q/Esc: Quit"
+            String::new()
+        };
+
+        let help_text = if self.fullscreen_mode {
+            format!(
+                "{}f/Enter: Exit Fullscreen | ↑↓/jk: Scroll | Home: Top | q/Esc: Quit",
+                page_info
+            )
+        } else if total_pages > 1 {
+            format!(
+                "{}PgUp/PgDn: Change Page | f/Enter: Fullscreen | Tab/←→: Switch | ↑↓/jk: Scroll | q/Esc: Quit",
+                page_info
+            )
+        } else {
+            format!(
+                "{}f/Enter: Fullscreen | Tab/←→: Switch Pane | ↑↓/jk: Scroll | Home: Top | q/Esc: Quit",
+                page_info
+            )
         };
 
         let status_line = Line::from(help_text);
@@ -145,6 +178,12 @@ impl TuiApp {
                 if let Some(pane) = self.layout.focused_pane_mut() {
                     pane.reset_scroll();
                 }
+            }
+            KeyCode::PageDown => {
+                self.layout.next_page();
+            }
+            KeyCode::PageUp => {
+                self.layout.prev_page();
             }
             _ => {}
         }
