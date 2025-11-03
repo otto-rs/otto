@@ -83,7 +83,8 @@ fn evaluate_single_env_value(
     let mut result = value.to_string();
 
     // Step 1: Resolve shell command substitution $(...)
-    result = resolve_shell_commands(&result, working_dir)?;
+    // Pass env_context to prevent parent environment pollution
+    result = resolve_shell_commands_with_env(&result, working_dir, env_context)?;
 
     // Step 2: Resolve environment variable references ${VAR} and $VAR
     result = resolve_env_variables(&result, env_context)?;
@@ -91,8 +92,12 @@ fn evaluate_single_env_value(
     Ok(result)
 }
 
-/// Resolve shell command substitution patterns: $(command)
-fn resolve_shell_commands(input: &str, working_dir: Option<&std::path::Path>) -> Result<String> {
+/// Resolve shell command substitution patterns with explicit environment
+fn resolve_shell_commands_with_env(
+    input: &str,
+    working_dir: Option<&std::path::Path>,
+    env_context: &HashMap<String, String>,
+) -> Result<String> {
     let re = Regex::new(r"\$\(([^)]+)\)").unwrap();
     let mut result = input.to_string();
 
@@ -100,22 +105,41 @@ fn resolve_shell_commands(input: &str, working_dir: Option<&std::path::Path>) ->
         let full_match = &captures[0];
         let command_str = &captures[1];
 
-        // Execute the shell command
-        let output = execute_shell_command(command_str, working_dir)?;
+        // Execute the shell command with controlled environment
+        let output = execute_shell_command_with_env(command_str, working_dir, env_context)?;
         result = result.replace(full_match, &output);
     }
 
     Ok(result)
 }
 
-/// Execute a shell command and return its stdout
-fn execute_shell_command(command_str: &str, working_dir: Option<&std::path::Path>) -> Result<String> {
+/// Execute a shell command with controlled environment
+fn execute_shell_command_with_env(
+    command_str: &str,
+    working_dir: Option<&std::path::Path>,
+    env_overrides: &HashMap<String, String>,
+) -> Result<String> {
     let mut cmd = Command::new("sh");
     cmd.arg("-c").arg(command_str);
 
     if let Some(dir) = working_dir {
         cmd.current_dir(dir);
     }
+
+    // ALWAYS use controlled environment to prevent parent process pollution
+    // This is critical for preventing Otto's environment from leaking into subprocesses
+    cmd.env_clear();
+
+    // Add essential system variables that commands need to function
+    let essential_vars = ["PATH", "HOME", "USER", "SHELL", "TERM", "LANG", "LC_ALL"];
+    for var in &essential_vars {
+        if let Ok(value) = env::var(var) {
+            cmd.env(var, value);
+        }
+    }
+
+    // Add the explicit environment context (variables we're building up during evaluation)
+    cmd.envs(env_overrides);
 
     let output = cmd
         .output()
@@ -145,15 +169,13 @@ fn resolve_env_variables(input: &str, env_context: &HashMap<String, String>) -> 
         let full_match = &captures[0];
         let var_name = &captures[1];
 
-        let var_value = if let Some(value) = env_context.get(var_name) {
-            value.clone()
-        } else if let Ok(value) = env::var(var_name) {
-            value
-        } else {
-            return Err(eyre!("Environment variable '{}' not found", var_name));
-        };
+        // ONLY use env_context - never fall back to system environment
+        // This ensures proper test isolation and prevents environment pollution
+        let var_value = env_context
+            .get(var_name)
+            .ok_or_else(|| eyre!("Environment variable '{}' not found", var_name))?;
 
-        result = result.replace(full_match, &var_value);
+        result = result.replace(full_match, var_value);
     }
 
     // Handle $VAR pattern (less specific, handle after braced)
@@ -167,15 +189,13 @@ fn resolve_env_variables(input: &str, env_context: &HashMap<String, String>) -> 
             continue;
         }
 
-        let var_value = if let Some(value) = env_context.get(var_name) {
-            value.clone()
-        } else if let Ok(value) = env::var(var_name) {
-            value
-        } else {
-            return Err(eyre!("Environment variable '{}' not found", var_name));
-        };
+        // ONLY use env_context - never fall back to system environment
+        // This ensures proper test isolation and prevents environment pollution
+        let var_value = env_context
+            .get(var_name)
+            .ok_or_else(|| eyre!("Environment variable '{}' not found", var_name))?;
 
-        result = result.replace(full_match, &var_value);
+        result = result.replace(full_match, var_value);
     }
 
     Ok(result)
@@ -198,7 +218,7 @@ mod tests {
 
     #[test]
     fn test_resolve_shell_commands() {
-        let result = resolve_shell_commands("Today is $(date +%Y-%m-%d)", None).unwrap();
+        let result = resolve_shell_commands_with_env("Today is $(date +%Y-%m-%d)", None, &HashMap::new()).unwrap();
         assert!(result.starts_with("Today is 20")); // Should be a date like "Today is 2024-01-15"
     }
 
