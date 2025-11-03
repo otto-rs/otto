@@ -872,7 +872,7 @@ impl Parser {
         // Add tasks as subcommands
         if !self.config_spec.tasks.is_empty() {
             // Separate regular tasks from built-in commands
-            let builtin_commands = ["graph", "clean"];
+            let builtin_commands = ["graph", "clean", "history", "stats"];
             let mut regular_tasks: Vec<_> = self
                 .config_spec
                 .tasks
@@ -1109,9 +1109,209 @@ impl Parser {
         self.config_spec.tasks.insert("clean".to_string(), clean_task);
     }
 
+    fn inject_history_meta_task(&mut self) {
+        use crate::cfg::param::{Nargs, ParamType};
+
+        // Add history meta-task to the configuration
+        let history_task = TaskSpec {
+            name: "history".to_string(),
+            help: Some("[built-in] View execution history".to_string()),
+            after: vec![],
+            before: vec![],
+            input: vec![],
+            output: vec![],
+            envs: HashMap::new(),
+            params: {
+                let mut params = HashMap::new();
+
+                // Add --task parameter
+                params.insert(
+                    "task".to_string(),
+                    ParamSpec {
+                        name: "task".to_string(),
+                        short: Some('t'),
+                        long: Some("task".to_string()),
+                        param_type: ParamType::OPT,
+                        dest: None,
+                        metavar: Some("TASK".to_string()),
+                        default: None,
+                        constant: Value::Empty,
+                        choices: vec![],
+                        nargs: Nargs::One,
+                        help: Some("Show history for a specific task".to_string()),
+                        value: Value::Empty,
+                    },
+                );
+
+                // Add --limit parameter
+                params.insert(
+                    "limit".to_string(),
+                    ParamSpec {
+                        name: "limit".to_string(),
+                        short: Some('n'),
+                        long: Some("limit".to_string()),
+                        param_type: ParamType::OPT,
+                        dest: None,
+                        metavar: Some("N".to_string()),
+                        default: Some("20".to_string()),
+                        constant: Value::Empty,
+                        choices: vec![],
+                        nargs: Nargs::One,
+                        help: Some("Limit number of results".to_string()),
+                        value: Value::Empty,
+                    },
+                );
+
+                // Add --status parameter
+                params.insert(
+                    "status".to_string(),
+                    ParamSpec {
+                        name: "status".to_string(),
+                        short: Some('s'),
+                        long: Some("status".to_string()),
+                        param_type: ParamType::OPT,
+                        dest: None,
+                        metavar: Some("STATUS".to_string()),
+                        default: None,
+                        constant: Value::Empty,
+                        choices: vec!["success".to_string(), "failed".to_string(), "running".to_string()],
+                        nargs: Nargs::One,
+                        help: Some("Filter by status".to_string()),
+                        value: Value::Empty,
+                    },
+                );
+
+                // Add --project parameter
+                params.insert(
+                    "project".to_string(),
+                    ParamSpec {
+                        name: "project".to_string(),
+                        short: Some('p'),
+                        long: Some("project".to_string()),
+                        param_type: ParamType::OPT,
+                        dest: None,
+                        metavar: Some("HASH".to_string()),
+                        default: None,
+                        constant: Value::Empty,
+                        choices: vec![],
+                        nargs: Nargs::One,
+                        help: Some("Filter by project hash".to_string()),
+                        value: Value::Empty,
+                    },
+                );
+
+                // Add --json parameter
+                params.insert(
+                    "json".to_string(),
+                    ParamSpec {
+                        name: "json".to_string(),
+                        short: None,
+                        long: Some("json".to_string()),
+                        param_type: ParamType::FLG,
+                        dest: None,
+                        metavar: None,
+                        default: None,
+                        constant: Value::Empty,
+                        choices: vec![],
+                        nargs: Nargs::Zero,
+                        help: Some("Output as JSON".to_string()),
+                        value: Value::Empty,
+                    },
+                );
+
+                params
+            },
+            action: "# Built-in history command".to_string(),
+        };
+
+        self.config_spec.tasks.insert("history".to_string(), history_task);
+    }
+
+    fn inject_stats_meta_task(&mut self) {
+        use crate::cfg::param::{Nargs, ParamType};
+
+        // Add stats meta-task to the configuration
+        let stats_task = TaskSpec {
+            name: "stats".to_string(),
+            help: Some("[built-in] View execution statistics".to_string()),
+            after: vec![],
+            before: vec![],
+            input: vec![],
+            output: vec![],
+            envs: HashMap::new(),
+            params: {
+                let mut params = HashMap::new();
+
+                // Add --task parameter
+                params.insert(
+                    "task".to_string(),
+                    ParamSpec {
+                        name: "task".to_string(),
+                        short: Some('t'),
+                        long: Some("task".to_string()),
+                        param_type: ParamType::OPT,
+                        dest: None,
+                        metavar: Some("TASK".to_string()),
+                        default: None,
+                        constant: Value::Empty,
+                        choices: vec![],
+                        nargs: Nargs::One,
+                        help: Some("Show stats for a specific task".to_string()),
+                        value: Value::Empty,
+                    },
+                );
+
+                // Add --limit parameter
+                params.insert(
+                    "limit".to_string(),
+                    ParamSpec {
+                        name: "limit".to_string(),
+                        short: Some('n'),
+                        long: Some("limit".to_string()),
+                        param_type: ParamType::OPT,
+                        dest: None,
+                        metavar: Some("N".to_string()),
+                        default: Some("10".to_string()),
+                        constant: Value::Empty,
+                        choices: vec![],
+                        nargs: Nargs::One,
+                        help: Some("Limit number of tasks shown".to_string()),
+                        value: Value::Empty,
+                    },
+                );
+
+                // Add --json parameter
+                params.insert(
+                    "json".to_string(),
+                    ParamSpec {
+                        name: "json".to_string(),
+                        short: None,
+                        long: Some("json".to_string()),
+                        param_type: ParamType::FLG,
+                        dest: None,
+                        metavar: None,
+                        default: None,
+                        constant: Value::Empty,
+                        choices: vec![],
+                        nargs: Nargs::Zero,
+                        help: Some("Output as JSON".to_string()),
+                        value: Value::Empty,
+                    },
+                );
+
+                params
+            },
+            action: "# Built-in stats command".to_string(),
+        };
+
+        self.config_spec.tasks.insert("stats".to_string(), stats_task);
+    }
+
     fn inject_builtin_commands(&mut self) {
         self.inject_graph_meta_task();
         self.inject_clean_meta_task();
+        self.inject_history_meta_task();
+        self.inject_stats_meta_task();
     }
 
     fn find_ottofile(path: &Path) -> Result<Option<PathBuf>> {

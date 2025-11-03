@@ -125,6 +125,84 @@ async fn execute_clean_from_task(task: &otto::cli::parser::Task) -> Result<(), R
     Ok(())
 }
 
+fn execute_history_from_task(task: &otto::cli::parser::Task) -> Result<(), Report> {
+    use otto::cfg::param::Value;
+    use otto::cli::commands::history::HistoryCommand;
+
+    // Extract task parameter
+    let task_name = task
+        .values
+        .get("task")
+        .and_then(|v| if let Value::Item(s) = v { Some(s.clone()) } else { None });
+
+    // Extract limit parameter
+    let limit = if let Some(Value::Item(s)) = task.values.get("limit") {
+        s.parse::<usize>().unwrap_or(20)
+    } else {
+        20
+    };
+
+    // Extract status parameter
+    let status = task
+        .values
+        .get("status")
+        .and_then(|v| if let Value::Item(s) = v { Some(s.clone()) } else { None });
+
+    // Extract project parameter
+    let project = task
+        .values
+        .get("project")
+        .and_then(|v| if let Value::Item(s) = v { Some(s.clone()) } else { None });
+
+    // Extract json flag
+    let json = task
+        .values
+        .get("json")
+        .and_then(|v| if let Value::Item(s) = v { Some(s == "true") } else { None })
+        .unwrap_or(false);
+
+    let history_cmd = HistoryCommand {
+        task_name,
+        limit,
+        status,
+        project,
+        json,
+    };
+    history_cmd.execute()?;
+
+    Ok(())
+}
+
+fn execute_stats_from_task(task: &otto::cli::parser::Task) -> Result<(), Report> {
+    use otto::cfg::param::Value;
+    use otto::cli::commands::stats::StatsCommand;
+
+    // Extract task parameter
+    let task_name = task
+        .values
+        .get("task")
+        .and_then(|v| if let Value::Item(s) = v { Some(s.clone()) } else { None });
+
+    // Extract limit parameter
+    let limit = if let Some(Value::Item(s)) = task.values.get("limit") {
+        s.parse::<usize>().unwrap_or(10)
+    } else {
+        10
+    };
+
+    // Extract json flag
+    let json = task
+        .values
+        .get("json")
+        .and_then(|v| if let Value::Item(s) = v { Some(s == "true") } else { None })
+        .unwrap_or(false);
+
+    let stats_cmd = StatsCommand { task_name, limit, json };
+    stats_cmd.execute()?;
+
+    Ok(())
+}
+
 async fn execute_tasks(
     tasks: Vec<otto::cli::parser::Task>,
     hash: String,
@@ -168,10 +246,22 @@ async fn execute_with_terminal_output(
         return DagVisualizer::execute_command(graph_tasks[0]).await;
     }
 
+    // Check if any task is a history command
+    let history_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "history").collect();
+    if !history_tasks.is_empty() {
+        return execute_history_from_task(history_tasks[0]);
+    }
+
+    // Check if any task is a stats command
+    let stats_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "stats").collect();
+    if !stats_tasks.is_empty() {
+        return execute_stats_from_task(stats_tasks[0]);
+    }
+
     // Filter out built-in commands for normal execution
     let execution_tasks: Vec<_> = tasks
         .into_iter()
-        .filter(|task| task.name != "graph" && task.name != "clean")
+        .filter(|task| task.name != "graph" && task.name != "clean" && task.name != "history" && task.name != "stats")
         .collect();
 
     if execution_tasks.is_empty() {
@@ -233,7 +323,7 @@ async fn execute_with_tui(
     // Filter out built-in commands for normal execution
     let execution_tasks: Vec<_> = tasks
         .into_iter()
-        .filter(|task| task.name != "graph" && task.name != "clean")
+        .filter(|task| task.name != "graph" && task.name != "clean" && task.name != "history" && task.name != "stats")
         .collect();
 
     if execution_tasks.is_empty() {
