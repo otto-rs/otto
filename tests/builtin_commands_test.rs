@@ -2,10 +2,17 @@ use assert_cmd::cargo::cargo_bin_cmd;
 use std::fs;
 use tempfile::TempDir;
 
+/// Helper to set up isolated test database
+fn setup_test_db(temp_dir: &std::path::Path) -> std::path::PathBuf {
+    let db_path = temp_dir.join("test_otto.db");
+    db_path
+}
+
 /// Test that all four built-in commands are registered and show up in help
 #[test]
 fn test_all_builtin_commands_registered() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
+    let db_path = setup_test_db(temp_dir.path());
     let ottofile = temp_dir.path().join("otto.yml");
 
     // Create minimal ottofile
@@ -20,6 +27,7 @@ tasks:
 
     let output = cargo_bin_cmd!("otto")
         .current_dir(temp_dir.path())
+        .env("OTTO_DB_PATH", &db_path)
         .arg("--help")
         .output()?;
 
@@ -50,6 +58,7 @@ tasks:
 #[test]
 fn test_graph_command_exists() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
+    let db_path = setup_test_db(temp_dir.path());
     let ottofile = temp_dir.path().join("otto.yml");
 
     fs::write(
@@ -62,7 +71,12 @@ tasks:
     )?;
 
     let mut cmd = cargo_bin_cmd!("otto");
-    let output = cmd.current_dir(temp_dir.path()).arg("graph").arg("--help").output()?;
+    let output = cmd
+        .current_dir(temp_dir.path())
+        .env("OTTO_DB_PATH", &db_path)
+        .arg("graph")
+        .arg("--help")
+        .output()?;
 
     assert!(output.status.success(), "graph --help should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -126,6 +140,7 @@ fn test_stats_command_exists() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_builtin_commands_filtered_from_execution() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
+    let db_path = setup_test_db(temp_dir.path());
     let ottofile = temp_dir.path().join("otto.yml");
 
     // Create ottofile with a task that depends on a built-in
@@ -141,7 +156,11 @@ tasks:
     // If we try to run "graph real-task", it should handle graph specially
     // and then execute real-task normally
     let mut cmd = cargo_bin_cmd!("otto");
-    let output = cmd.current_dir(temp_dir.path()).arg("real-task").output()?;
+    let output = cmd
+        .current_dir(temp_dir.path())
+        .env("OTTO_DB_PATH", &db_path)
+        .arg("real-task")
+        .output()?;
 
     // Should succeed - real-task executes
     assert!(output.status.success(), "real-task should execute successfully");
@@ -153,6 +172,7 @@ tasks:
 #[test]
 fn test_builtin_command_count() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
+    let db_path = setup_test_db(temp_dir.path());
     let ottofile = temp_dir.path().join("otto.yml");
 
     fs::write(
@@ -165,7 +185,11 @@ tasks:
     )?;
 
     let mut cmd = cargo_bin_cmd!("otto");
-    let output = cmd.current_dir(temp_dir.path()).arg("--help").output()?;
+    let output = cmd
+        .current_dir(temp_dir.path())
+        .env("OTTO_DB_PATH", &db_path)
+        .arg("--help")
+        .output()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 

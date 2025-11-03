@@ -697,10 +697,21 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::TempDir;
 
+    /// Helper to set up a test-specific database path
+    fn setup_test_db(temp_dir: &std::path::Path) {
+        let db_path = temp_dir.join("test_otto.db");
+        // SAFETY: This is safe in tests because we control the execution environment
+        // and tests are isolated. The env var is set before any StateManager is created.
+        unsafe {
+            std::env::set_var("OTTO_DB_PATH", &db_path);
+        }
+    }
+
     #[tokio::test]
     async fn test_task_execution() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
+        setup_test_db(&work_dir);
 
         let task = Task::new(
             "test".to_string(),
@@ -727,6 +738,7 @@ mod tests {
     async fn test_task_dependencies() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
+        setup_test_db(&work_dir);
 
         let tasks = vec![
             Task::new(
@@ -767,6 +779,7 @@ mod tests {
     async fn test_task_failure() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
+        setup_test_db(&work_dir);
 
         let tasks = vec![
             Task::new(
@@ -803,6 +816,7 @@ mod tests {
     async fn test_file_dependencies() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
+        setup_test_db(&work_dir);
 
         // Create a test input file
         let input_file = work_dir.join("input.txt");
@@ -857,6 +871,7 @@ mod tests {
     async fn test_file_timestamp_checking() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
+        setup_test_db(&work_dir);
 
         let file1 = work_dir.join("file1.txt");
         let file2 = work_dir.join("file2.txt");
@@ -885,6 +900,7 @@ mod tests {
     async fn test_file_dependencies_nonexistent_files() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
+        setup_test_db(&work_dir);
 
         let nonexistent_file = work_dir.join("nonexistent.txt");
         let output_file = work_dir.join("output.txt");
@@ -922,6 +938,7 @@ mod tests {
     async fn test_file_dependencies_multiple_inputs_outputs() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
+        setup_test_db(&work_dir);
 
         // Create multiple input files with different timestamps
         let input1 = work_dir.join("input1.txt");
@@ -1147,6 +1164,7 @@ mod tests {
     async fn test_file_dependencies_directory_as_input() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
+        setup_test_db(&work_dir);
 
         // Create a directory with files
         let src_dir = work_dir.join("src");
@@ -1192,6 +1210,7 @@ mod tests {
     async fn test_large_number_of_file_dependencies() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
+        setup_test_db(&work_dir);
 
         // Create many input files
         let mut input_files = Vec::new();
@@ -1242,6 +1261,7 @@ mod tests {
     async fn test_file_dependencies_circular_detection() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
+        setup_test_db(&work_dir);
 
         let file_a = work_dir.join("a.txt");
         let file_b = work_dir.join("b.txt");

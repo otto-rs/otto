@@ -8,10 +8,24 @@ use tokio::time::timeout;
 
 use otto::executor::{Task, TaskScheduler, TaskStatus, Workspace, workspace::ExecutionContext};
 
+/// Helper to set up a test-specific database path
+fn setup_test_db(temp_dir: &std::path::Path) -> PathBuf {
+    let db_path = temp_dir.join("test_otto.db");
+    // SAFETY: This is safe in tests because we control the execution environment
+    // and tests are isolated. The env var is set before any StateManager is created.
+    unsafe {
+        std::env::set_var("OTTO_DB_PATH", &db_path);
+    }
+    db_path
+}
+
 #[tokio::test]
 async fn test_task_execution_with_output() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let work_dir = PathBuf::from(temp_dir.path());
+
+    // Set up isolated test database
+    setup_test_db(&work_dir);
 
     let task_spec = Task::new(
         "test_task".to_string(),
@@ -37,6 +51,9 @@ async fn test_task_execution_with_output() -> Result<()> {
 async fn test_task_dependencies() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let work_dir = PathBuf::from(temp_dir.path());
+
+    // Set up isolated test database
+    setup_test_db(&work_dir);
 
     let task1_spec = Task::new(
         "task1".to_string(),
@@ -90,6 +107,9 @@ async fn test_task_failure() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let work_dir = PathBuf::from(temp_dir.path());
 
+    // Set up isolated test database
+    setup_test_db(&work_dir);
+
     let task_spec = Task::new(
         "failing_task".to_string(),
         vec![],
@@ -116,6 +136,9 @@ async fn test_output_capture() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let work_dir = PathBuf::from(temp_dir.path());
 
+    // Set up isolated test database
+    setup_test_db(&work_dir);
+
     let task_spec = Task::new(
         "output_test".to_string(),
         vec![],
@@ -140,6 +163,10 @@ async fn test_output_capture() -> Result<()> {
 async fn test_dependency_ordering() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let work_dir = PathBuf::from(temp_dir.path());
+
+    // Set up isolated test database
+    setup_test_db(&work_dir);
+
     let output_file = work_dir.join("output.txt");
 
     let task1_spec = Task::new(
@@ -212,6 +239,9 @@ async fn test_dependency_ordering() -> Result<()> {
 async fn test_parallel_execution() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let work_dir = PathBuf::from(temp_dir.path());
+
+    // Set up isolated test database
+    setup_test_db(&work_dir);
 
     let task1_spec = Task::new(
         "parallel1".to_string(),

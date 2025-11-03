@@ -21,7 +21,15 @@ Added support for `OTTO_DB_PATH` environment variable to override the default da
 2. **Integration Test Updates**
    - `tests/execution_context_integration_test.rs`: Added `setup_test_db()` helper
    - `tests/file_dependencies_integration_test.rs`: Updated `TestFixture::new()` and standalone tests
+   - `tests/executor_test.rs`: Added `setup_test_db()` helper to all 6 tests
+   - `tests/builtin_commands_test.rs`: Added `OTTO_DB_PATH` env var to all command invocations
    - All integration tests now use isolated test databases in their temp directories
+
+3. **Unit Test Updates in Source Files**
+   - `src/executor/action.rs`: Added `setup_test_db()` helper to 3 tests
+   - `src/executor/scheduler.rs`: Added `setup_test_db()` helper to 12 tests
+   - `src/executor/workspace.rs`: Added `setup_test_db()` helper to 3 tests
+   - All unit tests that create workspaces now use isolated databases
 
 ### Usage
 

@@ -670,9 +670,20 @@ mod tests {
     use std::collections::HashMap;
     use tempfile::TempDir;
 
+    /// Helper to set up a test-specific database path
+    fn setup_test_db(temp_dir: &std::path::Path) {
+        let db_path = temp_dir.join("test_otto.db");
+        // SAFETY: This is safe in tests because we control the execution environment
+        // and tests are isolated. The env var is set before any StateManager is created.
+        unsafe {
+            std::env::set_var("OTTO_DB_PATH", &db_path);
+        }
+    }
+
     #[tokio::test]
     async fn test_bash_action_processing() -> Result<()> {
         let temp_dir = TempDir::new()?;
+        setup_test_db(temp_dir.path());
         let workspace = Arc::new(Workspace::new(temp_dir.path().to_path_buf()).await?);
         workspace.init().await?;
 
@@ -732,6 +743,7 @@ mod tests {
     #[tokio::test]
     async fn test_python_action_processing() -> Result<()> {
         let temp_dir = TempDir::new()?;
+        setup_test_db(temp_dir.path());
         let workspace = Arc::new(Workspace::new(temp_dir.path().to_path_buf()).await?);
         workspace.init().await?;
 
@@ -791,6 +803,7 @@ mod tests {
     #[tokio::test]
     async fn test_default_bash_action_processing() -> Result<()> {
         let temp_dir = TempDir::new()?;
+        setup_test_db(temp_dir.path());
         let workspace = Arc::new(Workspace::new(temp_dir.path().to_path_buf()).await?);
         workspace.init().await?;
 
