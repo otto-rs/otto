@@ -2,7 +2,7 @@ use eyre::Result;
 use rusqlite::Connection;
 
 /// SQL schema for the otto database
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// Status of a run
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -80,6 +80,7 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
         "CREATE TABLE IF NOT EXISTS projects (
             id INTEGER PRIMARY KEY,
             hash TEXT NOT NULL UNIQUE,
+            name TEXT,
             ottofile_path TEXT,
             first_seen INTEGER NOT NULL,
             last_seen INTEGER NOT NULL,
@@ -137,6 +138,53 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_run ON tasks(run_id)", [])?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_name ON tasks(name)", [])?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)", [])?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tasks_name_run ON tasks(name, run_id)",
+        [],
+    )?;
+
+    // Projects indexes
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(name)", [])?;
+
+    Ok(())
+}
+
+/// Migrate from schema version 1 to 2
+/// Adds 'name' column to projects table
+pub fn migrate_v1_to_v2(conn: &Connection) -> Result<()> {
+    // Add name column to projects table
+    conn.execute("ALTER TABLE projects ADD COLUMN name TEXT", [])?;
+
+    // Populate names from existing ottofile_path data
+    // Extract directory name from path, or use hash as fallback
+    let mut stmt = conn.prepare("SELECT id, hash, ottofile_path FROM projects")?;
+    let projects: Vec<(i64, String, Option<String>)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for (id, hash, ottofile_path) in projects {
+        let name = if let Some(path) = ottofile_path {
+            // Extract parent directory name from ottofile path
+            // e.g., "/home/user/repos/otto/otto.yml" -> "otto"
+            std::path::Path::new(&path)
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .unwrap_or(&hash)
+                .to_string()
+        } else {
+            hash.clone()
+        };
+
+        conn.execute("UPDATE projects SET name = ?1 WHERE id = ?2", [&name, &id.to_string()])?;
+    }
+
+    // Create indexes
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(name)", [])?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tasks_name_run ON tasks(name, run_id)",
+        [],
+    )?;
 
     Ok(())
 }

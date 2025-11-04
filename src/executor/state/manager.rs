@@ -61,6 +61,9 @@ pub struct OverallStats {
 /// Task-specific statistics
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TaskStats {
+    pub project_id: i64,
+    pub project_hash: String,
+    pub project_name: String,
     pub task_name: String,
     pub total_executions: u64,
     pub successful_executions: u64,
@@ -71,6 +74,17 @@ pub struct TaskStats {
     pub max_duration_seconds: Option<f64>,
     pub last_executed: Option<u64>,
     pub last_status: Option<TaskStatus>,
+}
+
+/// Project summary information
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProjectSummary {
+    pub id: i64,
+    pub hash: String,
+    pub name: String,
+    pub ottofile_path: Option<PathBuf>,
+    pub run_count: u64,
+    pub last_seen: u64,
 }
 
 impl StateManager {
@@ -389,140 +403,97 @@ impl StateManager {
         })
     }
 
-    /// Get statistics for a specific task
-    pub fn get_task_stats(&self, task_name: &str) -> Result<Option<TaskStats>> {
+    /// Get all projects with summary information
+    pub fn get_all_projects(&self) -> Result<Vec<ProjectSummary>> {
         self.db.with_connection(|conn| {
-            let total_executions: u64 = conn.query_row(
-                "SELECT COUNT(*) FROM tasks WHERE name = ?1",
-                params![task_name],
-                |row| row.get(0),
+            let mut stmt = conn.prepare(
+                "SELECT id, hash, name, ottofile_path, run_count, last_seen
+                 FROM projects
+                 ORDER BY last_seen DESC",
             )?;
 
-            if total_executions == 0 {
-                return Ok(None);
-            }
+            let projects = stmt
+                .query_map([], |row| {
+                    Ok(ProjectSummary {
+                        id: row.get(0)?,
+                        hash: row.get(1)?,
+                        name: row
+                            .get::<_, Option<String>>(2)?
+                            .unwrap_or_else(|| row.get::<_, String>(1).unwrap()),
+                        ottofile_path: row.get::<_, Option<String>>(3)?.map(PathBuf::from),
+                        run_count: row.get::<_, i64>(4)? as u64,
+                        last_seen: row.get::<_, i64>(5)? as u64,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
 
-            let successful_executions: u64 = conn.query_row(
-                "SELECT COUNT(*) FROM tasks WHERE name = ?1 AND status = 'completed'",
-                params![task_name],
-                |row| row.get(0),
-            )?;
-
-            let failed_executions: u64 = conn.query_row(
-                "SELECT COUNT(*) FROM tasks WHERE name = ?1 AND status = 'failed'",
-                params![task_name],
-                |row| row.get(0),
-            )?;
-
-            let skipped_executions: u64 = conn.query_row(
-                "SELECT COUNT(*) FROM tasks WHERE name = ?1 AND status = 'skipped'",
-                params![task_name],
-                |row| row.get(0),
-            )?;
-
-            let avg_duration_seconds: Option<f64> = conn
-                .query_row(
-                    "SELECT AVG(duration_seconds) FROM tasks WHERE name = ?1 AND duration_seconds IS NOT NULL",
-                    params![task_name],
-                    |row| row.get(0),
-                )
-                .optional()?
-                .flatten();
-
-            let min_duration_seconds: Option<f64> = conn
-                .query_row(
-                    "SELECT MIN(duration_seconds) FROM tasks WHERE name = ?1 AND duration_seconds IS NOT NULL",
-                    params![task_name],
-                    |row| row.get(0),
-                )
-                .optional()?
-                .flatten();
-
-            let max_duration_seconds: Option<f64> = conn
-                .query_row(
-                    "SELECT MAX(duration_seconds) FROM tasks WHERE name = ?1 AND duration_seconds IS NOT NULL",
-                    params![task_name],
-                    |row| row.get(0),
-                )
-                .optional()?
-                .flatten();
-
-            let (last_executed, last_status_str): (Option<i64>, Option<String>) = conn
-                .query_row(
-                    "SELECT started_at, status FROM tasks WHERE name = ?1 ORDER BY started_at DESC LIMIT 1",
-                    params![task_name],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .optional()?
-                .unwrap_or((None, None));
-
-            let last_status = last_status_str.and_then(|s| TaskStatus::parse(&s));
-
-            Ok(Some(TaskStats {
-                task_name: task_name.to_string(),
-                total_executions,
-                successful_executions,
-                failed_executions,
-                skipped_executions,
-                avg_duration_seconds,
-                min_duration_seconds,
-                max_duration_seconds,
-                last_executed: last_executed.map(|t| t as u64),
-                last_status,
-            }))
+            Ok(projects)
         })
     }
 
-    /// Get statistics for all tasks, ordered by execution count
-    pub fn get_all_task_stats(&self, limit: Option<usize>) -> Result<Vec<TaskStats>> {
+    /// Get statistics for a specific task across all projects
+    pub fn get_task_stats(&self, task_name: &str) -> Result<Vec<TaskStats>> {
         self.db.with_connection(|conn| {
-            let query = if let Some(limit) = limit {
-                format!(
-                    "SELECT DISTINCT name FROM tasks ORDER BY (SELECT COUNT(*) FROM tasks t2 WHERE t2.name = tasks.name) DESC LIMIT {}",
-                    limit
-                )
-            } else {
-                "SELECT DISTINCT name FROM tasks ORDER BY (SELECT COUNT(*) FROM tasks t2 WHERE t2.name = tasks.name) DESC".to_string()
-            };
+            // Get all projects that have this task
+            let mut stmt = conn.prepare(
+                "SELECT DISTINCT p.id, p.hash, p.name
+                 FROM tasks t
+                 JOIN runs r ON t.run_id = r.id
+                 JOIN projects p ON r.project_id = p.id
+                 WHERE t.name = ?1",
+            )?;
 
-            let mut stmt = conn.prepare(&query)?;
-            let task_names: Vec<String> = stmt.query_map([], |row| row.get(0))?.collect::<Result<Vec<_>, _>>()?;
+            let projects: Vec<(i64, String, Option<String>)> = stmt
+                .query_map(params![task_name], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+                .collect::<Result<Vec<_>, _>>()?;
 
             let mut stats = Vec::new();
-            for task_name in task_names {
-                // Calculate stats for this task within the same connection
+            for (project_id, project_hash, project_name_opt) in projects {
+                let project_name = project_name_opt.unwrap_or_else(|| project_hash.clone());
+
                 let total_executions: u64 = conn.query_row(
-                    "SELECT COUNT(*) FROM tasks WHERE name = ?1",
-                    params![&task_name],
+                    "SELECT COUNT(*)
+                     FROM tasks t
+                     JOIN runs r ON t.run_id = r.id
+                     WHERE t.name = ?1 AND r.project_id = ?2",
+                    params![task_name, project_id],
                     |row| row.get(0),
                 )?;
 
-                if total_executions == 0 {
-                    continue;
-                }
-
                 let successful_executions: u64 = conn.query_row(
-                    "SELECT COUNT(*) FROM tasks WHERE name = ?1 AND status = 'completed'",
-                    params![&task_name],
+                    "SELECT COUNT(*)
+                     FROM tasks t
+                     JOIN runs r ON t.run_id = r.id
+                     WHERE t.name = ?1 AND r.project_id = ?2 AND t.status = 'completed'",
+                    params![task_name, project_id],
                     |row| row.get(0),
                 )?;
 
                 let failed_executions: u64 = conn.query_row(
-                    "SELECT COUNT(*) FROM tasks WHERE name = ?1 AND status = 'failed'",
-                    params![&task_name],
+                    "SELECT COUNT(*)
+                     FROM tasks t
+                     JOIN runs r ON t.run_id = r.id
+                     WHERE t.name = ?1 AND r.project_id = ?2 AND t.status = 'failed'",
+                    params![task_name, project_id],
                     |row| row.get(0),
                 )?;
 
                 let skipped_executions: u64 = conn.query_row(
-                    "SELECT COUNT(*) FROM tasks WHERE name = ?1 AND status = 'skipped'",
-                    params![&task_name],
+                    "SELECT COUNT(*)
+                     FROM tasks t
+                     JOIN runs r ON t.run_id = r.id
+                     WHERE t.name = ?1 AND r.project_id = ?2 AND t.status = 'skipped'",
+                    params![task_name, project_id],
                     |row| row.get(0),
                 )?;
 
                 let avg_duration_seconds: Option<f64> = conn
                     .query_row(
-                        "SELECT AVG(duration_seconds) FROM tasks WHERE name = ?1 AND duration_seconds IS NOT NULL",
-                        params![&task_name],
+                        "SELECT AVG(t.duration_seconds)
+                         FROM tasks t
+                         JOIN runs r ON t.run_id = r.id
+                         WHERE t.name = ?1 AND r.project_id = ?2 AND t.duration_seconds IS NOT NULL",
+                        params![task_name, project_id],
                         |row| row.get(0),
                     )
                     .optional()?
@@ -530,8 +501,11 @@ impl StateManager {
 
                 let min_duration_seconds: Option<f64> = conn
                     .query_row(
-                        "SELECT MIN(duration_seconds) FROM tasks WHERE name = ?1 AND duration_seconds IS NOT NULL",
-                        params![&task_name],
+                        "SELECT MIN(t.duration_seconds)
+                         FROM tasks t
+                         JOIN runs r ON t.run_id = r.id
+                         WHERE t.name = ?1 AND r.project_id = ?2 AND t.duration_seconds IS NOT NULL",
+                        params![task_name, project_id],
                         |row| row.get(0),
                     )
                     .optional()?
@@ -539,8 +513,11 @@ impl StateManager {
 
                 let max_duration_seconds: Option<f64> = conn
                     .query_row(
-                        "SELECT MAX(duration_seconds) FROM tasks WHERE name = ?1 AND duration_seconds IS NOT NULL",
-                        params![&task_name],
+                        "SELECT MAX(t.duration_seconds)
+                         FROM tasks t
+                         JOIN runs r ON t.run_id = r.id
+                         WHERE t.name = ?1 AND r.project_id = ?2 AND t.duration_seconds IS NOT NULL",
+                        params![task_name, project_id],
                         |row| row.get(0),
                     )
                     .optional()?
@@ -548,8 +525,12 @@ impl StateManager {
 
                 let (last_executed, last_status_str): (Option<i64>, Option<String>) = conn
                     .query_row(
-                        "SELECT started_at, status FROM tasks WHERE name = ?1 ORDER BY started_at DESC LIMIT 1",
-                        params![&task_name],
+                        "SELECT t.started_at, t.status
+                         FROM tasks t
+                         JOIN runs r ON t.run_id = r.id
+                         WHERE t.name = ?1 AND r.project_id = ?2
+                         ORDER BY t.started_at DESC LIMIT 1",
+                        params![task_name, project_id],
                         |row| Ok((row.get(0)?, row.get(1)?)),
                     )
                     .optional()?
@@ -558,6 +539,162 @@ impl StateManager {
                 let last_status = last_status_str.and_then(|s| TaskStatus::parse(&s));
 
                 stats.push(TaskStats {
+                    project_id,
+                    project_hash,
+                    project_name,
+                    task_name: task_name.to_string(),
+                    total_executions,
+                    successful_executions,
+                    failed_executions,
+                    skipped_executions,
+                    avg_duration_seconds,
+                    min_duration_seconds,
+                    max_duration_seconds,
+                    last_executed: last_executed.map(|t| t as u64),
+                    last_status,
+                });
+            }
+
+            Ok(stats)
+        })
+    }
+
+    /// Get statistics for all tasks, ordered by execution count, grouped by project
+    pub fn get_all_task_stats(&self, limit: Option<usize>) -> Result<Vec<TaskStats>> {
+        self.db.with_connection(|conn| {
+            let query = if let Some(limit) = limit {
+                format!(
+                    "SELECT DISTINCT t.name, p.id, p.hash, p.name
+                     FROM tasks t
+                     JOIN runs r ON t.run_id = r.id
+                     JOIN projects p ON r.project_id = p.id
+                     ORDER BY (
+                         SELECT COUNT(*)
+                         FROM tasks t2
+                         JOIN runs r2 ON t2.run_id = r2.id
+                         WHERE t2.name = t.name AND r2.project_id = p.id
+                     ) DESC
+                     LIMIT {}",
+                    limit
+                )
+            } else {
+                "SELECT DISTINCT t.name, p.id, p.hash, p.name
+                 FROM tasks t
+                 JOIN runs r ON t.run_id = r.id
+                 JOIN projects p ON r.project_id = p.id
+                 ORDER BY (
+                     SELECT COUNT(*)
+                     FROM tasks t2
+                     JOIN runs r2 ON t2.run_id = r2.id
+                     WHERE t2.name = t.name AND r2.project_id = p.id
+                 ) DESC"
+                    .to_string()
+            };
+
+            let mut stmt = conn.prepare(&query)?;
+            let task_projects: Vec<(String, i64, String, String)> = stmt
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let mut stats = Vec::new();
+            for (task_name, project_id, project_hash, project_name) in task_projects {
+                // Calculate stats for this task within this project
+                let total_executions: u64 = conn.query_row(
+                    "SELECT COUNT(*)
+                     FROM tasks t
+                     JOIN runs r ON t.run_id = r.id
+                     WHERE t.name = ?1 AND r.project_id = ?2",
+                    params![&task_name, project_id],
+                    |row| row.get(0),
+                )?;
+
+                if total_executions == 0 {
+                    continue;
+                }
+
+                let successful_executions: u64 = conn.query_row(
+                    "SELECT COUNT(*)
+                     FROM tasks t
+                     JOIN runs r ON t.run_id = r.id
+                     WHERE t.name = ?1 AND r.project_id = ?2 AND t.status = 'completed'",
+                    params![&task_name, project_id],
+                    |row| row.get(0),
+                )?;
+
+                let failed_executions: u64 = conn.query_row(
+                    "SELECT COUNT(*)
+                     FROM tasks t
+                     JOIN runs r ON t.run_id = r.id
+                     WHERE t.name = ?1 AND r.project_id = ?2 AND t.status = 'failed'",
+                    params![&task_name, project_id],
+                    |row| row.get(0),
+                )?;
+
+                let skipped_executions: u64 = conn.query_row(
+                    "SELECT COUNT(*)
+                     FROM tasks t
+                     JOIN runs r ON t.run_id = r.id
+                     WHERE t.name = ?1 AND r.project_id = ?2 AND t.status = 'skipped'",
+                    params![&task_name, project_id],
+                    |row| row.get(0),
+                )?;
+
+                let avg_duration_seconds: Option<f64> = conn
+                    .query_row(
+                        "SELECT AVG(t.duration_seconds)
+                         FROM tasks t
+                         JOIN runs r ON t.run_id = r.id
+                         WHERE t.name = ?1 AND r.project_id = ?2 AND t.duration_seconds IS NOT NULL",
+                        params![&task_name, project_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+                    .flatten();
+
+                let min_duration_seconds: Option<f64> = conn
+                    .query_row(
+                        "SELECT MIN(t.duration_seconds)
+                         FROM tasks t
+                         JOIN runs r ON t.run_id = r.id
+                         WHERE t.name = ?1 AND r.project_id = ?2 AND t.duration_seconds IS NOT NULL",
+                        params![&task_name, project_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+                    .flatten();
+
+                let max_duration_seconds: Option<f64> = conn
+                    .query_row(
+                        "SELECT MAX(t.duration_seconds)
+                         FROM tasks t
+                         JOIN runs r ON t.run_id = r.id
+                         WHERE t.name = ?1 AND r.project_id = ?2 AND t.duration_seconds IS NOT NULL",
+                        params![&task_name, project_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+                    .flatten();
+
+                let (last_executed, last_status_str): (Option<i64>, Option<String>) = conn
+                    .query_row(
+                        "SELECT t.started_at, t.status
+                         FROM tasks t
+                         JOIN runs r ON t.run_id = r.id
+                         WHERE t.name = ?1 AND r.project_id = ?2
+                         ORDER BY t.started_at DESC
+                         LIMIT 1",
+                        params![&task_name, project_id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()?
+                    .unwrap_or((None, None));
+
+                let last_status = last_status_str.and_then(|s| TaskStatus::parse(&s));
+
+                stats.push(TaskStats {
+                    project_id,
+                    project_hash: project_hash.clone(),
+                    project_name: project_name.clone(),
                     task_name: task_name.clone(),
                     total_executions,
                     successful_executions,
@@ -771,11 +908,24 @@ impl StateManager {
             .context("Failed to get current time")?
             .as_secs();
 
+        // Extract project name from ottofile path, or use hash as fallback
+        let name = if let Some(path) = ottofile_path {
+            std::path::Path::new(&path)
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .unwrap_or(hash)
+                .to_string()
+        } else {
+            hash.to_string()
+        };
+
         conn.execute(
-            "INSERT INTO projects (hash, ottofile_path, first_seen, last_seen, run_count)
-             VALUES (?1, ?2, ?3, ?4, 0)",
+            "INSERT INTO projects (hash, name, ottofile_path, first_seen, last_seen, run_count)
+             VALUES (?1, ?2, ?3, ?4, ?5, 0)",
             params![
                 hash,
+                name,
                 ottofile_path.map(|p| p.to_string_lossy().to_string()),
                 now as i64,
                 now as i64,

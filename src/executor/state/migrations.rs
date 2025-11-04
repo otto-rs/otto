@@ -2,7 +2,7 @@ use eyre::{Context, Result};
 use rusqlite::Connection;
 use std::time::SystemTime;
 
-use super::schema::{SCHEMA_VERSION, init_schema};
+use super::schema::{SCHEMA_VERSION, init_schema, migrate_v1_to_v2};
 
 pub fn get_current_version(conn: &Connection) -> Result<i64> {
     let table_exists: bool = conn
@@ -55,13 +55,12 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         init_schema(conn).context("Failed to initialize schema")?;
         set_version(conn, SCHEMA_VERSION)?;
     } else if current_version < SCHEMA_VERSION {
-        // Future migrations will go here
-        // For now, we only have version 1
-        return Err(eyre::eyre!(
-            "Database schema version {} is newer than supported version {}",
-            current_version,
-            SCHEMA_VERSION
-        ));
+        // Run migrations in order
+        if current_version < 2 {
+            migrate_v1_to_v2(conn).context("Failed to migrate from v1 to v2")?;
+            set_version(conn, 2)?;
+        }
+        // Future migrations will go here (v2 to v3, etc.)
     } else if current_version > SCHEMA_VERSION {
         return Err(eyre::eyre!(
             "Database schema version {} is newer than supported version {}. Please upgrade otto.",

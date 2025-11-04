@@ -112,6 +112,7 @@ impl StatsCommand {
                 .load_preset(UTF8_FULL)
                 .apply_modifier(UTF8_ROUND_CORNERS)
                 .set_header(vec![
+                    Cell::new("Project").set_alignment(CellAlignment::Left),
                     Cell::new("Task").set_alignment(CellAlignment::Left),
                     Cell::new("Total").set_alignment(CellAlignment::Right),
                     Cell::new("Success").set_alignment(CellAlignment::Right),
@@ -129,6 +130,7 @@ impl StatsCommand {
                 };
 
                 task_table.add_row(vec![
+                    Cell::new(&task.project_name).set_alignment(CellAlignment::Left),
                     Cell::new(&task.task_name).set_alignment(CellAlignment::Left),
                     Cell::new(task.total_executions.to_string()).set_alignment(CellAlignment::Right),
                     Cell::new(task.successful_executions.to_string()).set_alignment(CellAlignment::Right),
@@ -150,13 +152,12 @@ impl StatsCommand {
     }
 
     fn show_task_stats(&self, manager: &StateManager, task_name: &str) -> Result<()> {
-        let stats = match manager.get_task_stats(task_name)? {
-            Some(s) => s,
-            None => {
-                println!("{}", format!("No statistics found for task '{}'.", task_name).yellow());
-                return Ok(());
-            }
-        };
+        let stats = manager.get_task_stats(task_name)?;
+
+        if stats.is_empty() {
+            println!("{}", format!("No statistics found for task '{}'.", task_name).yellow());
+            return Ok(());
+        }
 
         if self.json {
             println!("{}", serde_json::to_string_pretty(&stats)?);
@@ -165,98 +166,141 @@ impl StatsCommand {
 
         println!("\n{} for task '{}'", "Statistics".bold(), task_name.cyan());
 
-        let total_attempted = stats.successful_executions + stats.failed_executions;
-        let success_rate = if total_attempted > 0 {
-            (stats.successful_executions as f64 / total_attempted as f64) * 100.0
-        } else {
-            0.0
-        };
+        // If there's only one project, show simplified view
+        if stats.len() == 1 {
+            let stat = &stats[0];
+            let total_attempted = stat.successful_executions + stat.failed_executions;
+            let success_rate = if total_attempted > 0 {
+                (stat.successful_executions as f64 / total_attempted as f64) * 100.0
+            } else {
+                0.0
+            };
 
-        let mut table = Table::new();
-        table
-            .load_preset(UTF8_FULL)
-            .apply_modifier(UTF8_ROUND_CORNERS)
-            .set_header(vec![
-                Cell::new("Metric").set_alignment(CellAlignment::Left),
-                Cell::new("Value").set_alignment(CellAlignment::Right),
+            let mut table = Table::new();
+            table
+                .load_preset(UTF8_FULL)
+                .apply_modifier(UTF8_ROUND_CORNERS)
+                .set_header(vec![
+                    Cell::new("Metric").set_alignment(CellAlignment::Left),
+                    Cell::new("Value").set_alignment(CellAlignment::Right),
+                ]);
+
+            table.add_row(vec![
+                Cell::new("Project").set_alignment(CellAlignment::Left),
+                Cell::new(&stat.project_name).set_alignment(CellAlignment::Right),
+            ]);
+            table.add_row(vec![
+                Cell::new("Total Executions").set_alignment(CellAlignment::Left),
+                Cell::new(stat.total_executions.to_string()).set_alignment(CellAlignment::Right),
+            ]);
+            table.add_row(vec![
+                Cell::new("Successful").set_alignment(CellAlignment::Left),
+                Cell::new(format!(
+                    "{} ({})",
+                    stat.successful_executions,
+                    format_percentage(success_rate)
+                ))
+                .set_alignment(CellAlignment::Right),
+            ]);
+            table.add_row(vec![
+                Cell::new("Failed").set_alignment(CellAlignment::Left),
+                Cell::new(stat.failed_executions.to_string()).set_alignment(CellAlignment::Right),
+            ]);
+            table.add_row(vec![
+                Cell::new("Skipped").set_alignment(CellAlignment::Left),
+                Cell::new(stat.skipped_executions.to_string()).set_alignment(CellAlignment::Right),
+            ]);
+            table.add_row(vec![
+                Cell::new("Average Duration").set_alignment(CellAlignment::Left),
+                Cell::new(
+                    stat.avg_duration_seconds
+                        .map(format_duration)
+                        .unwrap_or_else(|| "-".to_string()),
+                )
+                .set_alignment(CellAlignment::Right),
+            ]);
+            table.add_row(vec![
+                Cell::new("Min Duration").set_alignment(CellAlignment::Left),
+                Cell::new(
+                    stat.min_duration_seconds
+                        .map(format_duration)
+                        .unwrap_or_else(|| "-".to_string()),
+                )
+                .set_alignment(CellAlignment::Right),
+            ]);
+            table.add_row(vec![
+                Cell::new("Max Duration").set_alignment(CellAlignment::Left),
+                Cell::new(
+                    stat.max_duration_seconds
+                        .map(format_duration)
+                        .unwrap_or_else(|| "-".to_string()),
+                )
+                .set_alignment(CellAlignment::Right),
+            ]);
+            table.add_row(vec![
+                Cell::new("Last Executed").set_alignment(CellAlignment::Left),
+                Cell::new(
+                    stat.last_executed
+                        .map(|t| {
+                            let dt = chrono::Local.timestamp_opt(t as i64, 0).unwrap();
+                            dt.format("%Y-%m-%d %H:%M:%S").to_string()
+                        })
+                        .unwrap_or_else(|| "-".to_string()),
+                )
+                .set_alignment(CellAlignment::Right),
+            ]);
+            table.add_row(vec![
+                Cell::new("Last Status").set_alignment(CellAlignment::Left),
+                Cell::new(
+                    stat.last_status
+                        .as_ref()
+                        .map(format_task_status)
+                        .unwrap_or_else(|| "-".to_string()),
+                )
+                .set_alignment(CellAlignment::Right),
             ]);
 
-        table.add_row(vec![
-            Cell::new("Total Executions").set_alignment(CellAlignment::Left),
-            Cell::new(stats.total_executions.to_string()).set_alignment(CellAlignment::Right),
-        ]);
-        table.add_row(vec![
-            Cell::new("Successful").set_alignment(CellAlignment::Left),
-            Cell::new(format!(
-                "{} ({})",
-                stats.successful_executions,
-                format_percentage(success_rate)
-            ))
-            .set_alignment(CellAlignment::Right),
-        ]);
-        table.add_row(vec![
-            Cell::new("Failed").set_alignment(CellAlignment::Left),
-            Cell::new(stats.failed_executions.to_string()).set_alignment(CellAlignment::Right),
-        ]);
-        table.add_row(vec![
-            Cell::new("Skipped").set_alignment(CellAlignment::Left),
-            Cell::new(stats.skipped_executions.to_string()).set_alignment(CellAlignment::Right),
-        ]);
-        table.add_row(vec![
-            Cell::new("Average Duration").set_alignment(CellAlignment::Left),
-            Cell::new(
-                stats
-                    .avg_duration_seconds
-                    .map(format_duration)
-                    .unwrap_or_else(|| "-".to_string()),
-            )
-            .set_alignment(CellAlignment::Right),
-        ]);
-        table.add_row(vec![
-            Cell::new("Min Duration").set_alignment(CellAlignment::Left),
-            Cell::new(
-                stats
-                    .min_duration_seconds
-                    .map(format_duration)
-                    .unwrap_or_else(|| "-".to_string()),
-            )
-            .set_alignment(CellAlignment::Right),
-        ]);
-        table.add_row(vec![
-            Cell::new("Max Duration").set_alignment(CellAlignment::Left),
-            Cell::new(
-                stats
-                    .max_duration_seconds
-                    .map(format_duration)
-                    .unwrap_or_else(|| "-".to_string()),
-            )
-            .set_alignment(CellAlignment::Right),
-        ]);
-        table.add_row(vec![
-            Cell::new("Last Executed").set_alignment(CellAlignment::Left),
-            Cell::new(
-                stats
-                    .last_executed
-                    .map(|t| {
-                        let dt = chrono::Local.timestamp_opt(t as i64, 0).unwrap();
-                        dt.format("%Y-%m-%d %H:%M:%S").to_string()
-                    })
-                    .unwrap_or_else(|| "-".to_string()),
-            )
-            .set_alignment(CellAlignment::Right),
-        ]);
-        table.add_row(vec![
-            Cell::new("Last Status").set_alignment(CellAlignment::Left),
-            Cell::new(
-                stats
-                    .last_status
-                    .map(|s| format_task_status(&s))
-                    .unwrap_or_else(|| "-".to_string()),
-            )
-            .set_alignment(CellAlignment::Right),
-        ]);
+            println!("{}", table);
+        } else {
+            // Multiple projects - show table view
+            let mut table = Table::new();
+            table
+                .load_preset(UTF8_FULL)
+                .apply_modifier(UTF8_ROUND_CORNERS)
+                .set_header(vec![
+                    Cell::new("Project").set_alignment(CellAlignment::Left),
+                    Cell::new("Total").set_alignment(CellAlignment::Right),
+                    Cell::new("Success").set_alignment(CellAlignment::Right),
+                    Cell::new("Failed").set_alignment(CellAlignment::Right),
+                    Cell::new("Success Rate").set_alignment(CellAlignment::Right),
+                    Cell::new("Avg Duration").set_alignment(CellAlignment::Right),
+                ]);
 
-        println!("{}", table);
+            for stat in &stats {
+                let total_attempted = stat.successful_executions + stat.failed_executions;
+                let success_rate = if total_attempted > 0 {
+                    (stat.successful_executions as f64 / total_attempted as f64) * 100.0
+                } else {
+                    0.0
+                };
+
+                table.add_row(vec![
+                    Cell::new(&stat.project_name).set_alignment(CellAlignment::Left),
+                    Cell::new(stat.total_executions.to_string()).set_alignment(CellAlignment::Right),
+                    Cell::new(stat.successful_executions.to_string()).set_alignment(CellAlignment::Right),
+                    Cell::new(stat.failed_executions.to_string()).set_alignment(CellAlignment::Right),
+                    Cell::new(format_percentage(success_rate)).set_alignment(CellAlignment::Right),
+                    Cell::new(
+                        stat.avg_duration_seconds
+                            .map(format_duration)
+                            .unwrap_or_else(|| "-".to_string()),
+                    )
+                    .set_alignment(CellAlignment::Right),
+                ]);
+            }
+
+            println!("{}", table);
+        }
 
         Ok(())
     }
