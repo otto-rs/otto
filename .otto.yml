@@ -176,3 +176,15 @@ tasks:
       find examples/ -type d -name ".otto-run" -exec rm -rf {} + 2>/dev/null || true
       echo ""
       echo "✅ All cleaned!"
+  coverage:
+    help: "Generate code coverage report with cargo-tarpaulin"
+    bash: |
+      echo "🧪 Running Tarpaulin coverage analysis..."
+      cargo tarpaulin --out Html --out Lcov --workspace --timeout 120
+      echo ""
+      echo "✅ Coverage reports generated:"
+      echo "  - HTML: target/tarpaulin-report.html"
+      echo "  - LCOV: target/lcov.info"
+      echo ""
+      echo "To view the HTML report locally, run:"
+      echo "  open target/tarpaulin-report.html"

@@ -30,3 +30,7 @@ examples/*/deployment.log
 examples/*/build/
 examples/*/dist/
 examples/*/target/
+
+# tarpaulin coverage reports
+lcov.info
+tarpaulin-report.html
