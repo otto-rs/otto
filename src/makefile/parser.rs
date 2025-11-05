@@ -16,6 +16,7 @@ impl MakefileParser {
         let lines: Vec<String> = self.content.lines().map(|s| s.to_string()).collect();
         let mut i = 0;
         let mut last_comment: Option<String> = None;
+        let mut conditional_depth = 0; // Track nesting depth of conditionals
 
         while i < lines.len() {
             let line = &lines[i];
@@ -31,6 +32,39 @@ impl MakefileParser {
             // Handle comments
             if let Some(comment_text) = trimmed.strip_prefix('#') {
                 last_comment = Some(comment_text.trim().to_string());
+                i += 1;
+                continue;
+            }
+
+            // Track conditional block depth
+            if trimmed.starts_with("ifeq")
+                || trimmed.starts_with("ifneq")
+                || trimmed.starts_with("ifdef")
+                || trimmed.starts_with("ifndef")
+            {
+                conditional_depth += 1;
+                last_comment = None;
+                i += 1;
+                continue;
+            }
+
+            if trimmed.starts_with("endif") {
+                if conditional_depth > 0 {
+                    conditional_depth -= 1;
+                }
+                last_comment = None;
+                i += 1;
+                continue;
+            }
+
+            // Skip content inside conditional blocks and other unsupported constructs
+            if conditional_depth > 0
+                || trimmed.starts_with("else")
+                || trimmed.starts_with("include")
+                || trimmed.starts_with("$(eval")
+                || trimmed.starts_with(".SILENT")
+            {
+                last_comment = None;
                 i += 1;
                 continue;
             }
@@ -55,7 +89,10 @@ impl MakefileParser {
 
             // Check for variable assignment
             if let Some(var) = self.parse_variable(line)? {
-                ast.variables.push(var);
+                // Skip variables with Make-specific functions that won't work in Otto
+                if !self.contains_make_functions(&var.value) {
+                    ast.variables.push(var);
+                }
                 last_comment = None;
                 i += 1;
                 continue;
@@ -198,8 +235,18 @@ impl MakefileParser {
 
                 while *index < lines.len() {
                     let next_line = &lines[*index];
-                    if let Some(next_cmd_str) = next_line.strip_prefix('\t') {
-                        let next_cmd = next_cmd_str.to_string();
+
+                    // Check if it's a continuation line (tab-indented OR space-indented when continuing)
+                    let continuation = if let Some(next_cmd_str) = next_line.strip_prefix('\t') {
+                        Some(next_cmd_str.to_string())
+                    } else if !next_line.trim().is_empty() && next_line.starts_with(' ') && !next_line.contains(':') {
+                        // Space-indented continuation line (common in multi-line commands)
+                        Some(next_line.trim_start().to_string())
+                    } else {
+                        None
+                    };
+
+                    if let Some(next_cmd) = continuation {
                         let trimmed_next = next_cmd.trim_start();
                         continued_command.push(' ');
                         continued_command.push_str(trimmed_next);
@@ -241,6 +288,45 @@ impl MakefileParser {
             }
         }
         None
+    }
+
+    fn contains_make_functions(&self, value: &str) -> bool {
+        // Check for Make-specific functions that won't work in Otto's bash environment
+        let make_functions = [
+            "$(abspath",
+            "$(realpath",
+            "$(dir",
+            "$(notdir",
+            "$(suffix",
+            "$(basename",
+            "$(addsuffix",
+            "$(addprefix",
+            "$(join",
+            "$(wildcard",
+            "$(firstword",
+            "$(lastword",
+            "$(wordlist",
+            "$(words",
+            "$(word",
+            "$(subst",
+            "$(patsubst",
+            "$(strip",
+            "$(findstring",
+            "$(filter",
+            "$(filter-out",
+            "$(sort",
+            "$(foreach",
+            "$(if",
+            "$(or",
+            "$(and",
+            "$(call",
+            "$(eval",
+            "$(value",
+            "$(MAKEFILE_LIST)",
+            "$(MAKECMDGOALS)",
+        ];
+
+        make_functions.iter().any(|func| value.contains(func))
     }
 }
 
