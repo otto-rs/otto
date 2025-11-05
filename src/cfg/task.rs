@@ -1,8 +1,9 @@
 //#![allow(unused_imports, unused_variables, dead_code)]
 
 use eyre::Result;
-use serde::Deserialize;
 use serde::de::{Deserializer, MapAccess, Visitor};
+use serde::ser::{SerializeMap, Serializer};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::vec::Vec;
@@ -99,6 +100,68 @@ impl<'de> Deserialize<'de> for TaskSpec {
             params: helper.params,
             action,
         })
+    }
+}
+
+impl Serialize for TaskSpec {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(None)?;
+
+        if let Some(ref help) = self.help {
+            map.serialize_entry("help", help)?;
+        }
+
+        if !self.after.is_empty() {
+            map.serialize_entry("after", &self.after)?;
+        }
+
+        if !self.before.is_empty() {
+            map.serialize_entry("before", &self.before)?;
+        }
+
+        if !self.input.is_empty() {
+            map.serialize_entry("input", &self.input)?;
+        }
+
+        if !self.output.is_empty() {
+            map.serialize_entry("output", &self.output)?;
+        }
+
+        if !self.envs.is_empty() {
+            map.serialize_entry("envs", &self.envs)?;
+        }
+
+        if !self.params.is_empty() {
+            map.serialize_entry("params", &self.params)?;
+        }
+
+        // Serialize action as "bash:" if it starts with #!/bin/bash
+        if !self.action.is_empty() {
+            if self.action.trim_start().starts_with("#!/bin/bash") {
+                let bash_script = self
+                    .action
+                    .trim_start()
+                    .strip_prefix("#!/bin/bash\n")
+                    .or_else(|| self.action.trim_start().strip_prefix("#!/bin/bash"))
+                    .unwrap_or(&self.action);
+                map.serialize_entry("bash", bash_script)?;
+            } else if self.action.trim_start().starts_with("#!/usr/bin/env python3") {
+                let python_script = self
+                    .action
+                    .trim_start()
+                    .strip_prefix("#!/usr/bin/env python3\n")
+                    .or_else(|| self.action.trim_start().strip_prefix("#!/usr/bin/env python3"))
+                    .unwrap_or(&self.action);
+                map.serialize_entry("python", python_script)?;
+            } else {
+                map.serialize_entry("action", &self.action)?;
+            }
+        }
+
+        map.end()
     }
 }
 

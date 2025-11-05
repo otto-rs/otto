@@ -1,6 +1,6 @@
 //#![allow(unused_imports, unused_variables, dead_code)]
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::vec::Vec;
 
@@ -46,7 +46,7 @@ pub fn default_otto() -> OttoSpec {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct OttoSpec {
     #[serde(default = "default_name")]
     pub name: String,

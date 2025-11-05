@@ -1,0 +1,97 @@
+use std::collections::HashSet;
+
+/// Abstract Syntax Tree representation of a Makefile
+#[derive(Debug, Clone, PartialEq)]
+pub struct MakefileAst {
+    pub variables: Vec<Variable>,
+    pub default_goal: Option<String>,
+    pub phony_targets: HashSet<String>,
+    pub targets: Vec<Target>,
+}
+
+impl MakefileAst {
+    pub fn new() -> Self {
+        Self {
+            variables: Vec::new(),
+            default_goal: None,
+            phony_targets: HashSet::new(),
+            targets: Vec::new(),
+        }
+    }
+}
+
+impl Default for MakefileAst {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Represents a variable assignment in the Makefile
+#[derive(Debug, Clone, PartialEq)]
+pub struct Variable {
+    pub name: String,
+    pub value: String,
+    pub assignment_type: AssignmentType,
+}
+
+/// Types of variable assignments in Make
+#[derive(Debug, Clone, PartialEq)]
+pub enum AssignmentType {
+    Simple,         // :=
+    Recursive,      // =
+    Conditional,    // ?=
+    Append,         // +=
+    ShellExecution, // $(shell ...)
+}
+
+/// Represents a target (rule) in the Makefile
+#[derive(Debug, Clone, PartialEq)]
+pub struct Target {
+    pub name: String,
+    pub dependencies: Vec<String>,
+    pub commands: Vec<String>,
+    pub comment: Option<String>,
+    pub is_phony: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ast_creation() {
+        let ast = MakefileAst::new();
+        assert!(ast.variables.is_empty());
+        assert!(ast.default_goal.is_none());
+        assert!(ast.phony_targets.is_empty());
+        assert!(ast.targets.is_empty());
+    }
+
+    #[test]
+    fn test_variable_creation() {
+        let var = Variable {
+            name: "VAR".to_string(),
+            value: "value".to_string(),
+            assignment_type: AssignmentType::Simple,
+        };
+        assert_eq!(var.name, "VAR");
+        assert_eq!(var.value, "value");
+        assert_eq!(var.assignment_type, AssignmentType::Simple);
+    }
+
+    #[test]
+    fn test_target_creation() {
+        let target = Target {
+            name: "build".to_string(),
+            dependencies: vec!["test".to_string()],
+            commands: vec!["echo Building".to_string()],
+            comment: Some("Build the project".to_string()),
+            is_phony: true,
+        };
+        assert_eq!(target.name, "build");
+        assert_eq!(target.dependencies.len(), 1);
+        assert_eq!(target.commands.len(), 1);
+        assert!(target.comment.is_some());
+        assert!(target.is_phony);
+    }
+}

@@ -2,7 +2,7 @@ use env_logger::Target;
 use eyre::{Report, Result};
 use log::info;
 use otto::{
-    cli::{CleanCommand, HistoryCommand, Parser, StatsCommand},
+    cli::{CleanCommand, ConvertCommand, HistoryCommand, Parser, StatsCommand},
     executor::{DagVisualizer, TaskScheduler, Workspace},
 };
 use std::env;
@@ -41,6 +41,13 @@ async fn main() {
         match args[1].as_str() {
             "clean" => {
                 if let Err(e) = execute_clean_command(&args[1..]).await {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+                return;
+            }
+            "convert" => {
+                if let Err(e) = execute_convert_command(&args[1..]) {
                     eprintln!("{e}");
                     std::process::exit(1);
                 }
@@ -435,6 +442,14 @@ fn execute_history_command(args: &[String]) -> Result<(), Report> {
 
     let history_cmd = HistoryCommand::parse_from(args);
     history_cmd.execute()?;
+    Ok(())
+}
+
+fn execute_convert_command(args: &[String]) -> Result<(), Report> {
+    use clap::Parser;
+
+    let convert_cmd = ConvertCommand::parse_from(args);
+    convert_cmd.execute()?;
     Ok(())
 }
 

@@ -1,6 +1,7 @@
 pub mod cfg;
 pub mod cli;
 pub mod executor;
+pub mod makefile;
 pub mod tui;
 pub mod utils;
 

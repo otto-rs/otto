@@ -1,12 +1,12 @@
 //#![allow(unused_imports, unused_variables, dead_code)]
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 pub use crate::cfg::otto::{OttoSpec, default_otto};
 pub use crate::cfg::param::{ParamSpec, ParamSpecs, Value};
 pub use crate::cfg::task::{TaskSpec, TaskSpecs, deserialize_task_map};
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ConfigSpec {
     #[serde(default = "default_otto")]
     pub otto: OttoSpec,

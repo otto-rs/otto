@@ -1,15 +1,15 @@
 //#![allow(unused_imports, unused_variables, dead_code)]
 
 use eyre::Result;
-use serde::Deserialize;
 use serde::de::{Deserializer, Error, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::vec::Vec;
 
 pub type ParamSpecs = HashMap<String, ParamSpec>;
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ParamSpec {
     #[serde(skip_deserializing)]
     pub name: String,
@@ -48,7 +48,7 @@ pub struct ParamSpec {
     pub value: Value,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize)]
 pub enum ParamType {
     FLG,
     #[default]
@@ -58,7 +58,7 @@ pub enum ParamType {
 
 pub type Values = HashMap<String, Value>;
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize)]
 pub enum Value {
     Item(String),
     List(Vec<String>),
@@ -115,7 +115,7 @@ where
     }
     deserializer.deserialize_any(ValueEnum)
 }
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub enum Nargs {
     #[default]
     One,
