@@ -1,7 +1,9 @@
 use assert_cmd::cargo::cargo_bin_cmd;
+use serial_test::serial;
 use tempfile::TempDir;
 
 #[test]
+#[serial]
 fn test_history_table_alignment() {
     // Create a temp directory for the test
     let temp_dir = TempDir::new().unwrap();
@@ -75,6 +77,7 @@ fn strip_ansi_codes(s: &str) -> String {
 }
 
 #[test]
+#[serial]
 fn test_column_format_consistency() {
     // This test verifies that we're using consistent format strings
     // by checking a mock table output

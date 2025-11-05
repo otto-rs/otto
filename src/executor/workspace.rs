@@ -86,8 +86,8 @@ impl Workspace {
                 .map_err(|e| eyre!("Failed to canonicalize project root: {}", e))?
         };
 
-        // Get project name from last component (unused but kept for future use)
-        let _name = root
+        // Get project name from last component
+        let name = root
             .file_name()
             .and_then(|n| n.to_str())
             .map(|s| s.to_string())
@@ -101,17 +101,22 @@ impl Workspace {
         let hash = format!("{:x}", hasher.finalize());
         let hash = hash[..8].to_string();
 
-        Self::new_with_hash(root, hash).await
+        Self::new_with_hash(root, name, hash).await
     }
 
-    pub async fn new_with_hash(root: PathBuf, hash: String) -> Result<Self> {
+    pub async fn new_with_hash(root: PathBuf, name: String, hash: String) -> Result<Self> {
         let time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
 
-        let home_dir = std::env::var("HOME").map_err(|e| eyre!("Failed to get HOME directory: {}", e))?;
-        let home = PathBuf::from(home_dir).join(".otto");
+        // Check for OTTO_HOME environment variable (for test isolation)
+        let home = if let Ok(otto_home) = std::env::var("OTTO_HOME") {
+            PathBuf::from(otto_home)
+        } else {
+            let home_dir = std::env::var("HOME").map_err(|e| eyre!("Failed to get HOME directory: {}", e))?;
+            PathBuf::from(home_dir).join(".otto")
+        };
 
-        // Build computed paths - simple structure with otto-<hash>
-        let project = home.join(format!("otto-{hash}"));
+        // Build computed paths - use project name and hash
+        let project = home.join(format!("{}-{}", name, hash));
         let cache = project.join(".cache");
         let run = project.join(time.to_string());
 
@@ -404,12 +409,20 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use tempfile::TempDir;
 
     #[tokio::test]
+    #[serial]
     async fn test_workspace_creation() -> Result<()> {
         let temp = TempDir::new()?;
         let root = temp.path().to_path_buf();
+
+        // Set up isolated test workspace
+        let otto_home = root.join(".otto");
+        unsafe {
+            std::env::set_var("OTTO_HOME", &otto_home);
+        }
 
         let ws = Workspace::new(root.clone()).await?;
         ws.init().await?;
@@ -424,9 +437,16 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_task_paths() -> Result<()> {
         let temp = TempDir::new()?;
         let root = temp.path().to_path_buf();
+
+        // Set up isolated test workspace
+        let otto_home = root.join(".otto");
+        unsafe {
+            std::env::set_var("OTTO_HOME", &otto_home);
+        }
 
         let ws = Workspace::new(root.clone()).await?;
         ws.init().await?;
@@ -447,9 +467,16 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_metadata_paths() -> Result<()> {
         let temp = TempDir::new()?;
         let root = temp.path().to_path_buf();
+
+        // Set up isolated test workspace
+        let otto_home = root.join(".otto");
+        unsafe {
+            std::env::set_var("OTTO_HOME", &otto_home);
+        }
 
         let ws = Workspace::new(root.clone()).await?;
 

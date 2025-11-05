@@ -1,18 +1,26 @@
 use assert_cmd::cargo::cargo_bin_cmd;
+use serial_test::serial;
 use std::fs;
 use tempfile::TempDir;
 
-/// Helper to set up isolated test database
+/// Helper to set up isolated test database and workspace
 fn setup_test_db(temp_dir: &std::path::Path) -> std::path::PathBuf {
     let db_path = temp_dir.join("test_otto.db");
+    let otto_home = temp_dir.join(".otto");
+    unsafe {
+        std::env::set_var("OTTO_DB_PATH", &db_path);
+        std::env::set_var("OTTO_HOME", &otto_home);
+    }
     db_path
 }
 
 /// Test that all four built-in commands are registered and show up in help
 #[test]
+#[serial]
 fn test_all_builtin_commands_registered() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     let db_path = setup_test_db(temp_dir.path());
+    let otto_home = temp_dir.path().join(".otto");
     let ottofile = temp_dir.path().join("otto.yml");
 
     // Create minimal ottofile
@@ -28,6 +36,7 @@ tasks:
     let output = cargo_bin_cmd!("otto")
         .current_dir(temp_dir.path())
         .env("OTTO_DB_PATH", &db_path)
+        .env("OTTO_HOME", &otto_home)
         .arg("--help")
         .output()?;
 
@@ -56,9 +65,11 @@ tasks:
 
 /// Test that graph command can be invoked
 #[test]
+#[serial]
 fn test_graph_command_exists() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     let db_path = setup_test_db(temp_dir.path());
+    let otto_home = temp_dir.path().join(".otto");
     let ottofile = temp_dir.path().join("otto.yml");
 
     fs::write(
@@ -74,6 +85,7 @@ tasks:
     let output = cmd
         .current_dir(temp_dir.path())
         .env("OTTO_DB_PATH", &db_path)
+        .env("OTTO_HOME", &otto_home)
         .arg("graph")
         .arg("--help")
         .output()?;
@@ -90,6 +102,7 @@ tasks:
 
 /// Test that clean command can be invoked
 #[test]
+#[serial]
 fn test_clean_command_exists() -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = cargo_bin_cmd!("otto");
     let output = cmd.arg("clean").arg("--help").output()?;
@@ -106,6 +119,7 @@ fn test_clean_command_exists() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Test that history command can be invoked
 #[test]
+#[serial]
 fn test_history_command_exists() -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = cargo_bin_cmd!("otto");
     let output = cmd.arg("history").arg("--help").output()?;
@@ -122,6 +136,7 @@ fn test_history_command_exists() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Test that stats command can be invoked
 #[test]
+#[serial]
 fn test_stats_command_exists() -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = cargo_bin_cmd!("otto");
     let output = cmd.arg("stats").arg("--help").output()?;
@@ -138,9 +153,11 @@ fn test_stats_command_exists() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Test that all built-in commands are filtered out during normal execution
 #[test]
+#[serial]
 fn test_builtin_commands_filtered_from_execution() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     let db_path = setup_test_db(temp_dir.path());
+    let otto_home = temp_dir.path().join(".otto");
     let ottofile = temp_dir.path().join("otto.yml");
 
     // Create ottofile with a task that depends on a built-in
@@ -159,6 +176,7 @@ tasks:
     let output = cmd
         .current_dir(temp_dir.path())
         .env("OTTO_DB_PATH", &db_path)
+        .env("OTTO_HOME", &otto_home)
         .arg("real-task")
         .output()?;
 
@@ -170,9 +188,11 @@ tasks:
 
 /// Test count of built-in commands (regression test)
 #[test]
+#[serial]
 fn test_builtin_command_count() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
     let db_path = setup_test_db(temp_dir.path());
+    let otto_home = temp_dir.path().join(".otto");
     let ottofile = temp_dir.path().join("otto.yml");
 
     fs::write(
@@ -188,6 +208,7 @@ tasks:
     let output = cmd
         .current_dir(temp_dir.path())
         .env("OTTO_DB_PATH", &db_path)
+        .env("OTTO_HOME", &otto_home)
         .arg("--help")
         .output()?;
 
@@ -207,6 +228,7 @@ tasks:
 
 /// Test that built-in commands have proper help text
 #[test]
+#[serial]
 fn test_builtin_commands_have_help() -> Result<(), Box<dyn std::error::Error>> {
     let commands = vec![
         ("graph", "Visualize", "--format"),

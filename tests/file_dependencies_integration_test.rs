@@ -1,4 +1,5 @@
 use eyre::Result;
+use serial_test::serial;
 use std::collections::HashMap;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -22,12 +23,14 @@ impl TestFixture {
         let temp_dir = TempDir::new()?;
         let temp_path = temp_dir.path().to_path_buf();
 
-        // Set up isolated test database
+        // Set up isolated test database and workspace
         let db_path = temp_path.join("test_otto.db");
+        let otto_home = temp_path.join(".otto");
         // SAFETY: This is safe in tests because we control the execution environment
         // and tests are isolated. The env var is set before any StateManager is created.
         unsafe {
             std::env::set_var("OTTO_DB_PATH", &db_path);
+            std::env::set_var("OTTO_HOME", &otto_home);
         }
 
         let workspace = Workspace::new(temp_path.clone()).await?;
@@ -109,15 +112,18 @@ impl TestFixture {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_file_dependencies_end_to_end_yaml() -> Result<()> {
     // Create a temporary directory for the test
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
 
-    // Set up isolated test database
+    // Set up isolated test database and workspace
     let db_path = temp_path.join("test_otto.db");
+    let otto_home = temp_path.join(".otto");
     unsafe {
         std::env::set_var("OTTO_DB_PATH", &db_path);
+        std::env::set_var("OTTO_HOME", &otto_home);
     }
 
     // Create source files
@@ -249,6 +255,7 @@ tasks:
 }
 
 #[tokio::test]
+#[serial]
 async fn test_file_dependencies_glob_patterns() -> Result<()> {
     let fixture = TestFixture::new().await?;
 
@@ -292,14 +299,17 @@ async fn test_file_dependencies_glob_patterns() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_file_dependencies_error_handling() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
 
-    // Set up isolated test database
+    // Set up isolated test database and workspace
     let db_path = temp_path.join("test_otto.db");
+    let otto_home = temp_path.join(".otto");
     unsafe {
         std::env::set_var("OTTO_DB_PATH", &db_path);
+        std::env::set_var("OTTO_HOME", &otto_home);
     }
 
     // Create task with missing input files
@@ -374,6 +384,7 @@ async fn test_file_dependencies_error_handling() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_file_dependencies_performance() -> Result<()> {
     let fixture = TestFixture::new().await?;
 
@@ -419,14 +430,17 @@ async fn test_file_dependencies_performance() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_mixed_task_and_file_dependencies() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
 
-    // Set up isolated test database
+    // Set up isolated test database and workspace
     let db_path = temp_path.join("test_otto.db");
+    let otto_home = temp_path.join(".otto");
     unsafe {
         std::env::set_var("OTTO_DB_PATH", &db_path);
+        std::env::set_var("OTTO_HOME", &otto_home);
     }
 
     // Create source files
@@ -526,14 +540,17 @@ async fn test_mixed_task_and_file_dependencies() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_file_dependencies_incremental_detection() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
 
-    // Set up isolated test database
+    // Set up isolated test database and workspace
     let db_path = temp_path.join("test_otto.db");
+    let otto_home = temp_path.join(".otto");
     unsafe {
         std::env::set_var("OTTO_DB_PATH", &db_path);
+        std::env::set_var("OTTO_HOME", &otto_home);
     }
 
     // Create input files
@@ -605,6 +622,7 @@ async fn test_file_dependencies_incremental_detection() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_file_dependencies_with_real_execution() -> Result<()> {
     let fixture = TestFixture::new().await?;
 
@@ -653,14 +671,17 @@ async fn test_file_dependencies_with_real_execution() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_file_dependencies_multiple_files() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
 
-    // Set up isolated test database
+    // Set up isolated test database and workspace
     let db_path = temp_path.join("test_otto.db");
+    let otto_home = temp_path.join(".otto");
     unsafe {
         std::env::set_var("OTTO_DB_PATH", &db_path);
+        std::env::set_var("OTTO_HOME", &otto_home);
     }
 
     // Create multiple input files with known content
@@ -746,6 +767,7 @@ async fn test_file_dependencies_multiple_files() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_file_dependencies_task_chain() -> Result<()> {
     let fixture = TestFixture::new().await?;
 
@@ -828,14 +850,17 @@ async fn test_file_dependencies_task_chain() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_file_dependencies_task_skipping() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
 
-    // Set up isolated test database
+    // Set up isolated test database and workspace
     let db_path = temp_path.join("test_otto.db");
+    let otto_home = temp_path.join(".otto");
     unsafe {
         std::env::set_var("OTTO_DB_PATH", &db_path);
+        std::env::set_var("OTTO_HOME", &otto_home);
     }
 
     // Create input and output files where output is already newer
@@ -901,6 +926,7 @@ async fn test_file_dependencies_task_skipping() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_file_dependencies_modification_detection() -> Result<()> {
     let fixture = TestFixture::new().await?;
 

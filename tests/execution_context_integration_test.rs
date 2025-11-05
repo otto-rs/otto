@@ -1,20 +1,24 @@
 use assert_fs::TempDir;
 use eyre::Result;
+use serial_test::serial;
 use std::fs;
 use std::path::PathBuf;
 
-/// Helper to set up a test-specific database path
+/// Helper to set up a test-specific database path and workspace
 fn setup_test_db(temp_dir: &std::path::Path) -> PathBuf {
     let db_path = temp_dir.join("test_otto.db");
+    let otto_home = temp_dir.join(".otto");
     // SAFETY: This is safe in tests because we control the execution environment
     // and tests are isolated. The env var is set before any StateManager is created.
     unsafe {
         std::env::set_var("OTTO_DB_PATH", &db_path);
+        std::env::set_var("OTTO_HOME", &otto_home);
     }
     db_path
 }
 
 #[tokio::test]
+#[serial]
 async fn test_execution_context_saved_with_ottofile_path() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
@@ -117,6 +121,7 @@ tasks:
 }
 
 #[tokio::test]
+#[serial]
 async fn test_execution_context_hash_matches_ottofile() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
@@ -165,6 +170,7 @@ tasks:
 }
 
 #[tokio::test]
+#[serial]
 async fn test_workspace_metadata_structure() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();

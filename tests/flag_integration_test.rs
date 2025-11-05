@@ -1,8 +1,10 @@
 use otto::cli::parser::Parser;
+use serial_test::serial;
 use std::fs;
 use tempfile::TempDir;
 
 #[test]
+#[serial]
 fn test_boolean_flags_integration() {
     let temp_dir = TempDir::new().unwrap();
     let otto_file = temp_dir.path().join("otto.yml");
@@ -56,6 +58,7 @@ tasks:
 }
 
 #[test]
+#[serial]
 fn test_boolean_flags_absent_integration() {
     let temp_dir = TempDir::new().unwrap();
     let otto_file = temp_dir.path().join("otto.yml");
@@ -101,6 +104,7 @@ tasks:
 }
 
 #[test]
+#[serial]
 fn test_argument_flags_integration() {
     let temp_dir = TempDir::new().unwrap();
     let otto_file = temp_dir.path().join("otto.yml");
@@ -158,6 +162,7 @@ tasks:
 }
 
 #[test]
+#[serial]
 fn test_argument_flags_with_defaults_integration() {
     let temp_dir = TempDir::new().unwrap();
     let otto_file = temp_dir.path().join("otto.yml");
@@ -211,6 +216,7 @@ tasks:
 }
 
 #[test]
+#[serial]
 fn test_mixed_flags_integration() {
     let temp_dir = TempDir::new().unwrap();
     let otto_file = temp_dir.path().join("otto.yml");
@@ -292,6 +298,7 @@ tasks:
 }
 
 #[test]
+#[serial]
 fn test_short_flag_combinations() {
     let temp_dir = TempDir::new().unwrap();
     let otto_file = temp_dir.path().join("otto.yml");

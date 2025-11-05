@@ -1,4 +1,5 @@
 use eyre::Result;
+use serial_test::serial;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -8,18 +9,21 @@ use tokio::time::timeout;
 
 use otto::executor::{Task, TaskScheduler, TaskStatus, Workspace, workspace::ExecutionContext};
 
-/// Helper to set up a test-specific database path
+/// Helper to set up a test-specific database path and workspace
 fn setup_test_db(temp_dir: &std::path::Path) -> PathBuf {
     let db_path = temp_dir.join("test_otto.db");
+    let otto_home = temp_dir.join(".otto");
     // SAFETY: This is safe in tests because we control the execution environment
     // and tests are isolated. The env var is set before any StateManager is created.
     unsafe {
         std::env::set_var("OTTO_DB_PATH", &db_path);
+        std::env::set_var("OTTO_HOME", &otto_home);
     }
     db_path
 }
 
 #[tokio::test]
+#[serial]
 async fn test_task_execution_with_output() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let work_dir = PathBuf::from(temp_dir.path());
@@ -48,6 +52,7 @@ async fn test_task_execution_with_output() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_task_dependencies() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let work_dir = PathBuf::from(temp_dir.path());
@@ -103,6 +108,7 @@ async fn test_task_dependencies() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_task_failure() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let work_dir = PathBuf::from(temp_dir.path());
@@ -132,6 +138,7 @@ async fn test_task_failure() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_output_capture() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let work_dir = PathBuf::from(temp_dir.path());
@@ -160,6 +167,7 @@ async fn test_output_capture() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_dependency_ordering() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let work_dir = PathBuf::from(temp_dir.path());
@@ -236,6 +244,7 @@ async fn test_dependency_ordering() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_parallel_execution() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let work_dir = PathBuf::from(temp_dir.path());

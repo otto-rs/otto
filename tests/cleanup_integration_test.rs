@@ -1,5 +1,6 @@
 use assert_cmd::cargo::cargo_bin_cmd;
 use eyre::Result;
+use serial_test::serial;
 use std::fs;
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -65,6 +66,7 @@ fn setup_test_database(
 }
 
 #[test]
+#[serial]
 fn test_clean_with_keep_last_flag() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let home_dir = temp_dir.path();
@@ -109,6 +111,7 @@ fn test_clean_with_keep_last_flag() -> Result<()> {
 }
 
 #[test]
+#[serial]
 fn test_clean_with_keep_failed_flag() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let home_dir = temp_dir.path();
@@ -158,6 +161,7 @@ fn test_clean_with_keep_failed_flag() -> Result<()> {
 }
 
 #[test]
+#[serial]
 fn test_clean_with_no_db_fallback() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let home_dir = temp_dir.path();
@@ -197,6 +201,7 @@ fn test_clean_with_no_db_fallback() -> Result<()> {
 }
 
 #[test]
+#[serial]
 fn test_clean_database_mode_vs_filesystem_mode() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let home_dir = temp_dir.path();
@@ -258,6 +263,7 @@ fn test_clean_database_mode_vs_filesystem_mode() -> Result<()> {
 }
 
 #[test]
+#[serial]
 fn test_clean_actually_deletes_with_database() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let home_dir = temp_dir.path();
@@ -300,6 +306,7 @@ fn test_clean_actually_deletes_with_database() -> Result<()> {
 }
 
 #[test]
+#[serial]
 fn test_clean_keep_last_in_filesystem_mode() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let home_dir = temp_dir.path();
@@ -341,6 +348,7 @@ fn test_clean_keep_last_in_filesystem_mode() -> Result<()> {
 }
 
 #[test]
+#[serial]
 fn test_clean_with_project_filter_and_database() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let home_dir = temp_dir.path();
@@ -384,6 +392,7 @@ fn test_clean_with_project_filter_and_database() -> Result<()> {
 }
 
 #[test]
+#[serial]
 fn test_clean_graceful_fallback_when_database_corrupt() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let home_dir = temp_dir.path();

@@ -734,20 +734,25 @@ impl TaskScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::path::PathBuf;
     use tempfile::TempDir;
 
-    /// Helper to set up a test-specific database path
+    /// Helper to set up a test-specific database path and workspace
     fn setup_test_db(temp_dir: &std::path::Path) {
         let db_path = temp_dir.join("test_otto.db");
+        let otto_home = temp_dir.join(".otto");
         // SAFETY: This is safe in tests because we control the execution environment
         // and tests are isolated. The env var is set before any StateManager is created.
         unsafe {
             std::env::set_var("OTTO_DB_PATH", &db_path);
+            std::env::set_var("OTTO_HOME", &otto_home);
         }
     }
 
     #[tokio::test]
+    #[serial]
+    #[serial]
     async fn test_task_execution() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
@@ -775,6 +780,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_task_dependencies() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
@@ -816,6 +822,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_task_failure() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
@@ -853,6 +860,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_file_dependencies() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
@@ -904,6 +912,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_file_timestamp_checking() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
@@ -932,6 +941,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_file_dependencies_nonexistent_files() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
@@ -969,6 +979,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_file_dependencies_multiple_inputs_outputs() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
@@ -1052,9 +1063,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_file_dependencies_with_task_dependencies() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
+        setup_test_db(&work_dir);
 
         let input_file = work_dir.join("input.txt");
         let intermediate_file = work_dir.join("intermediate.txt");
@@ -1114,6 +1127,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_file_dependencies_timestamp_precision() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
@@ -1155,6 +1169,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_file_dependencies_empty_lists() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
@@ -1189,6 +1204,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_file_dependencies_directory_as_input() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
@@ -1234,6 +1250,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_large_number_of_file_dependencies() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
@@ -1284,6 +1301,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_file_dependencies_circular_detection() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
@@ -1326,9 +1344,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_file_dependencies_integration_with_real_execution() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
+        setup_test_db(&work_dir);
 
         let input_file = work_dir.join("source.txt");
         let output_file = work_dir.join("result.txt");
@@ -1382,9 +1402,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_parallel_execution_limit() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = temp_dir.path().to_path_buf();
+        setup_test_db(&work_dir);
 
         let mut tasks = vec![];
         for i in 1..=4 {
@@ -1419,11 +1441,13 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_scheduler_respects_max_parallel() -> Result<()> {
         // Test with different job limits
         for max_parallel in [1, 2, 4, 8] {
             let temp_dir = TempDir::new()?;
             let work_dir = temp_dir.path().to_path_buf();
+            setup_test_db(&work_dir);
 
             let workspace = Workspace::new(work_dir).await?;
             workspace.init().await?;
@@ -1452,6 +1476,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_task_skipped_when_outputs_up_to_date() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
@@ -1500,6 +1525,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_tui_mode_message_broadcasting() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
@@ -1567,6 +1593,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_duration_tracking_accuracy() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
@@ -1632,6 +1659,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_file_dependency_check_error_handling() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
@@ -1662,6 +1690,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_multiple_tasks_with_mixed_states() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let work_dir = PathBuf::from(temp_dir.path());
