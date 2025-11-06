@@ -76,3 +76,4 @@ mod tests {
         assert!(cmd.output.is_some());
     }
 }
+

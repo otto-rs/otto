@@ -130,3 +130,4 @@ clean:
     assert_eq!(config.otto.tasks, config2.otto.tasks);
     assert_eq!(config.tasks.len(), config2.tasks.len());
 }
+
