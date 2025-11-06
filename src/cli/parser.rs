@@ -1235,12 +1235,143 @@ impl Parser {
         self.config_spec.tasks.insert("Convert".to_string(), convert_task);
     }
 
+    fn inject_upgrade_meta_task(&mut self) {
+        use crate::cfg::param::{Nargs, ParamType};
+
+        let upgrade_task = TaskSpec {
+            name: "Upgrade".to_string(),
+            help: Some("[built-in] Upgrade Otto to a newer version".to_string()),
+            after: vec![],
+            before: vec![],
+            input: vec![],
+            output: vec![],
+            envs: HashMap::new(),
+            params: {
+                let mut params = HashMap::new();
+
+                params.insert(
+                    "dry-run".to_string(),
+                    ParamSpec {
+                        name: "dry-run".to_string(),
+                        short: None,
+                        long: Some("dry-run".to_string()),
+                        param_type: ParamType::FLG,
+                        dest: None,
+                        metavar: None,
+                        default: None,
+                        constant: Value::Empty,
+                        choices: vec![],
+                        nargs: Nargs::Zero,
+                        help: Some("Show what would be done without doing it".to_string()),
+                        value: Value::Empty,
+                    },
+                );
+
+                params.insert(
+                    "version".to_string(),
+                    ParamSpec {
+                        name: "version".to_string(),
+                        short: Some('v'),
+                        long: Some("version".to_string()),
+                        param_type: ParamType::OPT,
+                        dest: None,
+                        metavar: Some("VERSION".to_string()),
+                        default: None,
+                        constant: Value::Empty,
+                        choices: vec![],
+                        nargs: Nargs::One,
+                        help: Some("Specific version to upgrade to".to_string()),
+                        value: Value::Empty,
+                    },
+                );
+
+                params.insert(
+                    "list-versions".to_string(),
+                    ParamSpec {
+                        name: "list-versions".to_string(),
+                        short: None,
+                        long: Some("list-versions".to_string()),
+                        param_type: ParamType::FLG,
+                        dest: None,
+                        metavar: None,
+                        default: None,
+                        constant: Value::Empty,
+                        choices: vec![],
+                        nargs: Nargs::Zero,
+                        help: Some("List available versions".to_string()),
+                        value: Value::Empty,
+                    },
+                );
+
+                params.insert(
+                    "rollback".to_string(),
+                    ParamSpec {
+                        name: "rollback".to_string(),
+                        short: None,
+                        long: Some("rollback".to_string()),
+                        param_type: ParamType::FLG,
+                        dest: None,
+                        metavar: None,
+                        default: None,
+                        constant: Value::Empty,
+                        choices: vec![],
+                        nargs: Nargs::Zero,
+                        help: Some("Rollback to previous version".to_string()),
+                        value: Value::Empty,
+                    },
+                );
+
+                params.insert(
+                    "force".to_string(),
+                    ParamSpec {
+                        name: "force".to_string(),
+                        short: None,
+                        long: Some("force".to_string()),
+                        param_type: ParamType::FLG,
+                        dest: None,
+                        metavar: None,
+                        default: None,
+                        constant: Value::Empty,
+                        choices: vec![],
+                        nargs: Nargs::Zero,
+                        help: Some("Force upgrade even if already on target version".to_string()),
+                        value: Value::Empty,
+                    },
+                );
+
+                params.insert(
+                    "no-backup".to_string(),
+                    ParamSpec {
+                        name: "no-backup".to_string(),
+                        short: None,
+                        long: Some("no-backup".to_string()),
+                        param_type: ParamType::FLG,
+                        dest: None,
+                        metavar: None,
+                        default: None,
+                        constant: Value::Empty,
+                        choices: vec![],
+                        nargs: Nargs::Zero,
+                        help: Some("Skip creating backup".to_string()),
+                        value: Value::Empty,
+                    },
+                );
+
+                params
+            },
+            action: "# Built-in upgrade command".to_string(),
+        };
+
+        self.config_spec.tasks.insert("Upgrade".to_string(), upgrade_task);
+    }
+
     fn inject_builtin_commands(&mut self) {
         self.inject_clean_meta_task();
         self.inject_convert_meta_task();
         self.inject_graph_meta_task();
         self.inject_history_meta_task();
         self.inject_stats_meta_task();
+        self.inject_upgrade_meta_task();
     }
 
     fn find_ottofile(path: &Path) -> Result<Option<PathBuf>> {

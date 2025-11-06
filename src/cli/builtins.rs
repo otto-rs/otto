@@ -11,7 +11,7 @@
 /// 3. Add early routing in main.rs if it doesn't need ottofile
 /// 4. Add execution filter if it shouldn't run as normal task
 /// 5. Add execution handler function
-pub const BUILTIN_COMMANDS: &[&str] = &["Clean", "Convert", "Graph", "History", "Stats"];
+pub const BUILTIN_COMMANDS: &[&str] = &["Clean", "Convert", "Graph", "History", "Stats", "Upgrade"];
 
 /// Check if a command name is a built-in
 pub fn is_builtin(name: &str) -> bool {
@@ -36,6 +36,7 @@ mod tests {
         assert!(is_builtin("Graph"));
         assert!(is_builtin("History"));
         assert!(is_builtin("Convert"));
+        assert!(is_builtin("Upgrade"));
 
         // Lowercase should NOT match
         assert!(!is_builtin("stats"));

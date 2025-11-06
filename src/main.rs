@@ -67,6 +67,13 @@ async fn main() {
                 }
                 return;
             }
+            "Upgrade" => {
+                if let Err(e) = execute_upgrade_command(&args[1..]).await {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+                return;
+            }
             _ => {}
         }
     }
@@ -458,5 +465,14 @@ fn execute_stats_command(args: &[String]) -> Result<(), Report> {
 
     let stats_cmd = StatsCommand::parse_from(args);
     stats_cmd.execute()?;
+    Ok(())
+}
+
+async fn execute_upgrade_command(args: &[String]) -> Result<(), Report> {
+    use clap::Parser;
+    use otto::cli::commands::UpgradeCommand;
+
+    let upgrade_cmd = UpgradeCommand::parse_from(args);
+    upgrade_cmd.execute().await?;
     Ok(())
 }

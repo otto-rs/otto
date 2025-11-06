@@ -219,8 +219,8 @@ tasks:
     let builtin_count = stdout.matches("[built-in]").count();
 
     assert_eq!(
-        builtin_count, 5,
-        "Expected exactly 5 built-in commands, found {}. Commands: Clean, Convert, Graph, History, Stats",
+        builtin_count, 6,
+        "Expected exactly 6 built-in commands, found {}. Commands: Clean, Convert, Graph, History, Stats, Upgrade",
         builtin_count
     );
 
