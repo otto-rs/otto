@@ -267,8 +267,8 @@ impl ScriptProcessor for BashProcessor {
             r#"# Otto-generated bash prologue
 set -euo pipefail
 
-declare -A OTTO_INPUT
-declare -A OTTO_OUTPUT
+declare -a OTTO_INPUT
+declare -a OTTO_OUTPUT
 
 # Set Otto environment variables
 export OTTO_TASK_DIR="$(dirname "$0")"
@@ -315,6 +315,7 @@ otto_serialize_output "{}"
         let builtins_content = r#"#!/bin/bash
 # Otto Bash Builtins
 # Functions to handle input/output file serialization
+# Compatible with Bash 3.2+ (uses indexed arrays instead of associative arrays)
 
 # Function to deserialize input.<task-name>.json -> OTTO_INPUT
 otto_deserialize_input() {
@@ -329,11 +330,12 @@ otto_deserialize_input() {
         fi
 
         # Load all key-value pairs from the JSON file into OTTO_INPUT
+        # Using indexed array with key=value format for Bash 3.2 compatibility
         while IFS= read -r key; do
             if [ "$key" != "null" ] && [ "$key" != "" ]; then
                 value=$(jq -r --arg k "$key" '.[$k] // empty' "$input_file")
                 if [ "$value" != "" ] && [ "$value" != "null" ]; then
-                    OTTO_INPUT["${task_name}.${key}"]="$value"
+                    OTTO_INPUT+=("${task_name}.${key}=${value}")
                 fi
             fi
         done < <(jq -r 'keys[]' "$input_file" 2>/dev/null)
@@ -345,12 +347,10 @@ otto_serialize_output() {
     local task_name="$1"
     local output_file="$OTTO_TASK_DIR/output.${task_name}.json"
 
-    # Check if OTTO_OUTPUT has any keys
-    local output_count=0
-    for key in "${!OTTO_OUTPUT[@]}"; do
-        output_count=$((output_count + 1))
-        break
-    done
+    # Check if OTTO_OUTPUT has any items (safely handle set -u)
+    set +u  # Temporarily disable unbound variable check
+    local output_count="${#OTTO_OUTPUT[@]}"
+    set -u  # Re-enable unbound variable check
 
     if [ "$output_count" -eq 0 ]; then
         # Empty output - write empty JSON
@@ -367,12 +367,19 @@ otto_serialize_output() {
         local obj_parts=()
         local i=0
 
-        for key in "${!OTTO_OUTPUT[@]}"; do
+        # Iterate through indexed array items (format: key=value)
+        set +u  # Temporarily disable for array iteration
+        for item in "${OTTO_OUTPUT[@]}"; do
+            set -u  # Re-enable inside loop
+            local key="${item%%=*}"    # Extract key (everything before first =)
+            local value="${item#*=}"   # Extract value (everything after first =)
             args+=(--arg "key_$i" "$key")
-            args+=(--arg "val_$i" "${OTTO_OUTPUT[$key]}")
+            args+=(--arg "val_$i" "$value")
             obj_parts+=("\$key_$i: \$val_$i")
             i=$((i + 1))
+            set +u  # Disable for next iteration
         done
+        set -u  # Re-enable after loop
 
         # Build the jq object construction
         local obj_str
@@ -381,16 +388,58 @@ otto_serialize_output() {
     fi
 }
 
-# Legacy helper functions for backward compatibility
+# Helper function to get input value by key
+# Uses linear search through indexed array (Bash 3.2 compatible)
 otto_get_input() {
     local key="$1"
-    echo "${OTTO_INPUT[$key]:-}"
+    local result=""
+
+    # Safely search through array (handles empty array with set -u)
+    set +u  # Temporarily disable for array operations
+    if [ "${#OTTO_INPUT[@]}" -gt 0 ]; then
+        for item in "${OTTO_INPUT[@]}"; do
+            if [[ "$item" == "$key="* ]]; then
+                result="${item#*=}"  # Extract value after first =
+                break
+            fi
+        done
+    fi
+    set -u  # Re-enable after array operations
+
+    echo "$result"
 }
 
+# Helper function to set output value by key
+# Replaces existing key if present, otherwise appends (Bash 3.2 compatible)
 otto_set_output() {
     local key="$1"
     local value="$2"
-    OTTO_OUTPUT["$key"]="$value"
+
+    # Remove existing key if present (to allow updates)
+    local new_array=()
+    local has_items=false
+
+    # Safely iterate through array (handles empty array with set -u)
+    set +u  # Temporarily disable for array operations
+    if [ "${#OTTO_OUTPUT[@]}" -gt 0 ]; then
+        for item in "${OTTO_OUTPUT[@]}"; do
+            if [[ "$item" != "$key="* ]]; then
+                new_array+=("$item")
+                has_items=true
+            fi
+        done
+    fi
+
+    # Add new key-value pair
+    new_array+=("$key=$value")
+
+    # Reassign array safely
+    if [ "${#new_array[@]}" -gt 0 ]; then
+        OTTO_OUTPUT=("${new_array[@]}")
+    else
+        OTTO_OUTPUT=()
+    fi
+    set -u  # Re-enable after array operations
 }
 "#;
         std::fs::write(&builtins_path, builtins_content)?;
@@ -702,8 +751,8 @@ mod tests {
         match result {
             ProcessedAction::Bash { path, script, hash } => {
                 assert!(path.exists());
-                assert!(script.contains("declare -A OTTO_INPUT"));
-                assert!(script.contains("declare -A OTTO_OUTPUT"));
+                assert!(script.contains("declare -a OTTO_INPUT"));
+                assert!(script.contains("declare -a OTTO_OUTPUT"));
                 assert!(script.contains("export OTTO_TASK_DIR"));
                 assert!(script.contains("greeting=\"hello\""));
                 assert!(script.contains("otto_deserialize_input \"dep_task\""));
@@ -814,8 +863,8 @@ mod tests {
         match result {
             ProcessedAction::Bash { path, script, hash } => {
                 assert!(path.exists());
-                assert!(script.contains("declare -A OTTO_INPUT"));
-                assert!(script.contains("declare -A OTTO_OUTPUT"));
+                assert!(script.contains("declare -a OTTO_INPUT"));
+                assert!(script.contains("declare -a OTTO_OUTPUT"));
                 assert!(script.contains("export OTTO_TASK_DIR"));
                 assert!(script.contains("message=\"hello\""));
                 assert!(script.contains("echo \"${message} from default bash\""));
