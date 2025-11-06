@@ -46,10 +46,7 @@ tasks:
         .stdout(predicate::str::contains("graph"))
         // Must contain standard options
         .stdout(predicate::str::contains("-j, --jobs"))
-        .stdout(predicate::str::contains("-v, --verbose"))
-        .stdout(predicate::str::contains("--dry-run"))
-        .stdout(predicate::str::contains("--force"))
-        .stdout(predicate::str::contains("--no-deps"))
+        .stdout(predicate::str::contains("-t, --tui"))
         // Must NOT contain error message when ottofile exists
         .stdout(predicate::str::contains("ERROR: No ottofile found").not())
         .stdout(predicate::str::contains("Otto looks for one of the following files").not());
@@ -72,10 +69,7 @@ fn test_help_without_ottofile_shows_normal_help_plus_error_message() {
         .stdout(predicate::str::contains("Options:"))
         // Must contain standard options
         .stdout(predicate::str::contains("-j, --jobs"))
-        .stdout(predicate::str::contains("-v, --verbose"))
-        .stdout(predicate::str::contains("--dry-run"))
-        .stdout(predicate::str::contains("--force"))
-        .stdout(predicate::str::contains("--no-deps"))
+        .stdout(predicate::str::contains("-t, --tui"))
         // Must NOT contain Commands section since no tasks available
         .stdout(predicate::str::contains("Commands:").not())
         // Must contain error message as after_help

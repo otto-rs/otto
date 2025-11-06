@@ -444,38 +444,6 @@ impl Parser {
                     .value_parser(value_parser!(String)),
             )
             .arg(
-                Arg::new("verbose")
-                    .short('v')
-                    .long("verbose")
-                    .help("Verbose output")
-                    .action(clap::ArgAction::SetTrue),
-            )
-            .arg(
-                Arg::new("quiet")
-                    .short('q')
-                    .long("quiet")
-                    .help("Quiet output")
-                    .action(clap::ArgAction::SetTrue),
-            )
-            .arg(
-                Arg::new("dry-run")
-                    .long("dry-run")
-                    .help("Show what would be done without executing")
-                    .action(clap::ArgAction::SetTrue),
-            )
-            .arg(
-                Arg::new("force")
-                    .long("force")
-                    .help("Force execution even if up-to-date")
-                    .action(clap::ArgAction::SetTrue),
-            )
-            .arg(
-                Arg::new("no-deps")
-                    .long("no-deps")
-                    .help("Don't run dependencies")
-                    .action(clap::ArgAction::SetTrue),
-            )
-            .arg(
                 Arg::new("tui")
                     .short('t')
                     .long("tui")
@@ -816,38 +784,6 @@ impl Parser {
                     .value_parser(value_parser!(String)),
             )
             .arg(
-                Arg::new("verbose")
-                    .short('v')
-                    .long("verbose")
-                    .help("Verbose output")
-                    .action(clap::ArgAction::SetTrue),
-            )
-            .arg(
-                Arg::new("quiet")
-                    .short('q')
-                    .long("quiet")
-                    .help("Quiet output")
-                    .action(clap::ArgAction::SetTrue),
-            )
-            .arg(
-                Arg::new("dry-run")
-                    .long("dry-run")
-                    .help("Show what would be done without executing")
-                    .action(clap::ArgAction::SetTrue),
-            )
-            .arg(
-                Arg::new("force")
-                    .long("force")
-                    .help("Force execution even if up-to-date")
-                    .action(clap::ArgAction::SetTrue),
-            )
-            .arg(
-                Arg::new("no-deps")
-                    .long("no-deps")
-                    .help("Don't run dependencies")
-                    .action(clap::ArgAction::SetTrue),
-            )
-            .arg(
                 Arg::new("tui")
                     .short('t')
                     .long("tui")
@@ -901,38 +837,6 @@ impl Parser {
                     .help("Number of parallel jobs")
                     .default_value(DEFAULT_JOBS.as_str())
                     .value_parser(value_parser!(String)),
-            )
-            .arg(
-                Arg::new("verbose")
-                    .short('v')
-                    .long("verbose")
-                    .help("Verbose output")
-                    .action(clap::ArgAction::SetTrue),
-            )
-            .arg(
-                Arg::new("quiet")
-                    .short('q')
-                    .long("quiet")
-                    .help("Quiet output")
-                    .action(clap::ArgAction::SetTrue),
-            )
-            .arg(
-                Arg::new("dry-run")
-                    .long("dry-run")
-                    .help("Show what would be done without executing")
-                    .action(clap::ArgAction::SetTrue),
-            )
-            .arg(
-                Arg::new("force")
-                    .long("force")
-                    .help("Force execution even if up-to-date")
-                    .action(clap::ArgAction::SetTrue),
-            )
-            .arg(
-                Arg::new("no-deps")
-                    .long("no-deps")
-                    .help("Don't run dependencies")
-                    .action(clap::ArgAction::SetTrue),
             )
             .arg(
                 Arg::new("tui")
