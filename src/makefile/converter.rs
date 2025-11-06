@@ -339,4 +339,3 @@ mod tests {
         assert_eq!(config.otto.tasks, vec!["*".to_string()]);
     }
 }
-

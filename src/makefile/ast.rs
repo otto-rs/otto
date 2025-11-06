@@ -95,4 +95,3 @@ mod tests {
         assert!(target.is_phony);
     }
 }
-
