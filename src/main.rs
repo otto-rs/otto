@@ -39,28 +39,28 @@ async fn main() {
 
     if args.len() > 1 {
         match args[1].as_str() {
-            "clean" => {
+            "Clean" => {
                 if let Err(e) = execute_clean_command(&args[1..]).await {
                     eprintln!("{e}");
                     std::process::exit(1);
                 }
                 return;
             }
-            "convert" => {
+            "Convert" => {
                 if let Err(e) = execute_convert_command(&args[1..]) {
                     eprintln!("{e}");
                     std::process::exit(1);
                 }
                 return;
             }
-            "history" => {
+            "History" => {
                 if let Err(e) = execute_history_command(&args[1..]) {
                     eprintln!("{e}");
                     std::process::exit(1);
                 }
                 return;
             }
-            "stats" => {
+            "Stats" => {
                 if let Err(e) = execute_stats_command(&args[1..]) {
                     eprintln!("{e}");
                     std::process::exit(1);
@@ -237,22 +237,22 @@ async fn execute_with_terminal_output(
         return Ok(());
     }
 
-    let clean_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "clean").collect();
+    let clean_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "Clean").collect();
     if !clean_tasks.is_empty() {
         return execute_clean_from_task(clean_tasks[0]).await;
     }
 
-    let graph_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "graph").collect();
+    let graph_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "Graph").collect();
     if !graph_tasks.is_empty() {
         return DagVisualizer::execute_command(graph_tasks[0]).await;
     }
 
-    let history_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "history").collect();
+    let history_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "History").collect();
     if !history_tasks.is_empty() {
         return execute_history_from_task(history_tasks[0]);
     }
 
-    let stats_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "stats").collect();
+    let stats_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "Stats").collect();
     if !stats_tasks.is_empty() {
         return execute_stats_from_task(stats_tasks[0]);
     }
@@ -260,7 +260,7 @@ async fn execute_with_terminal_output(
     // Filter out built-in commands for normal execution
     let execution_tasks: Vec<_> = tasks
         .into_iter()
-        .filter(|task| task.name != "graph" && task.name != "clean" && task.name != "history" && task.name != "stats")
+        .filter(|task| !otto::cli::is_builtin(&task.name))
         .collect();
 
     if execution_tasks.is_empty() {
@@ -319,7 +319,7 @@ async fn execute_with_tui(
     // Filter out built-in commands for normal execution
     let execution_tasks: Vec<_> = tasks
         .into_iter()
-        .filter(|task| task.name != "graph" && task.name != "clean" && task.name != "history" && task.name != "stats")
+        .filter(|task| !otto::cli::is_builtin(&task.name))
         .collect();
 
     if execution_tasks.is_empty() {

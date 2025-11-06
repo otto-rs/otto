@@ -1,11 +1,13 @@
-# `otto stats` - Execution Statistics
+# `otto Stats` - Execution Statistics
 
-The `stats` command provides aggregate metrics and analytics about Otto executions, helping you understand performance trends, success rates, and resource utilization.
+The `Stats` command provides aggregate metrics and analytics about Otto executions, helping you understand performance trends, success rates, and resource utilization.
+
+> **Note**: Built-in commands are capitalized (e.g., `Stats`, `Clean`) to avoid namespace conflicts with user-defined tasks.
 
 ## Usage
 
 ```bash
-otto stats [OPTIONS]
+otto Stats [OPTIONS]
 ```
 
 ## Options
@@ -21,7 +23,7 @@ otto stats [OPTIONS]
 
 ```bash
 # System-wide statistics
-otto stats
+otto Stats
 ```
 
 **Output:**
@@ -42,7 +44,7 @@ Average Run Duration:    54.2s
 
 ```bash
 # Statistics for a specific task
-otto stats --task build
+otto Stats --task build
 ```
 
 **Output:**
@@ -63,10 +65,10 @@ Total Time:              35m 4s
 
 ```bash
 # Export statistics as JSON
-otto stats --json
+otto Stats --json
 
 # Task-specific JSON
-otto stats --task test --json
+otto Stats --task test --json
 ```
 
 ## Output Format
@@ -144,10 +146,10 @@ Track system performance over time:
 
 ```bash
 # Get baseline metrics
-otto stats --json > baseline.json
+otto Stats --json > baseline.json
 
 # Later, compare
-otto stats --json > current.json
+otto Stats --json > current.json
 diff <(jq . baseline.json) <(jq . current.json)
 ```
 
@@ -157,10 +159,10 @@ Monitor success rates:
 
 ```bash
 # Overall reliability
-otto stats | grep "Successful"
+otto Stats | grep "Successful"
 
 # Per-task reliability
-otto stats --task ci | grep "Successful"
+otto Stats --task ci | grep "Successful"
 ```
 
 ### Resource Planning
@@ -169,10 +171,10 @@ Understand resource requirements:
 
 ```bash
 # Check disk usage trends
-otto stats --json | jq '.total_disk_usage / 1024 / 1024 / 1024 | floor'
+otto Stats --json | jq '.total_disk_usage / 1024 / 1024 / 1024 | floor'
 
 # Average execution time
-otto stats --json | jq '.total_duration_seconds / .total_runs'
+otto Stats --json | jq '.total_duration_seconds / .total_runs'
 ```
 
 ### Identifying Slow Tasks
@@ -182,7 +184,7 @@ Find tasks that need optimization:
 ```bash
 # Get all task stats and sort by duration
 for task in $(otto --help | grep -A100 "Commands:" | tail -n+2 | awk '{print $1}'); do
-  echo "$task: $(otto stats --task $task --json 2>/dev/null | jq -r '.avg_duration_seconds // 0')"
+  echo "$task: $(otto Stats --task $task --json 2>/dev/null | jq -r '.avg_duration_seconds // 0')"
 done | sort -t: -k2 -rn | head -10
 ```
 
@@ -192,10 +194,10 @@ Estimate future resource needs:
 
 ```bash
 # Disk usage per run
-otto stats --json | jq '.total_disk_usage / .total_runs / 1024 / 1024 | floor'
+otto Stats --json | jq '.total_disk_usage / .total_runs / 1024 / 1024 | floor'
 
 # Runs per day
-otto history --json | jq 'group_by(.timestamp / 86400 | floor) | map(length) | add / length'
+otto History --json | jq 'group_by(.timestamp / 86400 | floor) | map(length) | add / length'
 ```
 
 ## Metrics Explained
@@ -219,7 +221,7 @@ Mean execution time helps identify:
 Total space consumed by Otto artifacts:
 - Run directories (`~/.otto/otto-*/`)
 - Task outputs, logs, and caches
-- Use `otto clean` to manage
+- Use `otto Clean` to manage
 
 ## Notes
 
@@ -230,9 +232,9 @@ Total space consumed by Otto artifacts:
 
 ## Related Commands
 
-- [`otto history`](history.md) - View detailed execution history
-- [`otto clean`](clean.md) - Manage disk usage
-- [`otto graph`](graph.md) - Visualize dependencies
+- [`otto History`](history.md) - View detailed execution history
+- [`otto Clean`](clean.md) - Manage disk usage
+- [`otto Graph`](graph.md) - Visualize dependencies
 
 ## Performance Considerations
 

@@ -19,6 +19,7 @@ use sha2::{Digest, Sha256};
 use crate::cfg::config::{ConfigSpec, ParamSpec, TaskSpec, Value};
 use crate::cfg::env as env_eval;
 use crate::cfg::param::ParamType;
+use crate::cli::builtins::BUILTIN_COMMANDS;
 
 pub type DAG<T> = Dag<T, (), u32>;
 
@@ -857,12 +858,11 @@ impl Parser {
 
         if !self.config_spec.tasks.is_empty() {
             // Separate regular tasks from built-in commands
-            let builtin_commands = ["graph", "clean", "history", "stats"];
             let mut regular_tasks: Vec<_> = self
                 .config_spec
                 .tasks
                 .iter()
-                .filter(|(name, _)| !builtin_commands.contains(&name.as_str()))
+                .filter(|(name, _)| !BUILTIN_COMMANDS.contains(&name.as_str()))
                 .collect();
             regular_tasks.sort_by_key(|(name, _)| name.as_str());
 
@@ -875,7 +875,7 @@ impl Parser {
                 .config_spec
                 .tasks
                 .iter()
-                .filter(|(name, _)| builtin_commands.contains(&name.as_str()))
+                .filter(|(name, _)| BUILTIN_COMMANDS.contains(&name.as_str()))
                 .collect();
             builtins.sort_by_key(|(name, _)| name.as_str());
 
@@ -949,7 +949,7 @@ impl Parser {
         use crate::cfg::param::{Nargs, ParamType};
 
         let graph_task = TaskSpec {
-            name: "graph".to_string(),
+            name: "Graph".to_string(),
             help: Some("[built-in] Visualize the task dependency graph".to_string()),
             after: vec![],
             before: vec![],
@@ -1006,14 +1006,14 @@ impl Parser {
             action: "# Built-in graph command".to_string(),
         };
 
-        self.config_spec.tasks.insert("graph".to_string(), graph_task);
+        self.config_spec.tasks.insert("Graph".to_string(), graph_task);
     }
 
     fn inject_clean_meta_task(&mut self) {
         use crate::cfg::param::{Nargs, ParamType};
 
         let clean_task = TaskSpec {
-            name: "clean".to_string(),
+            name: "Clean".to_string(),
             help: Some("[built-in] Clean old runs from ~/.otto/".to_string()),
             after: vec![],
             before: vec![],
@@ -1082,14 +1082,14 @@ impl Parser {
             action: "# Built-in clean command".to_string(),
         };
 
-        self.config_spec.tasks.insert("clean".to_string(), clean_task);
+        self.config_spec.tasks.insert("Clean".to_string(), clean_task);
     }
 
     fn inject_history_meta_task(&mut self) {
         use crate::cfg::param::{Nargs, ParamType};
 
         let history_task = TaskSpec {
-            name: "history".to_string(),
+            name: "History".to_string(),
             help: Some("[built-in] View execution history".to_string()),
             after: vec![],
             before: vec![],
@@ -1194,14 +1194,14 @@ impl Parser {
             action: "# Built-in history command".to_string(),
         };
 
-        self.config_spec.tasks.insert("history".to_string(), history_task);
+        self.config_spec.tasks.insert("History".to_string(), history_task);
     }
 
     fn inject_stats_meta_task(&mut self) {
         use crate::cfg::param::{Nargs, ParamType};
 
         let stats_task = TaskSpec {
-            name: "stats".to_string(),
+            name: "Stats".to_string(),
             help: Some("[built-in] View execution statistics".to_string()),
             after: vec![],
             before: vec![],
@@ -1270,12 +1270,71 @@ impl Parser {
             action: "# Built-in stats command".to_string(),
         };
 
-        self.config_spec.tasks.insert("stats".to_string(), stats_task);
+        self.config_spec.tasks.insert("Stats".to_string(), stats_task);
+    }
+
+    fn inject_convert_meta_task(&mut self) {
+        use crate::cfg::param::{Nargs, ParamType};
+
+        let convert_task = TaskSpec {
+            name: "Convert".to_string(),
+            help: Some("[built-in] Convert Makefile to Otto YAML format".to_string()),
+            after: vec![],
+            before: vec![],
+            input: vec![],
+            output: vec![],
+            envs: HashMap::new(),
+            params: {
+                let mut params = HashMap::new();
+
+                params.insert(
+                    "strict".to_string(),
+                    ParamSpec {
+                        name: "strict".to_string(),
+                        short: None,
+                        long: Some("strict".to_string()),
+                        param_type: ParamType::FLG,
+                        dest: None,
+                        metavar: None,
+                        default: None,
+                        constant: Value::Empty,
+                        choices: vec![],
+                        nargs: Nargs::Zero,
+                        help: Some("Treat warnings as errors".to_string()),
+                        value: Value::Empty,
+                    },
+                );
+
+                params.insert(
+                    "output".to_string(),
+                    ParamSpec {
+                        name: "output".to_string(),
+                        short: Some('o'),
+                        long: Some("output".to_string()),
+                        param_type: ParamType::OPT,
+                        dest: None,
+                        metavar: Some("FILE".to_string()),
+                        default: None,
+                        constant: Value::Empty,
+                        choices: vec![],
+                        nargs: Nargs::One,
+                        help: Some("Output file (default: stdout)".to_string()),
+                        value: Value::Empty,
+                    },
+                );
+
+                params
+            },
+            action: "# Built-in convert command".to_string(),
+        };
+
+        self.config_spec.tasks.insert("Convert".to_string(), convert_task);
     }
 
     fn inject_builtin_commands(&mut self) {
-        self.inject_graph_meta_task();
         self.inject_clean_meta_task();
+        self.inject_convert_meta_task();
+        self.inject_graph_meta_task();
         self.inject_history_meta_task();
         self.inject_stats_meta_task();
     }

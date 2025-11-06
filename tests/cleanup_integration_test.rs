@@ -89,7 +89,7 @@ fn test_clean_with_keep_last_flag() -> Result<()> {
 
     // Run clean with --keep-last 2
     let output = cargo_bin_cmd!("otto")
-        .arg("clean")
+        .arg("Clean")
         .arg("--keep-days")
         .arg("30")
         .arg("--keep-last")
@@ -138,7 +138,7 @@ fn test_clean_with_keep_failed_flag() -> Result<()> {
 
     // Run clean: keep successful runs for 30 days, failed runs for 45 days
     let output = cargo_bin_cmd!("otto")
-        .arg("clean")
+        .arg("Clean")
         .arg("--keep-days")
         .arg("30")
         .arg("--keep-failed")
@@ -180,7 +180,7 @@ fn test_clean_with_no_db_fallback() -> Result<()> {
 
     // Run clean with --no-db (filesystem fallback mode)
     let output = cargo_bin_cmd!("otto")
-        .arg("clean")
+        .arg("Clean")
         .arg("--keep-days")
         .arg("30")
         .arg("--no-db")
@@ -219,7 +219,7 @@ fn test_clean_database_mode_vs_filesystem_mode() -> Result<()> {
 
     // Run with database
     let db_output = cargo_bin_cmd!("otto")
-        .arg("clean")
+        .arg("Clean")
         .arg("--keep-days")
         .arg("30")
         .arg("--dry-run")
@@ -230,7 +230,7 @@ fn test_clean_database_mode_vs_filesystem_mode() -> Result<()> {
 
     // Run with --no-db (filesystem)
     let fs_output = cargo_bin_cmd!("otto")
-        .arg("clean")
+        .arg("Clean")
         .arg("--keep-days")
         .arg("30")
         .arg("--no-db")
@@ -285,7 +285,7 @@ fn test_clean_actually_deletes_with_database() -> Result<()> {
 
     // Run clean without --dry-run
     let output = cargo_bin_cmd!("otto")
-        .arg("clean")
+        .arg("Clean")
         .arg("--keep-days")
         .arg("30")
         .env("HOME", home_dir)
@@ -323,7 +323,7 @@ fn test_clean_keep_last_in_filesystem_mode() -> Result<()> {
 
     // Run clean with --keep-last in filesystem mode
     let output = cargo_bin_cmd!("otto")
-        .arg("clean")
+        .arg("Clean")
         .arg("--keep-days")
         .arg("30")
         .arg("--keep-last")
@@ -370,7 +370,7 @@ fn test_clean_with_project_filter_and_database() -> Result<()> {
 
     // Run clean with project filter
     let output = cargo_bin_cmd!("otto")
-        .arg("clean")
+        .arg("Clean")
         .arg("--keep-days")
         .arg("30")
         .arg("--project-filter")
@@ -410,7 +410,7 @@ fn test_clean_graceful_fallback_when_database_corrupt() -> Result<()> {
 
     // Run clean - should fallback to filesystem scan
     let output = cargo_bin_cmd!("otto")
-        .arg("clean")
+        .arg("Clean")
         .arg("--keep-days")
         .arg("30")
         .arg("--dry-run")

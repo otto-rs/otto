@@ -42,22 +42,26 @@ tasks:
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // All four built-in commands MUST appear in help
+    // All built-in commands MUST appear in help (capitalized)
     assert!(
-        stdout.contains("graph") && stdout.contains("[built-in]"),
-        "graph command not found in help"
+        stdout.contains("Graph") && stdout.contains("[built-in]"),
+        "Graph command not found in help"
     );
     assert!(
-        stdout.contains("clean") && stdout.contains("[built-in]"),
-        "clean command not found in help"
+        stdout.contains("Clean") && stdout.contains("[built-in]"),
+        "Clean command not found in help"
     );
     assert!(
-        stdout.contains("history") && stdout.contains("[built-in]"),
-        "history command not found in help"
+        stdout.contains("History") && stdout.contains("[built-in]"),
+        "History command not found in help"
     );
     assert!(
-        stdout.contains("stats") && stdout.contains("[built-in]"),
-        "stats command not found in help"
+        stdout.contains("Stats") && stdout.contains("[built-in]"),
+        "Stats command not found in help"
+    );
+    assert!(
+        stdout.contains("Convert") && stdout.contains("[built-in]"),
+        "Convert command not found in help"
     );
 
     Ok(())
@@ -86,66 +90,63 @@ tasks:
         .current_dir(temp_dir.path())
         .env("OTTO_DB_PATH", &db_path)
         .env("OTTO_HOME", &otto_home)
-        .arg("graph")
+        .arg("Graph")
         .arg("--help")
         .output()?;
 
-    assert!(output.status.success(), "graph --help should succeed");
+    assert!(output.status.success(), "Graph --help should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("graph") || stdout.contains("Visualize"),
-        "graph help should mention graph/visualize"
+        stdout.contains("Graph") || stdout.contains("Visualize"),
+        "Graph help should mention Graph/visualize"
     );
 
     Ok(())
 }
 
-/// Test that clean command can be invoked
+/// Test that Clean command can be invoked
 #[test]
 #[serial]
 fn test_clean_command_exists() -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = cargo_bin_cmd!("otto");
-    let output = cmd.arg("clean").arg("--help").output()?;
+    let output = cmd.arg("Clean").arg("--help").output()?;
 
-    assert!(output.status.success(), "clean --help should succeed");
+    assert!(output.status.success(), "Clean --help should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("clean") || stdout.contains("Clean"),
-        "clean help should mention clean"
-    );
+    assert!(stdout.contains("Clean"), "Clean help should mention Clean");
 
     Ok(())
 }
 
-/// Test that history command can be invoked
+/// Test that History command can be invoked
 #[test]
 #[serial]
 fn test_history_command_exists() -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = cargo_bin_cmd!("otto");
-    let output = cmd.arg("history").arg("--help").output()?;
+    let output = cmd.arg("History").arg("--help").output()?;
 
-    assert!(output.status.success(), "history --help should succeed");
+    assert!(output.status.success(), "History --help should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("history") || stdout.contains("execution history"),
-        "history help should mention history"
+        stdout.contains("History") || stdout.contains("execution history"),
+        "History help should mention History"
     );
 
     Ok(())
 }
 
-/// Test that stats command can be invoked
+/// Test that Stats command can be invoked
 #[test]
 #[serial]
 fn test_stats_command_exists() -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = cargo_bin_cmd!("otto");
-    let output = cmd.arg("stats").arg("--help").output()?;
+    let output = cmd.arg("Stats").arg("--help").output()?;
 
-    assert!(output.status.success(), "stats --help should succeed");
+    assert!(output.status.success(), "Stats --help should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("stats") || stdout.contains("statistics"),
-        "stats help should mention stats"
+        stdout.contains("Stats") || stdout.contains("statistics"),
+        "Stats help should mention Stats"
     );
 
     Ok(())
@@ -218,8 +219,8 @@ tasks:
     let builtin_count = stdout.matches("[built-in]").count();
 
     assert_eq!(
-        builtin_count, 4,
-        "Expected exactly 4 built-in commands, found {}. Commands: graph, clean, history, stats",
+        builtin_count, 5,
+        "Expected exactly 5 built-in commands, found {}. Commands: Clean, Convert, Graph, History, Stats",
         builtin_count
     );
 
@@ -231,10 +232,11 @@ tasks:
 #[serial]
 fn test_builtin_commands_have_help() -> Result<(), Box<dyn std::error::Error>> {
     let commands = vec![
-        ("graph", "Visualize", "--format"),
-        ("clean", "Clean", "--keep"),
-        ("history", "history", "--limit"),
-        ("stats", "statistics", "--limit"),
+        ("Graph", "Visualize", "--format"),
+        ("Clean", "Clean", "--keep"),
+        ("History", "History", "--limit"),
+        ("Stats", "statistics", "--limit"),
+        ("Convert", "Convert", "--output"),
     ];
 
     for (cmd_name, expected_word, expected_flag) in commands {
