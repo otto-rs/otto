@@ -63,7 +63,7 @@ impl PlatformInfo {
         let arch = env::consts::ARCH;
 
         let platform_str = match (os, arch) {
-            ("linux", "x86_64") => "linux-x86_64",
+            ("linux", "x86_64") => "linux",
             ("linux", "aarch64") => "linux-arm64",
             ("macos", "x86_64") => "macos-x86_64",
             ("macos", "aarch64") => "macos-arm64",
@@ -276,14 +276,10 @@ impl UpgradeCommand {
     }
 
     fn current_version(&self) -> Result<String> {
-        // Try to get version from environment variable (set at build time)
-        if let Ok(version) = env::var("OTTO_VERSION") {
-            return Ok(version.trim_start_matches('v').to_string());
-        }
-
-        // Fallback: parse from cargo package version
-        let version = env!("CARGO_PKG_VERSION");
-        Ok(version.to_string())
+        // Use GIT_DESCRIBE which is set at build time in build.rs
+        // This matches what --version displays
+        let version = env!("GIT_DESCRIBE");
+        Ok(version.trim_start_matches('v').to_string())
     }
 
     async fn fetch_releases(&self) -> Result<Vec<GitHubRelease>> {
@@ -312,13 +308,15 @@ impl UpgradeCommand {
     }
 
     fn find_asset<'a>(&self, release: &'a GitHubRelease, platform: &str) -> Result<&'a GitHubAsset> {
-        let pattern = format!("otto-{}.tar.gz", platform);
+        // Extract version from release tag
+        let version = release.tag_name.trim_start_matches('v');
+        let pattern = format!("otto-v{}-{}.tar.gz", version, platform);
 
         release
             .assets
             .iter()
-            .find(|asset| asset.name.contains(&pattern))
-            .ok_or_else(|| eyre!("No asset found for platform: {}", platform))
+            .find(|asset| asset.name == pattern)
+            .ok_or_else(|| eyre!("No asset found for platform: {} (looking for {})", platform, pattern))
     }
 
     async fn download_with_progress(&self, url: &str) -> Result<PathBuf> {
