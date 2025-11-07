@@ -445,7 +445,9 @@ impl TaskScheduler {
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs;
-                        fs::symlink(&dep_output_file, &current_input_file)?;
+                        // Use relative path for portability
+                        let relative_dep_path = workspace.relative_task_dependency_path(dep_name);
+                        fs::symlink(&relative_dep_path, &current_input_file)?;
                     }
                     #[cfg(not(unix))]
                     {

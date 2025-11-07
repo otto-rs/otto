@@ -130,7 +130,9 @@ impl ActionProcessor {
         #[cfg(unix)]
         {
             use std::os::unix::fs;
-            fs::symlink(&cache_file, &script_path)?;
+            // Use relative path for portability
+            let relative_cache = self.workspace.relative_script_cache_path(&cache_file);
+            fs::symlink(&relative_cache, &script_path)?;
         }
         #[cfg(not(unix))]
         {

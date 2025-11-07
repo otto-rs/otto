@@ -380,6 +380,28 @@ impl Workspace {
         self.task(task_name).join(format!("script.{extension}"))
     }
 
+    /// Get relative path from task script to cache file
+    /// Returns: `../../../.cache/<filename>`
+    pub fn relative_script_cache_path(&self, cache_file: &Path) -> PathBuf {
+        // Script is at: <run>/tasks/<task>/script.{sh,py}
+        // Cache is at: <project>/.cache/<hash>.{sh,py}
+        // Relative: ../../../.cache/<filename>
+        let mut relative_path = PathBuf::from("../../..");
+        relative_path.push(".cache");
+        if let Some(filename) = cache_file.file_name() {
+            relative_path.push(filename);
+        }
+        relative_path
+    }
+
+    /// Get relative path from task input to dependency output
+    /// Returns: `../<dep_name>/output.<dep_name>.json`
+    pub fn relative_task_dependency_path(&self, dep_name: &str) -> PathBuf {
+        PathBuf::from("..")
+            .join(dep_name)
+            .join(format!("output.{dep_name}.json"))
+    }
+
     /// Get the current run directory
     pub fn current_run_dir(&self) -> &PathBuf {
         &self.run
