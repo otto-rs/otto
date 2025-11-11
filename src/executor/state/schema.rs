@@ -2,7 +2,7 @@ use eyre::Result;
 use rusqlite::Connection;
 
 /// SQL schema for the otto database
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// Status of a run
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -129,6 +129,7 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             stdout_path TEXT,
             stderr_path TEXT,
             script_path TEXT,
+            interactive INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
         )",
         [],
@@ -183,6 +184,17 @@ pub fn migrate_v1_to_v2(conn: &Connection) -> Result<()> {
     conn.execute("CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(name)", [])?;
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_tasks_name_run ON tasks(name, run_id)",
+        [],
+    )?;
+
+    Ok(())
+}
+
+/// Migration from v2 to v3: Add interactive flag to tasks table
+pub fn migrate_v2_to_v3(conn: &Connection) -> Result<()> {
+    // Add interactive column to tasks table (default to 0/false)
+    conn.execute(
+        "ALTER TABLE tasks ADD COLUMN interactive INTEGER NOT NULL DEFAULT 0",
         [],
     )?;
 

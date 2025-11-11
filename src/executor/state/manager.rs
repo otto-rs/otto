@@ -44,6 +44,7 @@ pub struct TaskRecord {
     pub stdout_path: Option<PathBuf>,
     pub stderr_path: Option<PathBuf>,
     pub script_path: Option<PathBuf>,
+    pub interactive: bool,
 }
 
 /// Overall system statistics
@@ -173,6 +174,7 @@ impl StateManager {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn record_task_start(
         &self,
         run_id: i64,
@@ -181,6 +183,7 @@ impl StateManager {
         stdout_path: Option<&PathBuf>,
         stderr_path: Option<&PathBuf>,
         script_path: Option<&PathBuf>,
+        interactive: bool,
     ) -> Result<i64> {
         let started_at = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -191,8 +194,8 @@ impl StateManager {
             conn.execute(
                 "INSERT INTO tasks (
                     run_id, name, status, script_hash, started_at,
-                    stdout_path, stderr_path, script_path
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    stdout_path, stderr_path, script_path, interactive
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     run_id,
                     task_name,
@@ -202,6 +205,7 @@ impl StateManager {
                     stdout_path.map(|p| p.to_string_lossy().to_string()),
                     stderr_path.map(|p| p.to_string_lossy().to_string()),
                     script_path.map(|p| p.to_string_lossy().to_string()),
+                    interactive as i64,
                 ],
             )?;
 
@@ -284,7 +288,7 @@ impl StateManager {
             let mut stmt = conn.prepare(
                 "SELECT id, run_id, name, status, script_hash, exit_code,
                         started_at, ended_at, duration_seconds,
-                        stdout_path, stderr_path, script_path
+                        stdout_path, stderr_path, script_path, interactive
                  FROM tasks
                  WHERE run_id = ?1
                  ORDER BY started_at ASC",
@@ -301,7 +305,7 @@ impl StateManager {
             let mut stmt = conn.prepare(
                 "SELECT id, run_id, name, status, script_hash, exit_code,
                         started_at, ended_at, duration_seconds,
-                        stdout_path, stderr_path, script_path
+                        stdout_path, stderr_path, script_path, interactive
                  FROM tasks
                  WHERE name = ?1
                  ORDER BY started_at DESC
@@ -357,6 +361,7 @@ impl StateManager {
             stdout_path: row.get::<_, Option<String>>(9)?.map(PathBuf::from),
             stderr_path: row.get::<_, Option<String>>(10)?.map(PathBuf::from),
             script_path: row.get::<_, Option<String>>(11)?.map(PathBuf::from),
+            interactive: row.get::<_, i64>(12)? != 0,
         })
     }
 
@@ -1094,6 +1099,7 @@ mod tests {
             Some(&PathBuf::from("/tmp/stdout.log")),
             Some(&PathBuf::from("/tmp/stderr.log")),
             Some(&PathBuf::from("/tmp/script.sh")),
+            false,
         )?;
 
         assert!(task_id > 0);
@@ -1114,7 +1120,7 @@ mod tests {
         let metadata = RunMetadata::minimal(Some(PathBuf::from("/test/otto.yml")), "abc123".to_string(), 1234567890);
         let run_id = manager.record_run_start(&metadata)?;
 
-        let task_id = manager.record_task_start(run_id, "test-task", None, None, None, None)?;
+        let task_id = manager.record_task_start(run_id, "test-task", None, None, None, None, false)?;
         manager.record_task_complete(task_id, 0, TaskStatus::Completed)?;
 
         let tasks = manager.get_run_tasks(run_id)?;
@@ -1134,7 +1140,7 @@ mod tests {
         let metadata = RunMetadata::minimal(Some(PathBuf::from("/test/otto.yml")), "abc123".to_string(), 1234567890);
         let run_id = manager.record_run_start(&metadata)?;
 
-        let task_id = manager.record_task_start(run_id, "test-task", None, None, None, None)?;
+        let task_id = manager.record_task_start(run_id, "test-task", None, None, None, None, false)?;
         manager.record_task_complete(task_id, 1, TaskStatus::Failed)?;
 
         let tasks = manager.get_run_tasks(run_id)?;
@@ -1171,9 +1177,9 @@ mod tests {
         let metadata = RunMetadata::minimal(Some(PathBuf::from("/test/otto.yml")), "abc123".to_string(), 1234567890);
         let run_id = manager.record_run_start(&metadata)?;
 
-        let task_id1 = manager.record_task_start(run_id, "task-1", None, None, None, None)?;
-        let task_id2 = manager.record_task_start(run_id, "task-2", None, None, None, None)?;
-        let task_id3 = manager.record_task_start(run_id, "task-3", None, None, None, None)?;
+        let task_id1 = manager.record_task_start(run_id, "task-1", None, None, None, None, false)?;
+        let task_id2 = manager.record_task_start(run_id, "task-2", None, None, None, None, false)?;
+        let task_id3 = manager.record_task_start(run_id, "task-3", None, None, None, None, false)?;
 
         manager.record_task_complete(task_id1, 0, TaskStatus::Completed)?;
         manager.record_task_complete(task_id2, 1, TaskStatus::Failed)?;
@@ -1202,7 +1208,7 @@ mod tests {
             );
             let run_id = manager.record_run_start(&metadata)?;
 
-            let task_id = manager.record_task_start(run_id, "build", None, None, None, None)?;
+            let task_id = manager.record_task_start(run_id, "build", None, None, None, None, false)?;
             manager.record_task_complete(task_id, 0, TaskStatus::Completed)?;
 
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -1236,6 +1242,7 @@ mod tests {
             Some(&PathBuf::from("/tmp/stdout.log")),
             Some(&PathBuf::from("/tmp/stderr.log")),
             Some(&PathBuf::from("/tmp/script.sh")),
+            false,
         )?;
 
         manager.record_task_complete(task_id, 0, TaskStatus::Completed)?;
@@ -1412,10 +1419,10 @@ mod tests {
         let metadata = RunMetadata::minimal(Some(PathBuf::from("/test/otto.yml")), "abc123".to_string(), 1234567890);
         let run_id = manager.record_run_start(&metadata)?;
 
-        let task_id1 = manager.record_task_start(run_id, "task1", None, None, None, None)?;
+        let task_id1 = manager.record_task_start(run_id, "task1", None, None, None, None, false)?;
         manager.record_task_complete(task_id1, 0, TaskStatus::Completed)?;
 
-        let task_id2 = manager.record_task_start(run_id, "task2", None, None, None, None)?;
+        let task_id2 = manager.record_task_start(run_id, "task2", None, None, None, None, false)?;
         manager.record_task_complete(task_id2, 1, TaskStatus::Failed)?;
 
         let tasks_before = manager.get_run_tasks(run_id)?;

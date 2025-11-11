@@ -227,6 +227,12 @@ async fn execute_tasks(
             return execute_with_terminal_output(tasks, hash, ottofile_path, jobs).await;
         }
 
+        // Check for interactive tasks - TUI mode is incompatible with interactive tasks
+        if tasks.iter().any(|t| t.interactive) {
+            eprintln!("Warning: Interactive tasks require full terminal access, disabling TUI");
+            return execute_with_terminal_output(tasks, hash, ottofile_path, jobs).await;
+        }
+
         execute_with_tui(tasks, hash, ottofile_path, jobs).await
     } else {
         execute_with_terminal_output(tasks, hash, ottofile_path, jobs).await

@@ -196,7 +196,7 @@ impl HistoryCommand {
 
         println!("\n{} for task '{}'", "History".bold(), task_name.cyan());
 
-        let mut rows: Vec<(String, String, String, String, String)> = Vec::new();
+        let mut rows: Vec<(String, String, String, String, String, String)> = Vec::new();
 
         for task in &history {
             rows.push((
@@ -204,6 +204,7 @@ impl HistoryCommand {
                 format_task_status(&task.status),
                 format_duration(task.duration_seconds),
                 task.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "-".to_string()),
+                if task.interactive { "yes".to_string() } else { "no".to_string() },
                 task.run_id.to_string(),
             ));
         }
@@ -212,37 +213,41 @@ impl HistoryCommand {
         let mut w2 = display_width("Status");
         let mut w3 = display_width("Duration");
         let mut w4 = display_width("Exit Code");
-        let mut w5 = display_width("Run ID");
+        let mut w5 = display_width("Interactive");
+        let mut w6 = display_width("Run ID");
 
-        for (c1, c2, c3, c4, c5) in &rows {
+        for (c1, c2, c3, c4, c5, c6) in &rows {
             w1 = w1.max(display_width(c1));
             w2 = w2.max(display_width(c2));
             w3 = w3.max(display_width(c3));
             w4 = w4.max(display_width(c4));
             w5 = w5.max(display_width(c5));
+            w6 = w6.max(display_width(c6));
         }
 
         println!();
         println!(
-            "{}  {}  {}  {}  {}",
+            "{}  {}  {}  {}  {}  {}",
             pad_left("Timestamp", w1).bold(),
             pad_center("Status", w2).bold(),
             pad_right("Duration", w3).bold(),
             pad_center("Exit Code", w4).bold(),
-            pad_right("Run ID", w5).bold(),
+            pad_center("Interactive", w5).bold(),
+            pad_right("Run ID", w6).bold(),
         );
 
-        let total_width = w1 + w2 + w3 + w4 + w5 + 8;
+        let total_width = w1 + w2 + w3 + w4 + w5 + w6 + 10;
         println!("{}", "─".repeat(total_width).dimmed());
 
-        for (c1, c2, c3, c4, c5) in &rows {
+        for (c1, c2, c3, c4, c5, c6) in &rows {
             println!(
-                "{}  {}  {}  {}  {}",
+                "{}  {}  {}  {}  {}  {}",
                 pad_left(c1, w1),
                 pad_center(c2, w2),
                 pad_right(c3, w3),
                 pad_center(c4, w4),
-                pad_right(c5, w5),
+                pad_center(c5, w5),
+                pad_right(c6, w6),
             );
         }
 

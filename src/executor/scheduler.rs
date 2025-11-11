@@ -669,6 +669,7 @@ impl TaskScheduler {
                         Some(&stdout_path),
                         Some(&stderr_path),
                         Some(&script_path),
+                        is_interactive,
                     ) {
                         Ok(task_id) => Some(task_id),
                         Err(e) => {
