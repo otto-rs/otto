@@ -177,9 +177,7 @@ impl PtyIoProxy {
 
     /// Run the I/O proxy loop: stdin -> PTY master and PTY master -> stdout
     /// Returns when either stream closes or an error occurs
-    pub async fn run_proxy(&self, pty: &InteractivePty) -> Result<()> {
-        let master_fd = pty.master_fd();
-
+    pub async fn run_proxy(&self, master_fd: RawFd) -> Result<()> {
         // Create async file descriptor for the PTY master
         let async_master = AsyncFd::new(master_fd)?;
 

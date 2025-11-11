@@ -27,6 +27,186 @@ use super::{
 /// Timeout for output processing after task completion
 const OUTPUT_PROCESSING_TIMEOUT_SECS: u64 = 5;
 
+/// Execute a standard (non-interactive) task with captured output
+async fn execute_standard_task(
+    mut cmd: Command,
+    task_name: &str,
+    tasks_dir: &Path,
+    suppress_terminal: bool,
+    task_streams: Option<Arc<std::collections::HashMap<String, TaskStreams>>>,
+) -> Result<()> {
+    let mut child = cmd
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+
+    // Setup output streams
+    let stdout = child.stdout.take().ok_or_else(|| eyre!("Failed to capture stdout"))?;
+    let stderr = child.stderr.take().ok_or_else(|| eyre!("Failed to capture stderr"))?;
+
+    let streams = if let Some(streams_map) = &task_streams {
+        streams_map
+            .get(task_name)
+            .ok_or_else(|| eyre!("TaskStreams not found for task {}", task_name))?
+            .clone()
+    } else {
+        TaskStreams::new(task_name, tasks_dir).await?
+    };
+
+    // Start output handling
+    let stdout_handle = {
+        let streams = streams.clone();
+        let task_name = task_name.to_string();
+        tokio::spawn(async move {
+            let reader = BufReader::new(stdout);
+            streams
+                .process_output(task_name, OutputType::Stdout, reader, suppress_terminal)
+                .await
+        })
+    };
+
+    let stderr_handle = {
+        let streams = streams.clone();
+        let task_name = task_name.to_string();
+        tokio::spawn(async move {
+            let reader = BufReader::new(stderr);
+            streams
+                .process_output(task_name, OutputType::Stderr, reader, suppress_terminal)
+                .await
+        })
+    };
+
+    // Wait for process to complete
+    let status = child.wait().await?;
+
+    // Wait for output handling to complete with timeout (only for output processing)
+    let output_timeout = Duration::from_secs(OUTPUT_PROCESSING_TIMEOUT_SECS);
+
+    match timeout(output_timeout, stdout_handle).await {
+        Ok(Ok(Ok(()))) => {
+            // Stdout processing completed successfully
+        }
+        Ok(Ok(Err(e))) => {
+            error!("Stdout processing failed for task {task_name}: {e}");
+        }
+        Ok(Err(e)) => {
+            error!("Stdout processing join failed for task {task_name}: {e}");
+        }
+        Err(_) => {
+            error!("Stdout processing timed out for task {task_name}");
+        }
+    }
+
+    match timeout(output_timeout, stderr_handle).await {
+        Ok(Ok(Ok(()))) => {
+            // Stderr processing completed successfully
+        }
+        Ok(Ok(Err(e))) => {
+            error!("Stderr processing failed for task {task_name}: {e}");
+        }
+        Ok(Err(e)) => {
+            error!("Stderr processing join failed for task {task_name}: {e}");
+        }
+        Err(_) => {
+            error!("Stderr processing timed out for task {task_name}");
+        }
+    }
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(eyre!("Task {} failed with exit code {:?}", task_name, status.code()))
+    }
+}
+
+/// Execute an interactive task with PTY support
+#[cfg(unix)]
+async fn execute_interactive_task(mut cmd: Command, task_name: &str, tasks_dir: &Path) -> Result<()> {
+    use super::pty::{InteractivePty, PtyIoProxy};
+
+    // Create PTY for interactive I/O
+    let pty = InteractivePty::new()?;
+
+    // Set up window size
+    let (rows, cols) = InteractivePty::get_terminal_size()?;
+    pty.set_window_size(rows, cols)?;
+
+    // Create I/O proxy with logging
+    let log_path = tasks_dir.join(task_name).join("interactive.log");
+    let io_proxy = PtyIoProxy::new(log_path).await?;
+
+    // Get slave fd before moving into closure
+    let slave_fd = pty.slave_fd();
+
+    // Configure command to use PTY slave as stdin/stdout/stderr
+    unsafe {
+        cmd.pre_exec(move || {
+            // This closure runs in the child process after fork but before exec
+            // Redirect stdin, stdout, stderr to PTY slave
+            use nix::unistd::{dup2, setsid};
+
+            // Create new session
+            setsid()?;
+
+            // Redirect standard streams
+            dup2(slave_fd, 0)?; // stdin
+            dup2(slave_fd, 1)?; // stdout
+            dup2(slave_fd, 2)?; // stderr
+
+            Ok(())
+        });
+    }
+
+    // Spawn the child process
+    let mut child = cmd.spawn()?;
+
+    // Get master fd for proxy
+    let master_fd = pty.master_fd();
+
+    // Run I/O proxy and child process in parallel
+    let child_handle = tokio::spawn(async move { child.wait().await });
+
+    // Run proxy until child completes (or proxy encounters error)
+    tokio::select! {
+        proxy_result = io_proxy.run_proxy(master_fd) => {
+            // Proxy finished (probably due to EOF from child)
+            if let Err(e) = proxy_result {
+                error!("I/O proxy error for task {}: {}", task_name, e);
+            }
+        }
+        child_result = child_handle => {
+            // Child finished first
+            match child_result {
+                Ok(Ok(status)) => {
+                    // Give proxy a moment to finish processing remaining output
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+                    if !status.success() {
+                        return Err(eyre!("Interactive task {} failed with exit code {:?}", task_name, status.code()));
+                    }
+                }
+                Ok(Err(e)) => {
+                    return Err(eyre!("Failed to wait for child process: {}", e));
+                }
+                Err(e) => {
+                    return Err(eyre!("Child process task panicked: {}", e));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Windows stub for interactive task execution
+#[cfg(not(unix))]
+async fn execute_interactive_task(_cmd: Command, task_name: &str, _tasks_dir: &Path) -> Result<()> {
+    Err(eyre!(
+        "Interactive task execution is not supported on this platform. Task: {}",
+        task_name
+    ))
+}
+
 /// Status of a task during execution
 #[derive(Debug, Clone, PartialEq)]
 pub enum TaskStatus {
@@ -50,6 +230,8 @@ pub struct TaskScheduler {
     task_start_times: Arc<Mutex<HashMap<String, std::time::Instant>>>,
     /// Semaphore for task limiting
     semaphore: Arc<Semaphore>,
+    /// Semaphore for interactive tasks (1 permit only for serialization)
+    interactive_semaphore: Arc<Semaphore>,
     /// Workspace for path management
     workspace: Arc<Workspace>,
     /// Execution context for metadata
@@ -83,6 +265,7 @@ impl TaskScheduler {
             task_statuses,
             task_start_times,
             semaphore: Arc::new(Semaphore::new(max_parallel)),
+            interactive_semaphore: Arc::new(Semaphore::new(1)), // Force serial execution for interactive tasks
             workspace,
             execution_context,
             tasks,
@@ -389,9 +572,15 @@ impl TaskScheduler {
     }
 
     async fn execute_task(&self, task: Task, tx: mpsc::Sender<Result<String>>) -> Result<JoinHandle<Result<()>>> {
-        let semaphore = self.semaphore.clone();
+        // Choose semaphore based on task type
+        let semaphore = if task.interactive {
+            self.interactive_semaphore.clone() // Serialize interactive tasks
+        } else {
+            self.semaphore.clone() // Allow parallel execution
+        };
 
         let task_name = task.name.clone();
+        let is_interactive = task.interactive;
         let task_dir = self.workspace.task(&task_name);
         let task_statuses = self.task_statuses.clone();
         let task_deps = task.task_deps.clone();
@@ -507,91 +696,11 @@ impl TaskScheduler {
                 .env("OTTO_USER", &execution_context.user);
 
             // Execute without timeout - runs until completion or failure
-            let result = async {
-                let mut child = cmd
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped())
-                    .spawn()?;
-
-                // Setup output streams
-                let stdout = child.stdout.take().ok_or_else(|| eyre!("Failed to capture stdout"))?;
-                let stderr = child.stderr.take().ok_or_else(|| eyre!("Failed to capture stderr"))?;
-
-                let streams = if let Some(streams_map) = &task_streams {
-                    streams_map
-                        .get(&task_name)
-                        .ok_or_else(|| eyre!("TaskStreams not found for task {}", task_name))?
-                        .clone()
-                } else {
-                    TaskStreams::new(&task_name, &tasks_dir).await?
-                };
-
-                // Start output handling
-                let stdout_handle = {
-                    let streams = streams.clone();
-                    let task_name = task_name.clone();
-                    tokio::spawn(async move {
-                        let reader = BufReader::new(stdout);
-                        streams
-                            .process_output(task_name, OutputType::Stdout, reader, suppress_terminal)
-                            .await
-                    })
-                };
-
-                let stderr_handle = {
-                    let streams = streams.clone();
-                    let task_name = task_name.clone();
-                    tokio::spawn(async move {
-                        let reader = BufReader::new(stderr);
-                        streams
-                            .process_output(task_name, OutputType::Stderr, reader, suppress_terminal)
-                            .await
-                    })
-                };
-
-                // Wait for process to complete
-                let status = child.wait().await?;
-
-                // Wait for output handling to complete with timeout (only for output processing)
-                let output_timeout = Duration::from_secs(OUTPUT_PROCESSING_TIMEOUT_SECS);
-
-                match timeout(output_timeout, stdout_handle).await {
-                    Ok(Ok(Ok(()))) => {
-                        // Stdout processing completed successfully
-                    }
-                    Ok(Ok(Err(e))) => {
-                        error!("Stdout processing failed for task {task_name}: {e}");
-                    }
-                    Ok(Err(e)) => {
-                        error!("Stdout processing join failed for task {task_name}: {e}");
-                    }
-                    Err(_) => {
-                        error!("Stdout processing timed out for task {task_name}");
-                    }
-                }
-
-                match timeout(output_timeout, stderr_handle).await {
-                    Ok(Ok(Ok(()))) => {
-                        // Stderr processing completed successfully
-                    }
-                    Ok(Ok(Err(e))) => {
-                        error!("Stderr processing failed for task {task_name}: {e}");
-                    }
-                    Ok(Err(e)) => {
-                        error!("Stderr processing join failed for task {task_name}: {e}");
-                    }
-                    Err(_) => {
-                        error!("Stderr processing timed out for task {task_name}");
-                    }
-                }
-
-                if status.success() {
-                    Ok(())
-                } else {
-                    Err(eyre!("Task {} failed with exit code {:?}", task_name, status.code()))
-                }
-            }
-            .await;
+            let result = if is_interactive {
+                execute_interactive_task(cmd, &task_name, &tasks_dir).await
+            } else {
+                execute_standard_task(cmd, &task_name, &tasks_dir, suppress_terminal, task_streams.clone()).await
+            };
 
             match result {
                 Ok(()) => {
