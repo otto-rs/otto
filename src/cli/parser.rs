@@ -80,10 +80,12 @@ pub struct Task {
     pub values: HashMap<String, Value>,
     pub action: String,
     pub hash: String,
+    pub interactive: bool,
 }
 
 impl Task {
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: String,
         task_deps: Vec<String>,
@@ -92,6 +94,7 @@ impl Task {
         envs: HashMap<String, String>,
         values: HashMap<String, Value>,
         action: String,
+        interactive: bool,
     ) -> Self {
         let hash = calculate_hash(&action);
         Self {
@@ -103,6 +106,7 @@ impl Task {
             values,
             action,
             hash,
+            interactive,
         }
     }
 
@@ -130,7 +134,17 @@ impl Task {
         // The after dependencies will be handled during DAG construction
         let values = HashMap::new();
         let action = task_spec.action.trim().to_string(); // Trim whitespace from script content
-        Self::new(name, task_deps, file_deps, output_deps, evaluated_envs, values, action)
+        let interactive = task_spec.interactive.unwrap_or(false); // Default to non-interactive
+        Self::new(
+            name,
+            task_deps,
+            file_deps,
+            output_deps,
+            evaluated_envs,
+            values,
+            action,
+            interactive,
+        )
     }
 
     /// Evaluate and merge environment variables from global and task-level sources
@@ -860,6 +874,7 @@ impl Parser {
             input: vec![],
             output: vec![],
             envs: HashMap::new(),
+            interactive: None,
             params: {
                 let mut params = HashMap::new();
 
@@ -924,6 +939,7 @@ impl Parser {
             input: vec![],
             output: vec![],
             envs: HashMap::new(),
+            interactive: None,
             params: {
                 let mut params = HashMap::new();
 
@@ -1000,6 +1016,7 @@ impl Parser {
             input: vec![],
             output: vec![],
             envs: HashMap::new(),
+            interactive: None,
             params: {
                 let mut params = HashMap::new();
 
@@ -1112,6 +1129,7 @@ impl Parser {
             input: vec![],
             output: vec![],
             envs: HashMap::new(),
+            interactive: None,
             params: {
                 let mut params = HashMap::new();
 
@@ -1188,6 +1206,7 @@ impl Parser {
             input: vec![],
             output: vec![],
             envs: HashMap::new(),
+            interactive: None,
             params: {
                 let mut params = HashMap::new();
 
@@ -1246,6 +1265,7 @@ impl Parser {
             input: vec![],
             output: vec![],
             envs: HashMap::new(),
+            interactive: None,
             params: {
                 let mut params = HashMap::new();
 

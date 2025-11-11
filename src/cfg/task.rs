@@ -23,6 +23,7 @@ pub struct TaskSpec {
     pub envs: HashMap<String, String>,
     pub params: ParamSpecs,
     pub action: String,
+    pub interactive: Option<bool>,
 }
 
 // Helper struct for deserialization that accepts bash:, python:, or action: fields
@@ -60,6 +61,10 @@ struct TaskSpecHelper {
     // Legacy support for action: field (deprecated)
     #[serde(default)]
     action: Option<String>,
+
+    // Support for interactive tasks
+    #[serde(default)]
+    interactive: Option<bool>,
 }
 
 impl<'de> Deserialize<'de> for TaskSpec {
@@ -99,6 +104,7 @@ impl<'de> Deserialize<'de> for TaskSpec {
             envs: helper.envs,
             params: helper.params,
             action,
+            interactive: helper.interactive,
         })
     }
 }
@@ -136,6 +142,10 @@ impl Serialize for TaskSpec {
 
         if !self.params.is_empty() {
             map.serialize_entry("params", &self.params)?;
+        }
+
+        if let Some(interactive) = self.interactive {
+            map.serialize_entry("interactive", &interactive)?;
         }
 
         // Serialize action as "bash:" if it starts with #!/bin/bash
@@ -206,6 +216,7 @@ impl TaskSpec {
         envs: HashMap<String, String>,
         params: ParamSpecs,
         action: String,
+        interactive: Option<bool>,
     ) -> Self {
         Self {
             name,
@@ -217,6 +228,7 @@ impl TaskSpec {
             envs,
             params,
             action,
+            interactive,
         }
     }
 }

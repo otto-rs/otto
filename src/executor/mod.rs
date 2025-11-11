@@ -2,6 +2,7 @@ pub mod action;
 pub mod colors;
 pub mod graph;
 pub mod output;
+pub mod pty;
 pub mod scheduler;
 pub mod state;
 pub mod task;

@@ -133,6 +133,7 @@ impl DagVisualizer {
                     parser_task.envs,
                     parser_task.values,
                     parser_task.action,
+                    parser_task.interactive,
                 )
             })
             .collect();
@@ -556,6 +557,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             format!("echo 'Running {name}'"),
+            false,
         )
     }
 

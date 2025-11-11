@@ -745,6 +745,7 @@ mod tests {
             task_envs,
             task_values,
             "#!/usr/bin/env bash\necho \"${greeting} world\"".to_string(),
+            false,
         );
 
         // Process the action
@@ -801,6 +802,7 @@ mod tests {
             task_envs,
             task_values,
             "#!/usr/bin/env python3\nprint(f\"Hello {name}\")".to_string(),
+            false,
         );
 
         // Process the action
@@ -857,6 +859,7 @@ mod tests {
             task_envs,
             task_values,
             "echo \"${message} from default bash\"".to_string(), // No shebang
+            false,
         );
 
         // Process the action

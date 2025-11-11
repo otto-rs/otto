@@ -101,6 +101,7 @@ tasks:
                     parser_task.envs,
                     parser_task.values,
                     parser_task.action,
+                    parser_task.interactive,
                 )
             })
             .collect();

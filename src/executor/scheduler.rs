@@ -768,6 +768,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             "echo hello".to_string(),
+            false,
         );
 
         let workspace = Workspace::new(work_dir).await?;
@@ -797,6 +798,7 @@ mod tests {
                 HashMap::new(),
                 HashMap::new(),
                 "echo task1".to_string(),
+                false,
             ),
             Task::new(
                 "task2".to_string(),
@@ -806,6 +808,7 @@ mod tests {
                 HashMap::new(),
                 HashMap::new(),
                 "echo task2".to_string(),
+                false,
             ),
         ];
 
@@ -839,6 +842,7 @@ mod tests {
                 HashMap::new(),
                 HashMap::new(),
                 "exit 1".to_string(),
+                false,
             ),
             Task::new(
                 "task2".to_string(),
@@ -848,6 +852,7 @@ mod tests {
                 HashMap::new(),
                 HashMap::new(),
                 "echo task2".to_string(),
+                false,
             ),
         ];
 
@@ -880,6 +885,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             format!("cp {} {}", input_file.display(), output_file.display()),
+            false,
         );
 
         let workspace = Workspace::new(work_dir.clone()).await?;
@@ -960,6 +966,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             format!("touch {}", output_file.display()),
+            false,
         );
 
         let workspace = Workspace::new(work_dir.clone()).await?;
@@ -1022,6 +1029,7 @@ mod tests {
                 output1.display(),
                 output2.display()
             ),
+            false,
         );
 
         let workspace = Workspace::new(work_dir.clone()).await?;
@@ -1085,6 +1093,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             format!("cp {} {}", input_file.display(), intermediate_file.display()),
+            false,
         );
 
         let task2 = Task::new(
@@ -1095,6 +1104,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             format!("cp {} {}", intermediate_file.display(), output_file.display()),
+            false,
         );
 
         let workspace = Workspace::new(work_dir.clone()).await?;
@@ -1149,6 +1159,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             format!("cp {} {}", input_file.display(), output_file.display()),
+            false,
         );
 
         let workspace = Workspace::new(work_dir).await?;
@@ -1185,6 +1196,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             "echo 'no file dependencies'".to_string(),
+            false,
         );
 
         let workspace = Workspace::new(work_dir).await?;
@@ -1231,6 +1243,7 @@ mod tests {
                 src_dir.display(),
                 output_file.display()
             ),
+            false,
         );
 
         let workspace = Workspace::new(work_dir).await?;
@@ -1275,6 +1288,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             format!("cat input_*.txt > {}", output_file.display()),
+            false,
         );
 
         let workspace = Workspace::new(work_dir).await?;
@@ -1324,6 +1338,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             format!("echo 'modified' >> {}", file_a.display()),
+            false,
         );
 
         let workspace = Workspace::new(work_dir).await?;
@@ -1365,6 +1380,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             format!("cp {} {}", input_file.display(), output_file.display()),
+            false,
         );
 
         let workspace = Workspace::new(work_dir.clone()).await?;
@@ -1420,6 +1436,7 @@ mod tests {
                 HashMap::new(),
                 HashMap::new(),
                 format!("sleep 0.1 && echo task{i}"),
+                false,
             );
             tasks.push(task);
         }
@@ -1462,6 +1479,7 @@ mod tests {
                 HashMap::new(),
                 HashMap::new(),
                 "echo test".to_string(),
+                false,
             )];
 
             let scheduler =
@@ -1500,6 +1518,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             "echo should be skipped".to_string(),
+            false,
         );
 
         let workspace = Workspace::new(work_dir.clone()).await?;
@@ -1541,6 +1560,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             "echo testing tui".to_string(),
+            false,
         );
 
         let workspace = Workspace::new(work_dir).await?;
@@ -1609,6 +1629,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             "sleep 0.2".to_string(),
+            false,
         );
 
         let workspace = Workspace::new(work_dir).await?;
@@ -1676,6 +1697,7 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             "echo handled error".to_string(),
+            false,
         );
 
         let workspace = Workspace::new(work_dir).await?;
@@ -1715,6 +1737,7 @@ mod tests {
                 HashMap::new(),
                 HashMap::new(),
                 "echo skipped".to_string(),
+                false,
             ),
             // Task that will run
             Task::new(
@@ -1725,6 +1748,7 @@ mod tests {
                 HashMap::new(),
                 HashMap::new(),
                 "echo running".to_string(),
+                false,
             ),
             // Task with dependency on both
             Task::new(
@@ -1735,6 +1759,7 @@ mod tests {
                 HashMap::new(),
                 HashMap::new(),
                 "echo dependent".to_string(),
+                false,
             ),
         ];
 

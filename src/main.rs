@@ -298,6 +298,7 @@ async fn execute_with_terminal_output(
                 parser_task.envs,
                 parser_task.values,
                 parser_task.action,
+                parser_task.interactive,
             )
         })
         .collect();
@@ -363,6 +364,7 @@ async fn execute_with_tui(
             parser_task.envs,
             parser_task.values,
             parser_task.action,
+            parser_task.interactive,
         );
         executor_tasks.push(executor_task);
     }
