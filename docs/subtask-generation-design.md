@@ -102,7 +102,7 @@ data:
 
 tasks:
   imports:
-    for_each: "modules"           # Only special key needed
+    foreach: "modules"           # Only special key needed
     name: "${item.name}"          # Everything else is normal task fields
     file_dep: ["${item.path}"]
     action: "get_imports ${item.path}"
@@ -111,7 +111,7 @@ tasks:
 **Benefits**:
 - Clean, flat structure
 - Looks like normal task definition
-- Only `for_each` indicates iteration
+- Only `foreach` indicates iteration
 - Template variables are intuitive
 
 ### Option 2: Implicit Iteration from Data References
@@ -181,7 +181,7 @@ tasks:
 ### YAML Processing Pipeline
 
 1. **Parse YAML**: Load configuration into structs
-2. **Detect Iteration**: Look for `for_each` keys or array syntax
+2. **Detect Iteration**: Look for `foreach` keys or array syntax
 3. **Load Data**: Fetch data from specified sources
 4. **Template Expansion**: Create one task spec per data item
 5. **Name Generation**: Apply `basename:subtask` naming convention
@@ -217,7 +217,7 @@ data:
 ## Migration Strategy
 
 ### Phase 1: Basic Implementation
-- Implement `for_each` with static data
+- Implement `foreach` with static data
 - Template variable substitution
 - Parent task creation
 - Basic command line selection
@@ -247,7 +247,7 @@ data:
 
 tasks:
   check-file:
-    for_each: "source_files"
+    foreach: "source_files"
     name: "${item.stem}"
     file_dep: ["${item.path}"]
     action: |
@@ -268,7 +268,7 @@ data:
 
 tasks:
   deploy:
-    for_each: "environments"
+    foreach: "environments"
     name: "${item.name}"
     file_dep: ["${item.config}"]
     action: |
@@ -283,7 +283,7 @@ data:
 
 tasks:
   test-matrix:
-    for_each: "test_configs"
+    foreach: "test_configs"
     name: "${item.rust_version}-${item.features}"
     action: |
       rustup run ${item.rust_version} cargo test --features "${item.features}"
@@ -308,6 +308,6 @@ tasks:
 
 ## Conclusion
 
-The recommended approach uses `for_each` with direct field templating to achieve PyDoit-style sub-task generation while maintaining YAML's declarative nature. This provides the closest equivalent to PyDoit's elegance within Otto's architectural constraints.
+The recommended approach uses `foreach` with direct field templating to achieve PyDoit-style sub-task generation while maintaining YAML's declarative nature. This provides the closest equivalent to PyDoit's elegance within Otto's architectural constraints.
 
 The key insight is that we can't replicate PyDoit's runtime code execution, but we can capture its conceptual elegance through contextual YAML interpretation and template expansion.
