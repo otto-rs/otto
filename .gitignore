@@ -34,3 +34,4 @@ examples/*/target/
 # tarpaulin coverage reports
 lcov.info
 tarpaulin-report.html
+examples/_test_broken/
