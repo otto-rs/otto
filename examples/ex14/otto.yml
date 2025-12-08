@@ -1,0 +1,234 @@
+otto:
+  name: "Data Passing Mechanism Demo"
+  api: 1
+  jobs: 2
+  about: "Clear demonstration of how otto_set_output and otto_get_input work"
+
+tasks:
+  # ============================================================================
+  # TASK 1: Producer - Creates data
+  # ============================================================================
+  task_a:
+    help: "First task - produces three values"
+    bash: |
+      echo "╔════════════════════════════════════════╗"
+      echo "║  TASK A: PRODUCER                      ║"
+      echo "╚════════════════════════════════════════╝"
+      echo ""
+      echo "🔧 MECHANISM: Using otto_set_output to create data"
+      echo ""
+      
+      # Create some simple values
+      VALUE_1="hello"
+      VALUE_2="42"
+      VALUE_3="success"
+      
+      echo "Setting outputs:"
+      echo "  • message = \"${VALUE_1}\""
+      otto_set_output "message" "${VALUE_1}"
+      
+      echo "  • number = \"${VALUE_2}\""
+      otto_set_output "number" "${VALUE_2}"
+      
+      echo "  • status = \"${VALUE_3}\""
+      otto_set_output "status" "${VALUE_3}"
+      
+      echo ""
+      echo "✅ Task A created 3 outputs"
+      echo "📁 Stored in: output.task_a.json"
+
+  # ============================================================================
+  # TASK 2: Consumer - Reads data from Task A
+  # ============================================================================
+  task_b:
+    help: "Second task - consumes data from task_a"
+    before: [task_a]
+    bash: |
+      echo ""
+      echo "╔════════════════════════════════════════╗"
+      echo "║  TASK B: CONSUMER                      ║"
+      echo "╚════════════════════════════════════════╝"
+      echo ""
+      echo "🔧 MECHANISM: Using otto_get_input to read data"
+      echo ""
+      echo "Step 1: Must call otto_deserialize_input first"
+      echo "  → otto_deserialize_input \"task_a\""
+      
+      otto_deserialize_input "task_a"
+      
+      echo "  ✅ Input loaded from task_a"
+      echo ""
+      echo "Step 2: Read values using otto_get_input"
+      echo ""
+      
+      # Read the values
+      received_message=$(otto_get_input "task_a.message")
+      received_number=$(otto_get_input "task_a.number")
+      received_status=$(otto_get_input "task_a.status")
+      
+      # Show what we expected vs what we got
+      echo "┌─────────────────────────────────────────┐"
+      echo "│ EXPECTED from task_a:                   │"
+      echo "│   message = \"hello\"                     │"
+      echo "│   number  = \"42\"                        │"
+      echo "│   status  = \"success\"                   │"
+      echo "└─────────────────────────────────────────┘"
+      echo ""
+      echo "┌─────────────────────────────────────────┐"
+      echo "│ ACTUALLY RECEIVED:                      │"
+      echo "│   message = \"${received_message}\"      │"
+      echo "│   number  = \"${received_number}\"       │"
+      echo "│   status  = \"${received_status}\"       │"
+      echo "└─────────────────────────────────────────┘"
+      echo ""
+      
+      # Validate
+      if [ "$received_message" = "hello" ] && \
+         [ "$received_number" = "42" ] && \
+         [ "$received_status" = "success" ]; then
+        echo "✅ DATA PASSING WORKS! All values match."
+      else
+        echo "❌ DATA PASSING FAILED! Values don't match."
+      fi
+      
+      echo ""
+      echo "🔧 Now we can transform the data:"
+      doubled=$((received_number * 2))
+      echo "  • Doubled number: ${received_number} × 2 = ${doubled}"
+      
+      # Pass transformed data forward
+      otto_set_output "doubled" "${doubled}"
+      otto_set_output "original_message" "${received_message}"
+      
+      echo ""
+      echo "✅ Task B produced 2 new outputs"
+
+  # ============================================================================
+  # TASK 3: Python Consumer - Shows cross-language works
+  # ============================================================================
+  task_c:
+    help: "Third task - Python reads from Bash"
+    before: [task_b]
+    python: |
+      print("")
+      print("╔════════════════════════════════════════╗")
+      print("║  TASK C: CROSS-LANGUAGE                ║")
+      print("╚════════════════════════════════════════╝")
+      print("")
+      print("🔧 MECHANISM: Python reading Bash outputs")
+      print("")
+      print("Step 1: Deserialize input from task_b (bash)")
+      print("  → otto_deserialize_input(\"task_b\")")
+      
+      otto_deserialize_input("task_b")
+      
+      print("  ✅ Input loaded from task_b")
+      print("")
+      print("Step 2: Read values using otto_get_input")
+      print("")
+      
+      doubled = otto_get_input("task_b.doubled")
+      message = otto_get_input("task_b.original_message")
+      
+      print("┌─────────────────────────────────────────┐")
+      print("│ EXPECTED from task_b:                   │")
+      print("│   doubled = \"84\" (42 * 2)               │")
+      print("│   message = \"hello\"                     │")
+      print("└─────────────────────────────────────────┘")
+      print("")
+      print("┌─────────────────────────────────────────┐")
+      print(f"│ ACTUALLY RECEIVED:                      │")
+      print(f"│   doubled = \"{doubled}\"                 │")
+      print(f"│   message = \"{message}\"                 │")
+      print("└─────────────────────────────────────────┘")
+      print("")
+      
+      # Validate
+      if doubled == "84" and message == "hello":
+        print("✅ BASH→PYTHON WORKS! Values passed correctly.")
+      else:
+        print("❌ BASH→PYTHON FAILED!")
+      
+      print("")
+      print("🔧 Python can do math on the string:")
+      tripled = int(doubled) + int(doubled) // 2  # 84 + 42 = 126
+      print(f"  • {doubled} + {int(doubled)//2} = {tripled}")
+      
+      otto_set_output("tripled", str(tripled))
+      print("")
+      print("✅ Task C produced 1 output")
+
+  # ============================================================================
+  # TASK 4: Final Report - Shows complete data flow
+  # ============================================================================
+  report:
+    help: "Final task - validates entire pipeline"
+    before: [task_c]
+    bash: |
+      echo ""
+      echo "╔════════════════════════════════════════╗"
+      echo "║  FINAL REPORT: DATA FLOW VALIDATION    ║"
+      echo "╚════════════════════════════════════════╝"
+      echo ""
+      
+      echo "⚠️  IMPORTANT LIMITATION:"
+      echo "This task only has 'task_c' in its 'before:' list,"
+      echo "so it can ONLY access task_c's outputs directly!"
+      echo ""
+      
+      # Load only our direct dependency
+      otto_deserialize_input "task_c"
+      
+      echo "🔍 What we can access:"
+      c_tripled=$(otto_get_input "task_c.tripled")
+      echo "  • task_c.tripled = \"${c_tripled}\""
+      echo ""
+      
+      echo "🔍 FULL PIPELINE TRACE:"
+      echo ""
+      echo "┌─────────────────────────────────────────┐"
+      echo "│ TASK A (producer):                      │"
+      echo "│   Created: number=\"42\"                  │"
+      echo "└─────────────────────────────────────────┘"
+      echo "          ↓ (bash → bash)"
+      echo "┌─────────────────────────────────────────┐"
+      echo "│ TASK B (bash consumer):                 │"
+      echo "│   Computed: doubled=\"84\" (42 × 2)       │"
+      echo "└─────────────────────────────────────────┘"
+      echo "          ↓ (bash → python)"
+      echo "┌─────────────────────────────────────────┐"
+      echo "│ TASK C (python consumer):               │"
+      echo "│   Computed: tripled=\"${c_tripled}\" (84 + 42)    │"
+      echo "└─────────────────────────────────────────┘"
+      echo ""
+      echo "╔════════════════════════════════════════╗"
+      echo "║  VALIDATION                            ║"
+      echo "╚════════════════════════════════════════╝"
+      echo ""
+      
+      # Validate what we can
+      if [ "$c_tripled" = "126" ]; then
+        echo "✅ PIPELINE WORKS!"
+        echo ""
+        echo "   Data flow validated:"
+        echo "   42 (task_a) → 84 (task_b) → 126 (task_c) ✓"
+        echo ""
+        echo "🎉 Otto's data passing mechanism works correctly!"
+      else
+        echo "❌ VALIDATION FAILED!"
+        echo "   Expected: 126"
+        echo "   Got: ${c_tripled}"
+      fi
+      
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "KEY LEARNINGS:"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "1. Use otto_set_output \"key\" \"value\" to create data"
+      echo "2. Use otto_deserialize_input \"task_name\" to load data"
+      echo "3. Use otto_get_input \"task_name.key\" to read data"
+      echo "4. Works across bash and python!"
+      echo "5. Data flows: task_a → task_b → task_c"
+      echo ""
+      echo "📁 Inspect files at:"
+      echo "   ~/.otto/*/latest/tasks/*/output.*.json"

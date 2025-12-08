@@ -1,0 +1,77 @@
+tasks:
+  shell:
+    help: "Interactive bash shell (Ctrl+D to exit)"
+    interactive: true
+    action: |
+      bash
+
+  read-input:
+    help: "Simple interactive input test"
+    interactive: true
+    action: |
+      echo "What's your name?"
+      read name
+      echo "Hello, $name!"
+      echo "Name was: $name"
+
+  vim-edit:
+    help: "Interactive vim editor (edit demo.txt)"
+    interactive: true
+    action: |
+      echo "This is a test file for vim editing" > demo.txt
+      vim demo.txt
+      echo "=== File contents after editing ==="
+      cat demo.txt
+
+  python-interactive:
+    help: "Interactive Python REPL"
+    interactive: true
+    action: |
+      python3
+
+  top-monitor:
+    help: "Interactive system monitor (q to quit)"
+    interactive: true
+    action: |
+      top
+
+  htop-monitor:
+    help: "Interactive htop if available (q to quit)"
+    interactive: true
+    action: |
+      if command -v htop &> /dev/null; then
+        htop
+      else
+        echo "htop not installed, falling back to top"
+        top
+      fi
+
+  colored-menu:
+    help: "Interactive menu with colors"
+    interactive: true
+    action: |
+      echo -e "\033[1;34m=== Interactive Menu ===\033[0m"
+      echo ""
+      echo "Choose an option:"
+      echo "  1) Say Hello"
+      echo "  2) Show Date"
+      echo "  3) Exit"
+      echo ""
+      read -p "Enter choice [1-3]: " choice
+
+      case $choice in
+        1) echo -e "\033[1;32mHello from Otto!\033[0m" ;;
+        2) echo -e "\033[1;33m$(date)\033[0m" ;;
+        3) echo -e "\033[1;31mGoodbye!\033[0m" ;;
+        *) echo -e "\033[1;31mInvalid choice\033[0m" ;;
+      esac
+
+  # Non-interactive task for comparison
+  echo-test:
+    help: "Regular non-interactive task"
+    action: |
+      echo "This is a regular task"
+      echo "It doesn't need terminal interaction"
+      echo "All output is captured normally"
+
+
