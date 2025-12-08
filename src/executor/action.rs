@@ -622,7 +622,7 @@ otto_serialize_output("{}")
             std::fs::create_dir_all(parent)?;
         }
 
-        let builtins_content = r#"""Otto Python Builtins
+        let builtins_content = r#""""Otto Python Builtins
 Functions to handle input/output file serialization
 """
 
