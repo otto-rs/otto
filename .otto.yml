@@ -31,43 +31,42 @@ tasks:
       echo "  otto ci              - Full CI pipeline"
       echo "  otto quick           - Fast validation"
 
-  # Individual quality checks (for parallel execution)
+  # Combined quality checks
   check:
-    help: "Fast compile check"
+    help: "Run all quality checks (compile, clippy, format)"
     bash: |
+      echo "=== Checking compilation ==="
       cargo check
-
-  clippy:
-    help: "Run Clippy linter"
-    bash: |
+      echo ""
+      echo "=== Running Clippy ==="
       cargo clippy -- -D warnings
-
-  fmt-check:
-    help: "Check code formatting"
-    bash: |
+      echo ""
+      echo "=== Checking format ==="
       cargo fmt -- --check
+      echo ""
+      echo "✅ All checks passed!"
 
   test:
     help: "Run all tests"
     bash: |
       cargo test
 
-  doc-build:
+  docs:
     help: "Build documentation"
     bash: |
       cargo doc --no-deps
 
-  # Meta task: quick validation (3 things in parallel)
+  # Meta task: quick validation (2 things in parallel)
   quick:
-    help: "Quick validation (check + test + fmt-check in parallel)"
-    before: [check, test, fmt-check]
+    help: "Quick validation (check + test in parallel)"
+    before: [check, test]
     bash: |
       echo "✅ Quick checks passed!"
 
-  # Meta task: CI pipeline (3 checks in parallel)
+  # Meta task: CI pipeline (2 checks in parallel)
   ci:
-    help: "Full CI pipeline (test + clippy + fmt-check in parallel)"
-    before: [test, clippy, fmt-check]
+    help: "Full CI pipeline (test + check in parallel)"
+    before: [test, check]
     bash: |
       echo "✅ All CI checks passed!"
 
@@ -84,7 +83,7 @@ tasks:
       echo "✅ Ready to commit!"
 
   # Examples
-  validate-examples:
+  examples:
     help: "Validate all example ottofiles parse correctly"
     bash: |
       echo "Validating example ottofiles..."
@@ -109,10 +108,10 @@ tasks:
         exit 1
       fi
 
-  # Complete validation (4 things in parallel)
+  # Complete validation (3 things in parallel)
   all:
-    help: "Run everything (ci + doc + examples in parallel)"
-    before: [ci, doc-build, validate-examples]
+    help: "Run everything (ci + docs + examples in parallel)"
+    before: [ci, docs, examples]
     bash: |
       echo ""
       echo "=== Summary ==="
@@ -165,7 +164,7 @@ tasks:
       echo "Remember: Run 'otto baseline' after each TUI phase!"
 
   # Cleanup
-  clean-all:
+  clean:
     help: "Deep clean (cargo clean + remove all otto run artifacts)"
     bash: |
       echo "Cleaning cargo artifacts..."
