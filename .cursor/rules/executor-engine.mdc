@@ -81,4 +81,3 @@ Otto supports multiple dependency types:
 - Extensive test coverage in [tests/](mdc:tests)
 - File dependency integration tests: [tests/file_dependencies_integration_test.rs](mdc:tests/file_dependencies_integration_test.rs)
 - Executor unit tests in [src/executor/scheduler.rs](mdc:src/executor/scheduler.rs)
-

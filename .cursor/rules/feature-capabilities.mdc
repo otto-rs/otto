@@ -129,4 +129,3 @@ otto -j 8 -o examples/ex3 example2      # Parallel execution
 - **Task Status Tracking**: Real-time execution status
 - **Workspace Inspection**: All artifacts and logs preserved
 - **Dependency Analysis**: Clear dependency resolution output
-

@@ -579,4 +579,3 @@ Warning: Automatic variable $@ detected in target 'build':
 - Interactive conversion mode with user prompts
 - Bidirectional conversion (Otto → Makefile)
 - Make compatibility mode in Otto
-

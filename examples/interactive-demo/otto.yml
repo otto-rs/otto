@@ -73,5 +73,3 @@ tasks:
       echo "This is a regular task"
       echo "It doesn't need terminal interaction"
       echo "All output is captured normally"
-
-

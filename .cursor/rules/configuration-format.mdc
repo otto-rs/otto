@@ -72,4 +72,3 @@ tasks:
 ## Examples
 - [examples/ex1/otto.yml](mdc:examples/ex1/otto.yml) - Basic task dependencies and parameters
 - [examples/ex3/otto.yaml](mdc:examples/ex3/otto.yaml) - File outputs and complex workflows
-

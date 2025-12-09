@@ -627,5 +627,3 @@ More exotic IPC methods (mmap, sockets, Redis) add complexity without clear bene
    - Research named pipe integration
    - Identify streaming use cases
    - Design API for streaming tasks
-
-

@@ -311,4 +311,3 @@ sudo mv otto /usr/local/bin/
 **Ready to Execute**: Yes
 **Approval Status**: Pending user confirmation
 **Next Step**: Create workflow files and update existing projects
-

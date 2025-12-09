@@ -179,4 +179,3 @@ otto history --json | jq 'group_by(.status) | map({status: .[0].status, count: l
 
 - [Architecture: SQLite Integration](../architecture/sqlite-integration.md)
 - [Migration Guide](../migration-guide.md)
-

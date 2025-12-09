@@ -158,4 +158,3 @@ After implementing these fixes, test with:
 - `build.rs` - Sets `GIT_DESCRIBE` at compile time
 - `src/cli/parser.rs` - Uses `GIT_DESCRIBE` for `--version` output
 - `Cargo.toml` - Contains package version (0.1.3, not used for display)
-

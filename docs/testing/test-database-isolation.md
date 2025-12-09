@@ -64,4 +64,3 @@ After the fix:
   - Tests are isolated from each other
   - Environment variable is set before any StateManager initialization
 - Production code never uses `set_var`, only reads the environment variable
-

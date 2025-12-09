@@ -281,4 +281,3 @@ data = json.loads(data_json) if data_json else {}
 - **ex11** - Simpler bash-only data passing
 - **ex10** - Environment variables (different approach)
 - **ex8** - File dependencies (not task data)
-

@@ -93,4 +93,3 @@ otto --tui dependent-task
 5. **Border colors**: Yellow when focused, status color otherwise
 6. **Status bar**: Context-sensitive help at the bottom
 7. **Grid layout**: Automatic layout based on number of tasks
-

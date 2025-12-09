@@ -270,5 +270,3 @@ A: Better API (native bash/python syntax) + auto-loading dependencies.
 3. Create tickets/issues if you agree with the approach
 
 4. I can help implement if you'd like to proceed
-
-

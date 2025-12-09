@@ -580,4 +580,3 @@ The three symlink types have different levels of importance:
 - **Workspace structure**: `src/executor/workspace.rs`
 - **Documentation**: `docs/directory-layout.md`, `docs/data-passing-plan.md`
 - **Related**: Upgrade command also creates symlinks (`src/cli/commands/upgrade.rs:375`)
-

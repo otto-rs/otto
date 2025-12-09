@@ -246,4 +246,3 @@ Total space consumed by Otto artifacts:
 
 - [Architecture: SQLite Integration](../architecture/sqlite-integration.md)
 - [Migration Guide](../migration-guide.md)
-

@@ -573,5 +573,3 @@ deploy:
 - Skip SQLite for data passing (use it for queries only)
 
 This gives you the best ergonomics while maintaining all the benefits of the current file-based approach.
-
-

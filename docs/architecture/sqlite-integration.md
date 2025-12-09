@@ -415,4 +415,3 @@ See [Migration Guide](../migration-guide.md) for upgrading from file-only to dat
 - [Stats Command](../commands/stats.md)
 - [Clean Command](../commands/clean.md)
 - [Implementation Plan](../sqlite-implementation-plan.md)
-

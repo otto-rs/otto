@@ -635,5 +635,3 @@ otto retention --project abc123 --keep 90  # Per-project
 3. **Implement Phase 2** - List runs (high value)
 4. **Gather feedback** - Real-world usage patterns
 5. **Iterate** - Adjust based on user needs
-
-

@@ -210,9 +210,3 @@ And you get a fully interactive bash shell with:
 - All your aliases and environment
 - Terminal colors and formatting
 - Exit with `exit` or Ctrl+D
-
-
-
-
-
-

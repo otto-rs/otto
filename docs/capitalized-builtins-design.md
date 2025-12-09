@@ -976,4 +976,3 @@ IDEs/LSPs could highlight built-in commands differently:
   - `src/cli/parser.rs` - Injection and help builder
   - `src/main.rs` - Early routing and execution filtering
   - `src/cli/commands/` - Command implementations
-

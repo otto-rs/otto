@@ -47,4 +47,3 @@ The executor handles:
 3. **Error Handling** - Uses `eyre` for structured error reporting
 4. **Modularity** - Clear separation between parsing, config, and execution
 5. **Testing** - Comprehensive test suite with integration tests
-

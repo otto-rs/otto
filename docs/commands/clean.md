@@ -296,4 +296,3 @@ du -sh ~/.otto
 
 - [Architecture: SQLite Integration](../architecture/sqlite-integration.md)
 - [Migration Guide](../migration-guide.md)
-

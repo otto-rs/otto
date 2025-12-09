@@ -720,5 +720,3 @@ Consider advanced IPC only when:
 3. **Huge datasets** (mmap for zero-copy)
 
 For 95% of Otto use cases, improved file-based API (see improved-data-passing-proposal.md) is the best solution.
-
-

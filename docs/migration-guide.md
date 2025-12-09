@@ -418,4 +418,3 @@ If you encounter problems:
 - [Clean Command](commands/clean.md)
 - [Architecture: SQLite Integration](architecture/sqlite-integration.md)
 - [Implementation Plan](sqlite-implementation-plan.md)
-

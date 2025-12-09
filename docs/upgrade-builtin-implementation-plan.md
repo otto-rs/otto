@@ -654,4 +654,3 @@ otto/
 - [Cargo Install Implementation](https://github.com/rust-lang/cargo/blob/master/src/cargo/ops/cargo_install.rs)
 - [Clean Command Documentation](commands/clean.md)
 - [Built-in Commands Design](capitalized-builtins-design.md)
-

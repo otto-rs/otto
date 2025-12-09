@@ -523,4 +523,3 @@ Add project column, update queries to join with projects
 - Current implementation: `src/executor/state/manager.rs`
 - Stats command: `src/cli/commands/stats.rs`
 - Project management: `src/executor/workspace.rs`
-

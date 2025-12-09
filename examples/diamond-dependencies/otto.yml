@@ -37,4 +37,3 @@ tasks:
     bash: |
       echo "O"
     help: O task help
-

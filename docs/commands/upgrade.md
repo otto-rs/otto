@@ -568,4 +568,3 @@ The implementation will be considered complete when:
 - GitHub Releases API: https://docs.github.com/en/rest/releases
 - Cargo Install: https://doc.rust-lang.org/cargo/commands/cargo-install.html
 - Rustup Self-Update: https://github.com/rust-lang/rustup (similar problem space)
-

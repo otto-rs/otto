@@ -78,4 +78,3 @@ tasks:
       echo "All parallel tasks completed!"
       echo "Summary: All tasks have finished executing"
     help: Meta-task that depends on all parallel tasks
-
