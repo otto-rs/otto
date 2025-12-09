@@ -40,7 +40,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tempfile = "3.23"
 regex = "1.12.2"
 colored = "3.0.0"
-clap = { version = "4.5.51", features = ["derive", "env", "string"] }
+clap = { version = "4.5.53", features = ["derive", "env", "string"] }
 chrono = "0.4"
 atty = "0.2"
 rusqlite = { version = "0.37", features = ["bundled"] }
@@ -49,12 +49,12 @@ comfy-table = "7.2"
 hostname = "0.4"
 ratatui = "0.29"
 crossterm = "0.29"
-reqwest = { version = "0.11", features = ["json", "stream"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
 futures-util = "0.3"
 tar = "0.4"
-flate2 = "1.0"
+flate2 = "1.1"
 semver = "1.0"
-indicatif = "0.17"
+indicatif = "0.18"
 
 [dev-dependencies]
 tokio-test = "0.4"
