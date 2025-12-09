@@ -3,7 +3,7 @@ use std::fs;
 
 #[test]
 fn test_convert_devs_makefile() {
-    let makefile_path = "examples/devs/Makefile";
+    let makefile_path = "makefiles/devs/Makefile";
     let content = fs::read_to_string(makefile_path).unwrap_or_else(|_| panic!("Failed to read {}", makefile_path));
 
     let mut parser = MakefileParser::new(content);
@@ -23,7 +23,7 @@ fn test_convert_devs_makefile() {
 
 #[test]
 fn test_convert_auth_svc_makefile() {
-    let makefile_path = "examples/auth-svc/Makefile";
+    let makefile_path = "makefiles/auth-svc/Makefile";
     let content = fs::read_to_string(makefile_path).unwrap_or_else(|_| panic!("Failed to read {}", makefile_path));
 
     let mut parser = MakefileParser::new(content);
@@ -48,8 +48,8 @@ fn test_convert_auth_svc_makefile() {
 }
 
 #[test]
-fn test_convert_ex12_makefile() {
-    let makefile_path = "examples/ex12/Makefile";
+fn test_convert_makefile_example() {
+    let makefile_path = "makefiles/makefile-example/Makefile";
     let content = fs::read_to_string(makefile_path).unwrap_or_else(|_| panic!("Failed to read {}", makefile_path));
 
     let mut parser = MakefileParser::new(content);
@@ -65,7 +65,7 @@ fn test_convert_ex12_makefile() {
 
 #[test]
 fn test_convert_pre_commit_hooks_makefile() {
-    let makefile_path = "examples/pre-commit-hooks/Makefile";
+    let makefile_path = "makefiles/pre-commit-hooks/Makefile";
     let content = fs::read_to_string(makefile_path).unwrap_or_else(|_| panic!("Failed to read {}", makefile_path));
 
     let mut parser = MakefileParser::new(content);
@@ -81,7 +81,7 @@ fn test_convert_pre_commit_hooks_makefile() {
 
 #[test]
 fn test_convert_media_planning_service_makefile() {
-    let makefile_path = "examples/media-planning-service/Makefile";
+    let makefile_path = "makefiles/media-planning-service/Makefile";
     let content = fs::read_to_string(makefile_path).unwrap_or_else(|_| panic!("Failed to read {}", makefile_path));
 
     let mut parser = MakefileParser::new(content);

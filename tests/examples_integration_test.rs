@@ -54,63 +54,53 @@ fn validate_example_parses(example_dir: &str) -> Result<(), Box<dyn std::error::
 // ============================================================================
 
 #[test]
-fn test_ex1_parses() {
-    validate_example_parses("ex1").expect("ex1 should parse");
+fn test_hello_world_parses() {
+    validate_example_parses("hello-world").expect("hello-world should parse");
 }
 
 #[test]
-fn test_ex2_parses() {
-    validate_example_parses("ex2").expect("ex2 should parse");
+fn test_basic_dependencies_parses() {
+    validate_example_parses("basic-dependencies").expect("basic-dependencies should parse");
 }
 
 #[test]
-fn test_ex3_parses() {
-    validate_example_parses("ex3").expect("ex3 should parse");
+fn test_dependency_ordering_parses() {
+    validate_example_parses("dependency-ordering").expect("dependency-ordering should parse");
 }
 
 #[test]
-fn test_ex4_parses() {
-    validate_example_parses("ex4").expect("ex4 should parse");
+fn test_diamond_dependencies_parses() {
+    validate_example_parses("diamond-dependencies").expect("diamond-dependencies should parse");
 }
 
 #[test]
-fn test_ex5_parses() {
-    validate_example_parses("ex5").expect("ex5 should parse");
+fn test_complex_workflow_parses() {
+    validate_example_parses("complex-workflow").expect("complex-workflow should parse");
 }
 
 #[test]
-fn test_ex6_parses() {
-    validate_example_parses("ex6").expect("ex6 should parse");
+fn test_parallel_tasks_parses() {
+    validate_example_parses("parallel-tasks").expect("parallel-tasks should parse");
 }
 
 #[test]
-fn test_ex7_parses() {
-    validate_example_parses("ex7").expect("ex7 should parse");
+fn test_file_dependencies_parses() {
+    validate_example_parses("file-dependencies").expect("file-dependencies should parse");
 }
 
 #[test]
-fn test_ex8_parses() {
-    validate_example_parses("ex8").expect("ex8 should parse");
+fn test_build_pipeline_parses() {
+    validate_example_parses("build-pipeline").expect("build-pipeline should parse");
 }
 
 #[test]
-fn test_ex9_parses() {
-    validate_example_parses("ex9").expect("ex9 should parse");
+fn test_environment_variables_parses() {
+    validate_example_parses("environment-variables").expect("environment-variables should parse");
 }
 
 #[test]
-fn test_ex10_parses() {
-    validate_example_parses("ex10").expect("ex10 should parse");
-}
-
-#[test]
-fn test_ex12_parses() {
-    validate_example_parses("ex12").expect("ex12 should parse");
-}
-
-#[test]
-fn test_ex13_parses() {
-    validate_example_parses("ex13").expect("ex13 should parse");
+fn test_build_test_deploy_parses() {
+    validate_example_parses("build-test-deploy").expect("build-test-deploy should parse");
 }
 
 // ============================================================================
@@ -118,44 +108,69 @@ fn test_ex13_parses() {
 // ============================================================================
 
 #[test]
-fn test_ex1_punch_executes() {
-    run_example("ex1", "punch").expect("ex1 punch should execute successfully");
+fn test_hello_world_punch_executes() {
+    run_example("hello-world", "punch").expect("hello-world punch should execute successfully");
 }
 
 #[test]
-fn test_ex11_data_passing() {
+fn test_data_flow_bash() {
     // This tests the data passing mechanism (bash only)
-    run_example("ex11", "consume").expect("ex11 consume should execute successfully");
+    run_example("data-flow-bash", "consume").expect("data-flow-bash consume should execute successfully");
 }
 
 #[test]
-fn test_ex14_data_passing_validation() {
+fn test_data_passing_demo_validation() {
     // This tests data passing with bash and python
-    run_example("ex14", "report").expect("ex14 report should execute successfully");
+    run_example("data-passing-demo", "report").expect("data-passing-demo report should execute successfully");
 }
 
 // ============================================================================
-// Real-world Examples - Verify they parse
+// Makefile Examples - Verify they parse (moved to makefiles/)
 // ============================================================================
 
 #[test]
-fn test_auth_svc_parses() {
-    validate_example_parses("auth-svc").expect("auth-svc should parse");
+fn test_makefile_auth_svc_parses() {
+    let mut cmd = otto_cmd();
+    cmd.current_dir("makefiles/auth-svc");
+    cmd.arg("--help");
+    let output = cmd.output().expect("Failed to run otto");
+    assert!(output.status.success(), "auth-svc should parse");
 }
 
 #[test]
-fn test_devs_parses() {
-    validate_example_parses("devs").expect("devs should parse");
+fn test_makefile_devs_parses() {
+    let mut cmd = otto_cmd();
+    cmd.current_dir("makefiles/devs");
+    cmd.arg("--help");
+    let output = cmd.output().expect("Failed to run otto");
+    assert!(output.status.success(), "devs should parse");
 }
 
 #[test]
-fn test_pre_commit_hooks_parses() {
-    validate_example_parses("pre-commit-hooks").expect("pre-commit-hooks should parse");
+fn test_makefile_pre_commit_hooks_parses() {
+    let mut cmd = otto_cmd();
+    cmd.current_dir("makefiles/pre-commit-hooks");
+    cmd.arg("--help");
+    let output = cmd.output().expect("Failed to run otto");
+    assert!(output.status.success(), "pre-commit-hooks should parse");
 }
 
 #[test]
-fn test_media_planning_service_parses() {
-    validate_example_parses("media-planning-service").expect("media-planning-service should parse");
+fn test_makefile_media_planning_service_parses() {
+    let mut cmd = otto_cmd();
+    cmd.current_dir("makefiles/media-planning-service");
+    cmd.arg("--help");
+    let output = cmd.output().expect("Failed to run otto");
+    assert!(output.status.success(), "media-planning-service should parse");
+}
+
+#[test]
+fn test_makefile_example_parses() {
+    let mut cmd = otto_cmd();
+    cmd.current_dir("makefiles/makefile-example");
+    cmd.arg("--help");
+    let output = cmd.output().expect("Failed to run otto");
+    assert!(output.status.success(), "makefile-example should parse");
 }
 
 // ============================================================================
