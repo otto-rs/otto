@@ -21,7 +21,12 @@ fn run_example(example_dir: &str, task: &str) -> Result<(), Box<dyn std::error::
         eprintln!("{}", String::from_utf8_lossy(&output.stdout));
         eprintln!("=== STDERR ===");
         eprintln!("{}", String::from_utf8_lossy(&output.stderr));
-        return Err(format!("Example {} failed with exit code: {:?}", example_dir, output.status.code()).into());
+        return Err(format!(
+            "Example {} failed with exit code: {:?}",
+            example_dir,
+            output.status.code()
+        )
+        .into());
     }
 
     Ok(())
@@ -43,8 +48,11 @@ fn validate_example_parses(example_dir: &str) -> Result<(), Box<dyn std::error::
 
     // Should show task list in help
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Commands:") || stdout.contains("Usage:"),
-            "Help output should show commands for {}", example_dir);
+    assert!(
+        stdout.contains("Commands:") || stdout.contains("Usage:"),
+        "Help output should show commands for {}",
+        example_dir
+    );
 
     Ok(())
 }
@@ -204,4 +212,3 @@ fn test_validates_broken_examples() {
     // Cleanup
     std::fs::remove_dir_all("examples/_test_broken").ok();
 }
-
