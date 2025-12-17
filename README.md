@@ -1,6 +1,43 @@
 # otto
 otto program for make-like task mgmt via yaml file
 
+## Installation
+
+### GitHub Actions (Recommended for CI/CD)
+
+Use [setup-otto](https://github.com/scottidler/setup-otto) to install otto in your workflows:
+
+```yaml
+- uses: scottidler/setup-otto@v1
+
+- name: Run otto tasks
+  run: otto ci
+```
+
+See [setup-otto](https://github.com/scottidler/setup-otto) for full documentation and options.
+
+### Manual Installation
+
+```bash
+# Download the latest release (Linux)
+curl -L https://github.com/scottidler/otto/releases/latest/download/otto-vX.Y.Z-linux.tar.gz | tar -xz
+sudo mv otto /usr/local/bin/
+
+# macOS (Apple Silicon)
+curl -L https://github.com/scottidler/otto/releases/latest/download/otto-vX.Y.Z-macos-arm64.tar.gz | tar -xz
+sudo mv otto /usr/local/bin/
+
+# macOS (Intel)
+curl -L https://github.com/scottidler/otto/releases/latest/download/otto-vX.Y.Z-macos-x86_64.tar.gz | tar -xz
+sudo mv otto /usr/local/bin/
+```
+
+### From Source
+
+```bash
+cargo install --git https://github.com/scottidler/otto
+```
+
 ## Version Reporting
 
 The `otto` binary supports `--version` and `-v` flags:

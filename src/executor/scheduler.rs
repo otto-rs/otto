@@ -588,7 +588,32 @@ impl TaskScheduler {
                 if status.success() {
                     Ok(())
                 } else {
-                    Err(eyre!("Task {} failed with exit code {:?}", task_name, status.code()))
+                    // Get fully qualified log file paths
+                    let stdout_log = tasks_dir.join(&task_name).join("stdout.log");
+                    let stderr_log = tasks_dir.join(&task_name).join("stderr.log");
+
+                    // Read stderr content to include in error message
+                    let stderr_content = tokio::fs::read_to_string(&stderr_log).await.unwrap_or_default();
+                    let stderr_preview = if !stderr_content.trim().is_empty() {
+                        let lines: Vec<&str> = stderr_content.lines().collect();
+                        let preview_lines = if lines.len() > 20 { &lines[lines.len() - 20..] } else { &lines[..] };
+                        format!(
+                            "\n\nError output (last {} lines):\n{}",
+                            preview_lines.len(),
+                            preview_lines.join("\n")
+                        )
+                    } else {
+                        String::new()
+                    };
+
+                    Err(eyre!(
+                        "Task {} failed with exit code {:?}{}\n\nLogs:\n  stdout: {}\n  stderr: {}",
+                        task_name,
+                        status.code(),
+                        stderr_preview,
+                        stdout_log.canonicalize().unwrap_or(stdout_log).display(),
+                        stderr_log.canonicalize().unwrap_or(stderr_log).display()
+                    ))
                 }
             }
             .await;

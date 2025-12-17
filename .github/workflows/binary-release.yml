@@ -63,11 +63,21 @@ jobs:
         run: |
           tar -czvf otto-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz -C artifacts otto
 
+      - name: Generate checksum
+        run: |
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            shasum -a 256 otto-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz > otto-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz.sha256
+          else
+            sha256sum otto-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz > otto-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz.sha256
+          fi
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: otto-${{ matrix.suffix }}
-          path: otto-${{ github.ref_name }}-${{ matrix.suffix }}.*
+          path: |
+            otto-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz
+            otto-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz.sha256
 
   create-release:
     needs: build-and-package

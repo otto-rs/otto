@@ -175,7 +175,7 @@ tasks:
       find examples/ -type d -name ".otto-run" -exec rm -rf {} + 2>/dev/null || true
       echo ""
       echo "✅ All cleaned!"
-  coverage:
+  cov:
     help: "Generate code coverage report with cargo-tarpaulin"
     bash: |
       echo "🧪 Running Tarpaulin coverage analysis..."

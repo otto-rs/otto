@@ -1,0 +1,35 @@
+name: Test setup-otto Action
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/test-setup-otto.yml'
+
+jobs:
+  test:
+    name: Test on ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup otto via setup-otto action
+        uses: scottidler/setup-otto@v1
+        id: otto
+
+      - name: Verify installation
+        run: |
+          echo "✅ Otto installed successfully"
+          echo "Version: ${{ steps.otto.outputs.version }}"
+          echo "Cache hit: ${{ steps.otto.outputs.cache-hit }}"
+          otto --version
+
+      - name: Run otto dev task
+        run: otto dev
+
+      - name: Show available tasks
+        run: otto --help
