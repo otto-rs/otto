@@ -37,6 +37,32 @@ async fn main() {
 
     let args: Vec<String> = env::args().collect();
 
+    // Handle hidden --is-valid-ottofile arg early (before normal parsing)
+    for (i, arg) in args.iter().enumerate() {
+        if arg == "--is-valid-ottofile" {
+            if let Some(path_arg) = args.get(i + 1) {
+                // Extract filename from path (handles both "/path/to/otto.yml" and "otto.yml")
+                let filename = std::path::Path::new(path_arg)
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .unwrap_or(path_arg);
+                if otto::cli::is_valid_ottofile_name(filename) {
+                    std::process::exit(0);
+                }
+            }
+            std::process::exit(1);
+        } else if let Some(path_arg) = arg.strip_prefix("--is-valid-ottofile=") {
+            let filename = std::path::Path::new(path_arg)
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or(path_arg);
+            if otto::cli::is_valid_ottofile_name(filename) {
+                std::process::exit(0);
+            }
+            std::process::exit(1);
+        }
+    }
+
     if args.len() > 1 {
         match args[1].as_str() {
             "Clean" => {

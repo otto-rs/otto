@@ -32,6 +32,12 @@ const OTTOFILES: &[&str] = &[
     "OTTOFILE",
 ];
 
+/// Check if a filename is a valid ottofile name.
+/// This is a hidden/secret function used for shell scripting.
+pub fn is_valid_ottofile_name(filename: &str) -> bool {
+    OTTOFILES.contains(&filename)
+}
+
 static DEFAULT_JOBS: Lazy<String> = Lazy::new(|| num_cpus::get().to_string());
 
 fn calculate_hash(action: &String) -> String {
