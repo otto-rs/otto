@@ -2,8 +2,9 @@
 
 # Minimal runtime image with pre-built otto binary
 # Binary is provided via build context from CI artifacts
+# Using Ubuntu 24.04 to match the GLIBC version from the build environment
 
-FROM debian:bookworm-slim
+FROM ubuntu:24.04
 
 # Install minimal runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \

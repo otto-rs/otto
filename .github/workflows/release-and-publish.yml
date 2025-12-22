@@ -16,19 +16,60 @@ permissions:
   packages: write
 
 jobs:
-  build-and-package:
-    runs-on: ${{ matrix.os }}
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set GIT_DESCRIBE environment variable
+        run: |
+          GIT_DESCRIBE=$(git describe --tags --dirty --always)
+          echo "GIT_DESCRIBE=$GIT_DESCRIBE" >> $GITHUB_ENV
+
+      - name: Set up Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain ${{ env.RUST_VERSION }}
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust"
+          shared-key: "x86_64-unknown-linux-gnu"
+
+      - name: Build for Linux
+        run: cargo build --release
+
+      - name: Package binary
+        run: |
+          mkdir -p artifacts/
+          cp target/release/otto artifacts/
+
+      - name: Archive artifacts
+        run: tar -czvf otto-${{ github.ref_name }}-linux.tar.gz -C artifacts otto
+
+      - name: Generate checksum
+        run: sha256sum otto-${{ github.ref_name }}-linux.tar.gz > otto-${{ github.ref_name }}-linux.tar.gz.sha256
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: otto-linux
+          path: |
+            otto-${{ github.ref_name }}-linux.tar.gz
+            otto-${{ github.ref_name }}-linux.tar.gz.sha256
+
+  build-macos:
+    runs-on: macos-14
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            suffix: linux
-          - os: macos-14
-            target: x86_64-apple-darwin
+          - target: x86_64-apple-darwin
             suffix: macos-x86_64
-          - os: macos-14
-            target: aarch64-apple-darwin
+          - target: aarch64-apple-darwin
             suffix: macos-arm64
     steps:
       - uses: actions/checkout@v4
@@ -54,8 +95,7 @@ jobs:
           shared-key: ${{ matrix.target }}
 
       - name: Build for ${{ matrix.target }}
-        run: |
-          cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package binary
         run: |
@@ -63,16 +103,10 @@ jobs:
           cp target/${{ matrix.target }}/release/otto artifacts/
 
       - name: Archive artifacts
-        run: |
-          tar -czvf otto-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz -C artifacts otto
+        run: tar -czvf otto-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz -C artifacts otto
 
       - name: Generate checksum
-        run: |
-          if [[ "${{ runner.os }}" == "macOS" ]]; then
-            shasum -a 256 otto-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz > otto-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz.sha256
-          else
-            sha256sum otto-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz > otto-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz.sha256
-          fi
+        run: shasum -a 256 otto-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz > otto-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz.sha256
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -83,7 +117,7 @@ jobs:
             otto-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz.sha256
 
   create-release:
-    needs: build-and-package
+    needs: [build-linux, build-macos]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -99,7 +133,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   docker:
-    needs: build-and-package
+    needs: build-linux
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
