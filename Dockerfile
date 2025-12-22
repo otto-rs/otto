@@ -6,6 +6,9 @@
 
 FROM ubuntu:24.04
 
+# TARGETARCH is automatically set by buildx (amd64 or arm64)
+ARG TARGETARCH
+
 # Install minimal runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -15,8 +18,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash otto
 
-# Copy pre-built binary from build context
-COPY --from=binary otto /usr/local/bin/otto
+# Copy pre-built binary from build context (architecture-specific)
+COPY --from=binaries ${TARGETARCH}/otto /usr/local/bin/otto
 
 # Ensure binary is executable
 RUN chmod +x /usr/local/bin/otto
