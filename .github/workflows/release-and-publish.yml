@@ -18,6 +18,7 @@ permissions:
 jobs:
   build-linux:
     runs-on: ubuntu-latest
+    container: debian:bookworm
     strategy:
       matrix:
         include:
@@ -28,6 +29,15 @@ jobs:
             suffix: linux-arm64
             cross: true
     steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y curl build-essential git pkg-config libssl-dev
+
+      - name: Install cross-compilation toolchain
+        if: matrix.cross
+        run: apt-get install -y gcc-aarch64-linux-gnu
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -38,16 +48,11 @@ jobs:
           GIT_DESCRIBE=$(git describe --tags --dirty --always)
           echo "GIT_DESCRIBE=$GIT_DESCRIBE" >> $GITHUB_ENV
 
-      - name: Install cross-compilation toolchain
-        if: matrix.cross
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-
       - name: Set up Rust
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain ${{ env.RUST_VERSION }}
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          . "$HOME/.cargo/env"
           rustup target add ${{ matrix.target }}
 
       - name: Cache Rust dependencies

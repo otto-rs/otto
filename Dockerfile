@@ -2,9 +2,9 @@
 
 # Minimal runtime image with pre-built otto binary
 # Binary is provided via build context from CI artifacts
-# Using Ubuntu 24.04 to match the GLIBC version from the build environment
+# Using Debian bookworm to match base-images GLIBC version (2.36)
 
-FROM ubuntu:24.04
+FROM debian:bookworm-slim
 
 # TARGETARCH is automatically set by buildx (amd64 or arm64)
 ARG TARGETARCH
