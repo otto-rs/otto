@@ -43,6 +43,9 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - name: Mark workspace as safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Set GIT_DESCRIBE environment variable
         run: |
           GIT_DESCRIBE=$(git describe --tags --dirty --always)
