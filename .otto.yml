@@ -5,35 +5,10 @@ otto:
   envs:
     VERSION: "$(git describe --tags --always --dirty 2>/dev/null || echo 'dev')"
     GIT_SHA: "$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
-
 tasks:
-  # Development Setup
-  dev:
-    help: "Setup development environment (check Rust installation)"
-    bash: |
-      echo "🦀 Otto Development Environment"
-      echo ""
-      echo "Rust version:"
-      rustc --version
-      echo ""
-      echo "Cargo version:"
-      cargo --version
-      echo ""
-      echo "✅ Development environment ready!"
-      echo ""
-      echo "Quick commands:"
-      echo "  cargo build          - Build debug"
-      echo "  cargo test           - Run tests"
-      echo "  cargo clippy         - Lint"
-      echo "  cargo fmt            - Format"
-      echo ""
-      echo "Otto tasks:"
-      echo "  otto ci              - Full CI pipeline"
-      echo "  otto quick           - Fast validation"
-
-  # Combined quality checks
   check:
     help: "Run all quality checks (compile, clippy, format)"
+    before: [clean]
     bash: |
       echo "=== Checking compilation ==="
       cargo check
@@ -56,21 +31,16 @@ tasks:
     bash: |
       cargo doc --no-deps
 
-  # Meta task: quick validation (2 things in parallel)
   quick:
     help: "Quick validation (check + test in parallel)"
     before: [check, test]
     bash: |
       echo "✅ Quick checks passed!"
-
-  # Meta task: CI pipeline (2 checks in parallel)
   ci:
     help: "Full CI pipeline (test + check in parallel)"
-    before: [test, check]
+    before: [check, cov]
     bash: |
       echo "✅ All CI checks passed!"
-
-  # Pre-commit workflow
   pre-commit:
     help: "Pre-commit checks (format, then run CI)"
     bash: |
@@ -81,8 +51,6 @@ tasks:
       otto ci
       echo ""
       echo "✅ Ready to commit!"
-
-  # Examples
   examples:
     help: "Validate all example ottofiles parse correctly"
     bash: |
@@ -107,8 +75,6 @@ tasks:
         echo "❌ $failed example(s) failed validation"
         exit 1
       fi
-
-  # Complete validation (3 things in parallel)
   all:
     help: "Run everything (ci + docs + examples in parallel)"
     before: [ci, docs, examples]
@@ -122,8 +88,6 @@ tasks:
       echo "✅ Examples validated"
       echo ""
       echo "🎉 Everything looks great!"
-
-  # Baseline verification tasks (for TUI development)
   baseline:
     help: "Run baseline verification (DO THIS BEFORE AND AFTER TUI CHANGES)"
     bash: |
@@ -162,8 +126,6 @@ tasks:
       echo "Safe to proceed with TUI development."
       echo ""
       echo "Remember: Run 'otto baseline' after each TUI phase!"
-
-  # Cleanup
   clean:
     help: "Deep clean (cargo clean + remove all otto run artifacts)"
     bash: |
@@ -177,9 +139,10 @@ tasks:
       echo "✅ All cleaned!"
   cov:
     help: "Generate code coverage report with cargo-tarpaulin"
+    before: [clean]
     bash: |
       echo "🧪 Running Tarpaulin coverage analysis..."
-      cargo tarpaulin --out Html --out Lcov --workspace --timeout 120
+      cargo tarpaulin --skip-clean --out Html --out Lcov --workspace --timeout 120
       echo ""
       echo "✅ Coverage reports generated:"
       echo "  - HTML: target/tarpaulin-report.html"

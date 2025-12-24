@@ -402,6 +402,16 @@ impl Workspace {
             .join(format!("output.{dep_name}.json"))
     }
 
+    /// Get task output .env file path (for jq-free bash serialization)
+    pub fn task_output_env_file(&self, task_name: &str) -> PathBuf {
+        self.task(task_name).join(format!("output.{task_name}.env"))
+    }
+
+    /// Get task input .env file path for a specific dependency (for jq-free bash deserialization)
+    pub fn task_input_env_file(&self, task_name: &str, dep_name: &str) -> PathBuf {
+        self.task(task_name).join(format!("input.{dep_name}.env"))
+    }
+
     /// Get the current run directory
     pub fn current_run_dir(&self) -> &PathBuf {
         &self.run
