@@ -251,7 +251,9 @@ impl BashProcessor {
                 }
                 crate::cfg::param::Value::Empty => String::new(),
             };
-            param_section.push(format!("{param_name}=\"{value_str}\""));
+            // Convert hyphens to underscores for valid bash variable names
+            let bash_var_name = param_name.replace('-', "_");
+            param_section.push(format!("{bash_var_name}=\"{value_str}\""));
         }
 
         param_section.push(String::new()); // Add blank line after section
