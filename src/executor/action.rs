@@ -319,6 +319,18 @@ otto_serialize_output "{}"
 # Compatible with Bash 3.2+ (uses indexed arrays instead of associative arrays)
 # NO JQ REQUIRED - uses .env files generated/consumed by Otto (Rust)
 
+# ANSI Color Codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+CYAN='\033[0;36m'
+WHITE='\033[0;37m'
+BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m'  # No Color / Reset
+
 # Function to deserialize input.<task-name>.env -> OTTO_INPUT
 # Otto generates .env files from dependency JSON outputs before task runs
 otto_deserialize_input() {
@@ -330,26 +342,33 @@ otto_deserialize_input() {
         # shellcheck disable=SC1090
         source "$env_file"
 
+        # Build the expected variable prefix: OTTO_INPUT_<TASK>_
+        local task_upper
+        task_upper=$(echo "$task_name" | tr '[:lower:]-' '[:upper:]_')
+        local prefix="OTTO_INPUT_${task_upper}_"
+        local prefix_len=${#prefix}
+
         # Also populate OTTO_INPUT array for backward compatibility
         while IFS= read -r line; do
             # Skip comments and empty lines
             [[ "$line" =~ ^#.*$ ]] && continue
             [[ -z "$line" ]] && continue
 
-            # Parse KEY='value' format
-            if [[ "$line" =~ ^([A-Z_][A-Z0-9_]*)=\'(.*)\'$ ]]; then
-                local var_name="${BASH_REMATCH[1]}"
-                local value="${BASH_REMATCH[2]}"
+            # Parse KEY='value' format using parameter expansion (locale-safe)
+            if [[ "$line" == *"='"*"'" ]]; then
+                local var_name="${line%%=*}"
+                local value="${line#*=\'}"
+                value="${value%\'}"
 
                 # Unescape single quotes
                 value="${value//\'\\\'\'/\'}"
 
-                # Extract the key part after OTTO_INPUT_<TASK>_
-                # Variable format: OTTO_INPUT_<TASK>_<KEY>
-                if [[ "$var_name" =~ ^OTTO_INPUT_[A-Z0-9_]+_(.+)$ ]]; then
-                    local key="${BASH_REMATCH[1]}"
-                    # Convert back to lowercase with original separators
-                    key=$(echo "$key" | tr '[:upper:]' '[:lower:]' | tr '_' '-')
+                # Check if variable starts with our expected prefix
+                if [[ "$var_name" == "${prefix}"* ]]; then
+                    # Extract key by stripping the prefix
+                    local key="${var_name:$prefix_len}"
+                    # Convert back to lowercase with underscores
+                    key=$(echo "$key" | tr '[:upper:]' '[:lower:]')
                     OTTO_INPUT+=("${task_name}.${key}=${value}")
                 fi
             fi

@@ -580,7 +580,7 @@ impl Parser {
 
         let mut tasks_needed = HashSet::new();
         for task_name in requested_tasks {
-            Self::collect_transitive_deps(task_name, &task_deps, &mut tasks_needed)?;
+            Self::collect_transitive_deps(task_name, &task_deps, &self.config_spec.tasks, &mut tasks_needed)?;
         }
 
         let mut tasks = Vec::new();
@@ -692,9 +692,13 @@ impl Parser {
         Ok(task_deps)
     }
 
+    /// Collect all tasks needed to run a given task, including:
+    /// - Transitive dependencies (before/upstream tasks)
+    /// - After tasks (downstream tasks that should auto-run)
     fn collect_transitive_deps(
         task_name: &str,
         task_deps: &HashMap<String, Vec<String>>,
+        task_specs: &HashMap<String, TaskSpec>,
         collected: &mut HashSet<String>,
     ) -> Result<()> {
         if collected.contains(task_name) {
@@ -703,9 +707,17 @@ impl Parser {
 
         collected.insert(task_name.to_string());
 
+        // Collect upstream dependencies (before)
         if let Some(deps) = task_deps.get(task_name) {
             for dep in deps {
-                Self::collect_transitive_deps(dep, task_deps, collected)?;
+                Self::collect_transitive_deps(dep, task_deps, task_specs, collected)?;
+            }
+        }
+
+        // Collect downstream tasks (after) - these auto-run when this task is requested
+        if let Some(spec) = task_specs.get(task_name) {
+            for after_task in &spec.after {
+                Self::collect_transitive_deps(after_task, task_deps, task_specs, collected)?;
             }
         }
 
@@ -1780,5 +1792,154 @@ mod tests {
         assert!(result.is_ok());
         let (_, _, _, jobs, _) = result.unwrap();
         assert_eq!(jobs, num_cpus::get());
+    }
+
+    // Tests for collect_transitive_deps and after semantic
+    #[test]
+    fn test_collect_transitive_deps_basic() {
+        let mut task_deps = HashMap::new();
+        task_deps.insert("a".to_string(), vec![]);
+        task_deps.insert("b".to_string(), vec!["a".to_string()]);
+        task_deps.insert("c".to_string(), vec!["b".to_string()]);
+
+        let task_specs = HashMap::new();
+        let mut collected = HashSet::new();
+
+        Parser::collect_transitive_deps("c", &task_deps, &task_specs, &mut collected).unwrap();
+
+        assert!(collected.contains("a"));
+        assert!(collected.contains("b"));
+        assert!(collected.contains("c"));
+        assert_eq!(collected.len(), 3);
+    }
+
+    #[test]
+    fn test_collect_transitive_deps_with_after() {
+        // Test that 'after' tasks are automatically included
+        let mut task_deps = HashMap::new();
+        task_deps.insert("cov".to_string(), vec![]);
+        task_deps.insert("cov-report".to_string(), vec!["cov".to_string()]);
+
+        let mut task_specs = HashMap::new();
+        let mut cov_spec = TaskSpec::default();
+        cov_spec.name = "cov".to_string();
+        cov_spec.after = vec!["cov-report".to_string()];
+        task_specs.insert("cov".to_string(), cov_spec);
+
+        let cov_report_spec = TaskSpec {
+            name: "cov-report".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("cov-report".to_string(), cov_report_spec);
+
+        let mut collected = HashSet::new();
+
+        // Running "cov" should also include "cov-report" due to after
+        Parser::collect_transitive_deps("cov", &task_deps, &task_specs, &mut collected).unwrap();
+
+        assert!(collected.contains("cov"), "cov should be included");
+        assert!(collected.contains("cov-report"), "cov-report should be auto-included via after");
+        assert_eq!(collected.len(), 2);
+    }
+
+    #[test]
+    fn test_collect_transitive_deps_after_chain() {
+        // Test chained after: a -> after: [b] -> after: [c]
+        let task_deps = HashMap::new();
+
+        let mut task_specs = HashMap::new();
+
+        let mut a_spec = TaskSpec::default();
+        a_spec.name = "a".to_string();
+        a_spec.after = vec!["b".to_string()];
+        task_specs.insert("a".to_string(), a_spec);
+
+        let mut b_spec = TaskSpec::default();
+        b_spec.name = "b".to_string();
+        b_spec.after = vec!["c".to_string()];
+        task_specs.insert("b".to_string(), b_spec);
+
+        let c_spec = TaskSpec {
+            name: "c".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("c".to_string(), c_spec);
+
+        let mut collected = HashSet::new();
+
+        // Running "a" should include a, b, and c (through the after chain)
+        Parser::collect_transitive_deps("a", &task_deps, &task_specs, &mut collected).unwrap();
+
+        assert!(collected.contains("a"));
+        assert!(collected.contains("b"));
+        assert!(collected.contains("c"));
+        assert_eq!(collected.len(), 3);
+    }
+
+    #[test]
+    fn test_collect_transitive_deps_after_with_dependencies() {
+        // Test: a has after: [b], and b has before: [dep]
+        // Running a should include: a, b, and dep
+        let mut task_deps = HashMap::new();
+        task_deps.insert("a".to_string(), vec![]);
+        task_deps.insert("b".to_string(), vec!["dep".to_string()]);
+        task_deps.insert("dep".to_string(), vec![]);
+
+        let mut task_specs = HashMap::new();
+
+        let mut a_spec = TaskSpec::default();
+        a_spec.name = "a".to_string();
+        a_spec.after = vec!["b".to_string()];
+        task_specs.insert("a".to_string(), a_spec);
+
+        let b_spec = TaskSpec {
+            name: "b".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("b".to_string(), b_spec);
+
+        let dep_spec = TaskSpec {
+            name: "dep".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("dep".to_string(), dep_spec);
+
+        let mut collected = HashSet::new();
+
+        Parser::collect_transitive_deps("a", &task_deps, &task_specs, &mut collected).unwrap();
+
+        assert!(collected.contains("a"));
+        assert!(collected.contains("b"));
+        assert!(collected.contains("dep"), "dep should be included as b's dependency");
+        assert_eq!(collected.len(), 3);
+    }
+
+    #[test]
+    fn test_collect_transitive_deps_no_duplicates() {
+        // Test that circular references via after don't cause infinite loops
+        let mut task_deps = HashMap::new();
+        task_deps.insert("a".to_string(), vec![]);
+        task_deps.insert("b".to_string(), vec!["a".to_string()]);
+
+        let mut task_specs = HashMap::new();
+
+        let mut a_spec = TaskSpec::default();
+        a_spec.name = "a".to_string();
+        a_spec.after = vec!["b".to_string()];
+        task_specs.insert("a".to_string(), a_spec);
+
+        let mut b_spec = TaskSpec::default();
+        b_spec.name = "b".to_string();
+        b_spec.after = vec!["a".to_string()]; // Circular after reference
+        task_specs.insert("b".to_string(), b_spec);
+
+        let mut collected = HashSet::new();
+
+        // Should not panic or infinite loop
+        Parser::collect_transitive_deps("a", &task_deps, &task_specs, &mut collected).unwrap();
+
+        assert!(collected.contains("a"));
+        assert!(collected.contains("b"));
+        assert_eq!(collected.len(), 2);
     }
 }
