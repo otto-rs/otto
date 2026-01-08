@@ -18,6 +18,8 @@ use tokio::{
     time::timeout,
 };
 
+use crate::ports::FileSystem;
+
 use super::task::Task;
 use super::{
     action::{ActionProcessor, ProcessedAction},
@@ -108,7 +110,7 @@ pub enum TaskStatus {
 }
 
 /// Task scheduler that manages concurrent execution
-pub struct TaskScheduler {
+pub struct TaskScheduler<F: FileSystem = crate::ports::RealFs> {
     /// Task status tracking
     task_statuses: Arc<Mutex<HashMap<String, TaskStatus>>>,
     /// Task start times tracking (for duration calculation)
@@ -116,7 +118,7 @@ pub struct TaskScheduler {
     /// Semaphore for task limiting
     semaphore: Arc<Semaphore>,
     /// Workspace for path management
-    workspace: Arc<Workspace>,
+    workspace: Arc<Workspace<F>>,
     /// Execution context for metadata
     execution_context: ExecutionContext,
     /// Tasks to execute
@@ -129,10 +131,10 @@ pub struct TaskScheduler {
     task_streams: Option<Arc<std::collections::HashMap<String, TaskStreams>>>,
 }
 
-impl TaskScheduler {
+impl<F: FileSystem + 'static> TaskScheduler<F> {
     pub async fn new(
         tasks: Vec<Task>,
-        workspace: Arc<Workspace>,
+        workspace: Arc<Workspace<F>>,
         execution_context: ExecutionContext,
         max_parallel: usize,
         tui_mode: bool,
@@ -544,11 +546,11 @@ impl TaskScheduler {
 
             // Record task start in database with paths (graceful degradation)
             let db_task_id = if let Some(run_id) = workspace.db_run_id() {
-                if let Some(manager) = super::state::StateManager::try_new() {
+                if let Some(store) = workspace.state_store() {
                     let stdout_path = tasks_dir.join(&task_name).join("stdout.log");
                     let stderr_path = tasks_dir.join(&task_name).join("stderr.log");
 
-                    match manager.record_task_start(
+                    match store.record_task_start(
                         run_id,
                         &task_name,
                         None, // TODO: Compute script hash in future phase
@@ -719,8 +721,8 @@ impl TaskScheduler {
 
                     // Record task completion in database (graceful degradation)
                     if let Some(task_id) = db_task_id
-                        && let Some(manager) = super::state::StateManager::try_new()
-                        && let Err(e) = manager.record_task_complete(task_id, 0, super::state::TaskStatus::Completed)
+                        && let Some(store) = workspace.state_store()
+                        && let Err(e) = store.record_task_complete(task_id, 0, super::state::TaskStatus::Completed)
                     {
                         log::warn!("Failed to record task completion in database: {}", e);
                     }
@@ -735,7 +737,7 @@ impl TaskScheduler {
 
                     // Record task failure in database (graceful degradation)
                     if let Some(task_id) = db_task_id
-                        && let Some(manager) = super::state::StateManager::try_new()
+                        && let Some(store) = workspace.state_store()
                     {
                         // Extract exit code from error message if possible
                         let exit_code = e
@@ -746,7 +748,7 @@ impl TaskScheduler {
                             .unwrap_or(1);
 
                         // Ignore errors in graceful degradation
-                        let _ = manager.record_task_complete(task_id, exit_code, super::state::TaskStatus::Failed);
+                        let _ = store.record_task_complete(task_id, exit_code, super::state::TaskStatus::Failed);
                     }
 
                     let mut statuses = task_statuses.lock().await;

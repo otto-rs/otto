@@ -1,13 +1,10 @@
 use env_logger::Target;
 use eyre::{Report, Result};
 use log::info;
-use otto::{
-    cli::{CleanCommand, ConvertCommand, HistoryCommand, Parser, StatsCommand},
-    executor::{DagVisualizer, TaskScheduler, Workspace},
-};
+use otto::RuntimeConfig;
+use otto::cli::Parser;
 use std::env;
 use std::fs::OpenOptions;
-use std::sync::Arc;
 
 fn setup_logging() -> Result<(), Report> {
     let log_dir = dirs::data_local_dir()
@@ -38,72 +35,22 @@ async fn main() {
     let args: Vec<String> = env::args().collect();
 
     // Handle hidden --is-valid-ottofile arg early (before normal parsing)
-    for (i, arg) in args.iter().enumerate() {
-        if arg == "--is-valid-ottofile" {
-            if let Some(path_arg) = args.get(i + 1) {
-                // Extract filename from path (handles both "/path/to/otto.yml" and "otto.yml")
-                let filename = std::path::Path::new(path_arg)
-                    .file_name()
-                    .and_then(|f| f.to_str())
-                    .unwrap_or(path_arg);
-                if otto::cli::is_valid_ottofile_name(filename) {
-                    std::process::exit(0);
-                }
-            }
-            std::process::exit(1);
-        } else if let Some(path_arg) = arg.strip_prefix("--is-valid-ottofile=") {
-            let filename = std::path::Path::new(path_arg)
-                .file_name()
-                .and_then(|f| f.to_str())
-                .unwrap_or(path_arg);
-            if otto::cli::is_valid_ottofile_name(filename) {
-                std::process::exit(0);
-            }
-            std::process::exit(1);
-        }
+    if let Some(exit_code) = handle_is_valid_ottofile(&args) {
+        std::process::exit(exit_code);
     }
 
-    if args.len() > 1 {
-        match args[1].as_str() {
-            "Clean" => {
-                if let Err(e) = execute_clean_command(&args[1..]).await {
-                    eprintln!("{e}");
-                    std::process::exit(1);
-                }
-                return;
-            }
-            "Convert" => {
-                if let Err(e) = execute_convert_command(&args[1..]) {
-                    eprintln!("{e}");
-                    std::process::exit(1);
-                }
-                return;
-            }
-            "History" => {
-                if let Err(e) = execute_history_command(&args[1..]) {
-                    eprintln!("{e}");
-                    std::process::exit(1);
-                }
-                return;
-            }
-            "Stats" => {
-                if let Err(e) = execute_stats_command(&args[1..]) {
-                    eprintln!("{e}");
-                    std::process::exit(1);
-                }
-                return;
-            }
-            "Upgrade" => {
-                if let Err(e) = execute_upgrade_command(&args[1..]).await {
-                    eprintln!("{e}");
-                    std::process::exit(1);
-                }
-                return;
-            }
-            _ => {}
+    // Handle subcommands that use their own clap parsers
+    if args.len() > 1
+        && let Some(result) = handle_subcommand(&args).await
+    {
+        if let Err(e) = result {
+            eprintln!("{e}");
+            std::process::exit(1);
         }
+        return;
     }
 
+    // Parse and run main command
     let mut parser = match Parser::new(args) {
         Ok(p) => p,
         Err(e) => {
@@ -112,393 +59,56 @@ async fn main() {
         }
     };
 
-    let (tasks, hash, ottofile_path, jobs, tui_mode) = match parser.parse() {
-        Ok(result) => result,
+    let config = match RuntimeConfig::from_parser(&mut parser) {
+        Ok(c) => c,
         Err(e) => {
             eprintln!("{e}");
             std::process::exit(1);
         }
     };
 
-    // Execute tasks
-    if let Err(e) = execute_tasks(tasks, hash, ottofile_path, jobs, tui_mode).await {
+    if let Err(e) = otto::run(config).await {
         eprintln!("{e}");
         std::process::exit(1);
     }
 }
 
-async fn execute_clean_from_task(task: &otto::cli::parser::Task) -> Result<(), Report> {
-    use otto::cfg::param::Value;
-
-    // Extract parameters from task values
-    let keep_days = if let Some(Value::Item(s)) = task.values.get("keep") {
-        s.parse::<u64>().unwrap_or(30)
-    } else {
-        30 // Default
-    };
-
-    // Boolean flag: stored as Value::Item("true") or Value::Item("false")
-    let dry_run = task
-        .values
-        .get("dry-run")
-        .and_then(|v| if let Value::Item(s) = v { Some(s == "true") } else { None })
-        .unwrap_or(false);
-
-    let project_filter = task
-        .values
-        .get("project")
-        .and_then(|v| if let Value::Item(s) = v { Some(s.clone()) } else { None });
-
-    let clean_cmd = CleanCommand {
-        keep_days,
-        keep_last: None,
-        keep_failed: None,
-        dry_run,
-        project_filter,
-        no_db: false,
-    };
-    clean_cmd.execute().await?;
-
-    Ok(())
-}
-
-fn execute_history_from_task(task: &otto::cli::parser::Task) -> Result<(), Report> {
-    use otto::cfg::param::Value;
-    use otto::cli::commands::history::HistoryCommand;
-
-    // Extract task parameter
-    let task_name = task
-        .values
-        .get("task")
-        .and_then(|v| if let Value::Item(s) = v { Some(s.clone()) } else { None });
-
-    // Extract limit parameter
-    let limit = if let Some(Value::Item(s)) = task.values.get("limit") {
-        s.parse::<usize>().unwrap_or(20)
-    } else {
-        20
-    };
-
-    // Extract status parameter
-    let status = task
-        .values
-        .get("status")
-        .and_then(|v| if let Value::Item(s) = v { Some(s.clone()) } else { None });
-
-    // Extract project parameter
-    let project = task
-        .values
-        .get("project")
-        .and_then(|v| if let Value::Item(s) = v { Some(s.clone()) } else { None });
-
-    // Extract json flag
-    let json = task
-        .values
-        .get("json")
-        .and_then(|v| if let Value::Item(s) = v { Some(s == "true") } else { None })
-        .unwrap_or(false);
-
-    let history_cmd = HistoryCommand {
-        task_name,
-        limit,
-        status,
-        project,
-        json,
-    };
-    history_cmd.execute()?;
-
-    Ok(())
-}
-
-fn execute_stats_from_task(task: &otto::cli::parser::Task) -> Result<(), Report> {
-    use otto::cfg::param::Value;
-    use otto::cli::commands::stats::StatsCommand;
-
-    // Extract task parameter
-    let task_name = task
-        .values
-        .get("task")
-        .and_then(|v| if let Value::Item(s) = v { Some(s.clone()) } else { None });
-
-    // Extract limit parameter
-    let limit = if let Some(Value::Item(s)) = task.values.get("limit") {
-        s.parse::<usize>().unwrap_or(10)
-    } else {
-        10
-    };
-
-    // Extract json flag
-    let json = task
-        .values
-        .get("json")
-        .and_then(|v| if let Value::Item(s) = v { Some(s == "true") } else { None })
-        .unwrap_or(false);
-
-    let stats_cmd = StatsCommand { task_name, limit, json };
-    stats_cmd.execute()?;
-
-    Ok(())
-}
-
-async fn execute_tasks(
-    tasks: Vec<otto::cli::parser::Task>,
-    hash: String,
-    ottofile_path: Option<std::path::PathBuf>,
-    jobs: usize,
-    tui_mode: bool,
-) -> Result<(), Report> {
-    if tui_mode {
-        if !atty::is(atty::Stream::Stdout) {
-            eprintln!("Warning: --tui requires a TTY, falling back to standard output");
-            return execute_with_terminal_output(tasks, hash, ottofile_path, jobs).await;
-        }
-
-        execute_with_tui(tasks, hash, ottofile_path, jobs).await
-    } else {
-        execute_with_terminal_output(tasks, hash, ottofile_path, jobs).await
-    }
-}
-
-async fn execute_with_terminal_output(
-    tasks: Vec<otto::cli::parser::Task>,
-    hash: String,
-    ottofile_path: Option<std::path::PathBuf>,
-    jobs: usize,
-) -> Result<(), Report> {
-    if tasks.is_empty() {
-        println!("No tasks to execute");
-        return Ok(());
-    }
-
-    let clean_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "Clean").collect();
-    if !clean_tasks.is_empty() {
-        return execute_clean_from_task(clean_tasks[0]).await;
-    }
-
-    let graph_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "Graph").collect();
-    if !graph_tasks.is_empty() {
-        return DagVisualizer::execute_command(graph_tasks[0]).await;
-    }
-
-    let history_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "History").collect();
-    if !history_tasks.is_empty() {
-        return execute_history_from_task(history_tasks[0]);
-    }
-
-    let stats_tasks: Vec<_> = tasks.iter().filter(|task| task.name == "Stats").collect();
-    if !stats_tasks.is_empty() {
-        return execute_stats_from_task(stats_tasks[0]);
-    }
-
-    // Filter out built-in commands for normal execution
-    let execution_tasks: Vec<_> = tasks
-        .into_iter()
-        .filter(|task| !otto::cli::is_builtin(&task.name))
-        .collect();
-
-    if execution_tasks.is_empty() {
-        println!("No tasks to execute");
-        return Ok(());
-    }
-
-    let cwd = env::current_dir()?;
-    let workspace = Workspace::new(cwd).await?;
-    workspace.init().await?;
-
-    let mut execution_context = otto::executor::workspace::ExecutionContext::new();
-    execution_context.ottofile = ottofile_path;
-    execution_context.hash = hash;
-
-    // Save execution context to run directory
-    workspace.save_execution_context(execution_context.clone()).await?;
-
-    // Convert parser tasks to executor tasks
-    let executor_tasks: Vec<otto::executor::Task> = execution_tasks
-        .into_iter()
-        .map(|parser_task| {
-            otto::executor::Task::new(
-                parser_task.name,
-                parser_task.task_deps,
-                parser_task.file_deps,
-                parser_task.output_deps,
-                parser_task.envs,
-                parser_task.values,
-                parser_task.action,
-            )
-        })
-        .collect();
-
-    let scheduler = TaskScheduler::new(executor_tasks, Arc::new(workspace), execution_context, jobs, false).await?;
-
-    // Execute all tasks
-    scheduler.execute_all().await?;
-
-    Ok(())
-}
-
-async fn execute_with_tui(
-    tasks: Vec<otto::cli::parser::Task>,
-    hash: String,
-    ottofile_path: Option<std::path::PathBuf>,
-    jobs: usize,
-) -> Result<(), Report> {
-    use otto::tui::{TaskPane, TuiApp};
-
-    if tasks.is_empty() {
-        eprintln!("No tasks to execute");
-        return Ok(());
-    }
-
-    // Filter out built-in commands for normal execution
-    let execution_tasks: Vec<_> = tasks
-        .into_iter()
-        .filter(|task| !otto::cli::is_builtin(&task.name))
-        .collect();
-
-    if execution_tasks.is_empty() {
-        eprintln!("No tasks to execute");
-        return Ok(());
-    }
-
-    let cwd = env::current_dir()?;
-    let workspace = Workspace::new(cwd).await?;
-    workspace.init().await?;
-
-    let mut execution_context = otto::executor::workspace::ExecutionContext::new();
-    execution_context.ottofile = ottofile_path;
-    execution_context.hash = hash;
-
-    // Save execution context to run directory
-    workspace.save_execution_context(execution_context.clone()).await?;
-
-    let mut executor_tasks = Vec::new();
-    let mut task_streams_map = std::collections::HashMap::new();
-    let output_dir = workspace.run().join("tasks");
-
-    for parser_task in execution_tasks {
-        let task_name = parser_task.name.clone();
-
-        let streams = otto::executor::output::TaskStreams::new(&task_name, &output_dir).await?;
-        task_streams_map.insert(task_name.clone(), streams);
-
-        let executor_task = otto::executor::Task::new(
-            parser_task.name,
-            parser_task.task_deps,
-            parser_task.file_deps,
-            parser_task.output_deps,
-            parser_task.envs,
-            parser_task.values,
-            parser_task.action,
-        );
-        executor_tasks.push(executor_task);
-    }
-
-    // Initialize TUI
-    let mut terminal = otto::tui::init_terminal().map_err(|e| eyre::eyre!("Failed to initialize TUI: {}", e))?;
-
-    let mut app = TuiApp::new();
-
-    // Create message broadcast channel for status updates (larger buffer for fast tasks)
-    let (message_tx, _) = tokio::sync::broadcast::channel::<otto::executor::output::TaskMessage>(1000);
-
-    for task in &executor_tasks {
-        if let Some(streams) = task_streams_map.get(&task.name) {
-            let mut pane = TaskPane::new(task.name.clone(), streams.output_tx.clone());
-            pane.set_message_channel(message_tx.clone());
-            app.layout_mut().add_pane(Box::new(pane));
+/// Handle --is-valid-ottofile argument. Returns Some(exit_code) if handled.
+fn handle_is_valid_ottofile(args: &[String]) -> Option<i32> {
+    for (i, arg) in args.iter().enumerate() {
+        if arg == "--is-valid-ottofile" {
+            if let Some(path_arg) = args.get(i + 1) {
+                let filename = std::path::Path::new(path_arg)
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .unwrap_or(path_arg);
+                if otto::cli::is_valid_ottofile_name(filename) {
+                    return Some(0);
+                }
+            }
+            return Some(1);
+        } else if let Some(path_arg) = arg.strip_prefix("--is-valid-ottofile=") {
+            let filename = std::path::Path::new(path_arg)
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or(path_arg);
+            if otto::cli::is_valid_ottofile_name(filename) {
+                return Some(0);
+            }
+            return Some(1);
         }
     }
+    None
+}
 
-    // Start scheduler in background with TUI mode enabled
-    let mut scheduler = TaskScheduler::new(
-        executor_tasks,
-        Arc::new(workspace),
-        execution_context,
-        jobs,
-        true, // tui_mode = true
-    )
-    .await?;
-
-    // Set message channel on scheduler for broadcasting status updates
-    scheduler.set_message_channel(message_tx);
-
-    // Pass the pre-created task streams to the scheduler
-    scheduler.set_task_streams(task_streams_map);
-
-    // Draw initial TUI state before starting tasks (ensures receivers are ready)
-    terminal.draw(|f| {
-        app.layout_mut().render(f, f.area());
-    })?;
-
-    let scheduler_handle = tokio::spawn(async move { scheduler.execute_all().await });
-
-    let ctrl_c_pressed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let ctrl_c_flag = ctrl_c_pressed.clone();
-
-    tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            ctrl_c_flag.store(true, std::sync::atomic::Ordering::SeqCst);
-        }
-    });
-
-    app.set_shutdown_flag(ctrl_c_pressed);
-
-    // Run TUI (blocks until user quits or Ctrl+C)
-    let tui_result = app.run(&mut terminal);
-
-    // Always restore terminal, even on Ctrl+C or error
-    if let Err(e) = otto::tui::restore_terminal(&mut terminal) {
-        eprintln!("Warning: Failed to restore terminal: {}", e);
+/// Handle subcommands that use their own clap parsers. Returns Some(result) if handled.
+async fn handle_subcommand(args: &[String]) -> Option<Result<(), Report>> {
+    match args[1].as_str() {
+        "Clean" => Some(otto::app::execute_clean_command(&args[1..]).await),
+        "Convert" => Some(otto::app::execute_convert_command(&args[1..])),
+        "History" => Some(otto::app::execute_history_command(&args[1..])),
+        "Stats" => Some(otto::app::execute_stats_command(&args[1..])),
+        "Upgrade" => Some(otto::app::execute_upgrade_command(&args[1..]).await),
+        _ => None,
     }
-
-    // Handle TUI errors
-    tui_result.map_err(|e| eyre::eyre!("TUI error: {}", e))?;
-
-    // Wait for scheduler to complete or propagate errors
-    match scheduler_handle.await {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(e)) => Err(e),
-        Err(e) => Err(eyre::eyre!("Scheduler panicked: {}", e)),
-    }
-}
-
-async fn execute_clean_command(args: &[String]) -> Result<(), Report> {
-    use clap::Parser;
-
-    let clean_cmd = CleanCommand::parse_from(args);
-    clean_cmd.execute().await?;
-    Ok(())
-}
-
-fn execute_history_command(args: &[String]) -> Result<(), Report> {
-    use clap::Parser;
-
-    let history_cmd = HistoryCommand::parse_from(args);
-    history_cmd.execute()?;
-    Ok(())
-}
-
-fn execute_convert_command(args: &[String]) -> Result<(), Report> {
-    use clap::Parser;
-
-    let convert_cmd = ConvertCommand::parse_from(args);
-    convert_cmd.execute()?;
-    Ok(())
-}
-
-fn execute_stats_command(args: &[String]) -> Result<(), Report> {
-    use clap::Parser;
-
-    let stats_cmd = StatsCommand::parse_from(args);
-    stats_cmd.execute()?;
-    Ok(())
-}
-
-async fn execute_upgrade_command(args: &[String]) -> Result<(), Report> {
-    use clap::Parser;
-    use otto::cli::commands::UpgradeCommand;
-
-    let upgrade_cmd = UpgradeCommand::parse_from(args);
-    upgrade_cmd.execute().await?;
-    Ok(())
 }

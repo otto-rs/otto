@@ -1,3 +1,4 @@
+use crate::ports::FileSystem;
 use eyre::Result;
 use hex;
 use sha2::{Digest, Sha256};
@@ -22,13 +23,13 @@ pub enum ProcessedAction {
 }
 
 /// Main coordinator for action processing
-pub struct ActionProcessor {
-    workspace: Arc<Workspace>,
+pub struct ActionProcessor<F: FileSystem = crate::ports::RealFs> {
+    workspace: Arc<Workspace<F>>,
     task_name: String,
 }
 
-impl ActionProcessor {
-    pub fn new(workspace: Arc<Workspace>, task_name: &str) -> Result<Self> {
+impl<F: FileSystem> ActionProcessor<F> {
+    pub fn new(workspace: Arc<Workspace<F>>, task_name: &str) -> Result<Self> {
         Ok(Self {
             workspace,
             task_name: task_name.to_string(),
@@ -98,19 +99,16 @@ impl ActionProcessor {
             .join(format!("{}.{}", hash, processor.get_file_extension()));
 
         // Ensure cache directory exists
-        std::fs::create_dir_all(self.workspace.cache_dir())?;
+        self.workspace.fs().create_dir_all_sync(self.workspace.cache_dir())?;
 
         // Write script to cache if it doesn't exist
-        if !cache_file.exists() {
-            std::fs::write(&cache_file, script)?;
+        if !self.workspace.fs().exists_sync(&cache_file) {
+            self.workspace.fs().write_sync(&cache_file, script.as_bytes())?;
 
             // Make cached script executable
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt;
-                let mut perms = std::fs::metadata(&cache_file)?.permissions();
-                perms.set_mode(0o755);
-                std::fs::set_permissions(&cache_file, perms)?;
+                self.workspace.fs().set_permissions_sync(&cache_file, 0o755)?;
             }
         }
 
@@ -120,24 +118,23 @@ impl ActionProcessor {
 
         // Ensure task directory exists
         if let Some(parent) = script_path.parent() {
-            std::fs::create_dir_all(parent)?;
+            self.workspace.fs().create_dir_all_sync(parent)?;
         }
 
-        if script_path.exists() {
-            std::fs::remove_file(&script_path)?;
+        if self.workspace.fs().exists_sync(&script_path) {
+            self.workspace.fs().remove_file_sync(&script_path)?;
         }
 
         #[cfg(unix)]
         {
-            use std::os::unix::fs;
             // Use relative path for portability
             let relative_cache = self.workspace.relative_script_cache_path(&cache_file);
-            fs::symlink(&relative_cache, &script_path)?;
+            self.workspace.fs().symlink_sync(&relative_cache, &script_path)?;
         }
         #[cfg(not(unix))]
         {
             // Fallback: copy file on non-Unix systems
-            std::fs::copy(&cache_file, &script_path)?;
+            self.workspace.fs().copy_sync(&cache_file, &script_path)?;
         }
 
         Ok(script_path)
@@ -165,13 +162,13 @@ pub trait ScriptProcessor {
 }
 
 /// Bash script processor
-pub struct BashProcessor {
-    workspace: Arc<Workspace>,
+pub struct BashProcessor<F: FileSystem = crate::ports::RealFs> {
+    workspace: Arc<Workspace<F>>,
     task_name: String,
 }
 
-impl BashProcessor {
-    pub fn new(workspace: Arc<Workspace>, task_name: &str) -> Self {
+impl<F: FileSystem> BashProcessor<F> {
+    pub fn new(workspace: Arc<Workspace<F>>, task_name: &str) -> Self {
         Self {
             workspace,
             task_name: task_name.to_string(),
@@ -261,7 +258,7 @@ impl BashProcessor {
     }
 }
 
-impl ScriptProcessor for BashProcessor {
+impl<F: FileSystem> ScriptProcessor for BashProcessor<F> {
     fn generate_prologue(&self, dependencies: &[String], task: &Task) -> Result<String> {
         let env_section = self.generate_bash_env_section(task);
         let input_section = self.generate_bash_input_section(dependencies);
@@ -313,7 +310,7 @@ otto_serialize_output "{}"
 
         // Ensure task directory exists before writing builtins
         if let Some(parent) = builtins_path.parent() {
-            std::fs::create_dir_all(parent)?;
+            self.workspace.fs().create_dir_all_sync(parent)?;
         }
 
         let builtins_content = r##"#!/bin/bash
@@ -447,15 +444,14 @@ otto_set_output() {
     set -u  # Re-enable after array operations
 }
 "##;
-        std::fs::write(&builtins_path, builtins_content)?;
+        self.workspace
+            .fs()
+            .write_sync(&builtins_path, builtins_content.as_bytes())?;
 
         // Make builtins executable
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(&builtins_path)?.permissions();
-            perms.set_mode(0o755);
-            std::fs::set_permissions(&builtins_path, perms)?;
+            self.workspace.fs().set_permissions_sync(&builtins_path, 0o755)?;
         }
 
         Ok(())
@@ -463,13 +459,13 @@ otto_set_output() {
 }
 
 /// Python script processor
-pub struct PythonProcessor {
-    workspace: Arc<Workspace>,
+pub struct PythonProcessor<F: FileSystem = crate::ports::RealFs> {
+    workspace: Arc<Workspace<F>>,
     task_name: String,
 }
 
-impl PythonProcessor {
-    pub fn new(workspace: Arc<Workspace>, task_name: &str) -> Self {
+impl<F: FileSystem> PythonProcessor<F> {
+    pub fn new(workspace: Arc<Workspace<F>>, task_name: &str) -> Self {
         Self {
             workspace,
             task_name: task_name.to_string(),
@@ -557,7 +553,7 @@ impl PythonProcessor {
     }
 }
 
-impl ScriptProcessor for PythonProcessor {
+impl<F: FileSystem> ScriptProcessor for PythonProcessor<F> {
     fn generate_prologue(&self, dependencies: &[String], task: &Task) -> Result<String> {
         let env_section = self.generate_python_env_section(task);
         let input_section = self.generate_python_input_section(dependencies);
@@ -622,7 +618,7 @@ otto_serialize_output("{}")
 
         // Ensure task directory exists before writing builtins
         if let Some(parent) = builtins_path.parent() {
-            std::fs::create_dir_all(parent)?;
+            self.workspace.fs().create_dir_all_sync(parent)?;
         }
 
         let builtins_content = r#""""Otto Python Builtins
@@ -701,7 +697,9 @@ def otto_set_output(key, value):
         __main__.OTTO_OUTPUT = {}
     __main__.OTTO_OUTPUT[key] = value
 "#;
-        std::fs::write(&builtins_path, builtins_content)?;
+        self.workspace
+            .fs()
+            .write_sync(&builtins_path, builtins_content.as_bytes())?;
         Ok(())
     }
 }
@@ -711,21 +709,25 @@ mod tests {
     use super::*;
     use crate::cfg::param::Value;
     use hex;
+    use serial_test::serial;
     use sha2::Digest;
     use std::collections::HashMap;
     use tempfile::TempDir;
 
-    /// Helper to set up a test-specific database path
+    /// Helper to set up a test-specific database path and OTTO_HOME
     fn setup_test_db(temp_dir: &std::path::Path) {
         let db_path = temp_dir.join("test_otto.db");
+        let otto_home = temp_dir.join(".otto");
         // SAFETY: This is safe in tests because we control the execution environment
         // and tests are isolated. The env var is set before any StateManager is created.
         unsafe {
             std::env::set_var("OTTO_DB_PATH", &db_path);
+            std::env::set_var("OTTO_HOME", &otto_home);
         }
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_bash_action_processing() -> Result<()> {
         let temp_dir = TempDir::new()?;
         setup_test_db(temp_dir.path());
@@ -782,6 +784,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_python_action_processing() -> Result<()> {
         let temp_dir = TempDir::new()?;
         setup_test_db(temp_dir.path());
@@ -838,6 +841,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_default_bash_action_processing() -> Result<()> {
         let temp_dir = TempDir::new()?;
         setup_test_db(temp_dir.path());

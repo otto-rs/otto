@@ -169,4 +169,101 @@ mod tests {
         assert!(colored_prefix.contains("["));
         assert!(colored_prefix.contains("]"));
     }
+
+    #[test]
+    fn test_get_task_color_with_context_empty() {
+        // Empty context should fallback to hash-based assignment
+        let color = get_task_color_with_context("task", &[]);
+        // Should not panic and should return a valid color
+        let _ = format!("{color:?}");
+    }
+
+    #[test]
+    fn test_get_task_color_with_context_valid() {
+        let tasks = vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()];
+
+        // Tasks should get colors based on alphabetical position
+        let color_alpha = get_task_color_with_context("alpha", &tasks);
+        let color_beta = get_task_color_with_context("beta", &tasks);
+        let color_gamma = get_task_color_with_context("gamma", &tasks);
+
+        // First task in sorted order should get first color combination
+        assert_eq!(color_alpha, COLOR_COMBINATIONS[0].0);
+        assert_eq!(color_beta, COLOR_COMBINATIONS[1].0);
+        assert_eq!(color_gamma, COLOR_COMBINATIONS[2].0);
+    }
+
+    #[test]
+    fn test_get_task_color_with_context_missing() {
+        let tasks = vec!["alpha".to_string(), "beta".to_string()];
+
+        // Task not in context should fallback to hash-based
+        let color = get_task_color_with_context("missing", &tasks);
+        let _ = format!("{color:?}");
+    }
+
+    #[test]
+    fn test_get_task_color_combination() {
+        // Test direct color combination retrieval
+        let (bracket, text) = get_task_color_combination("some_task");
+        // Bracket and text colors should be different
+        assert_ne!(format!("{bracket:?}"), format!("{text:?}"));
+    }
+
+    #[test]
+    fn test_colorize_task_name_with_context() {
+        let tasks = vec!["build".to_string(), "test".to_string()];
+
+        let colored = colorize_task_name_with_context("build", &tasks);
+        assert!(colored.contains("build"));
+
+        let colored_empty = colorize_task_name_with_context("build", &[]);
+        assert!(colored_empty.contains("build"));
+    }
+
+    #[test]
+    fn test_colorize_task_prefix_with_context() {
+        let tasks = vec!["build".to_string(), "test".to_string()];
+
+        let prefix = colorize_task_prefix_with_context("build", &tasks);
+        assert!(prefix.contains("build"));
+        assert!(prefix.contains("["));
+        assert!(prefix.contains("]"));
+
+        let prefix_empty = colorize_task_prefix_with_context("build", &[]);
+        assert!(prefix_empty.contains("build"));
+    }
+
+    #[test]
+    fn test_set_global_task_order() {
+        // Test that setting global task order doesn't panic
+        set_global_task_order(vec!["z".to_string(), "a".to_string(), "m".to_string()]);
+
+        // Get color for a task after setting order
+        let (bracket, text) = get_task_color_combination("a");
+        let _ = format!("{bracket:?} {text:?}");
+    }
+
+    #[test]
+    fn test_color_combinations_count() {
+        // Verify we have 15 unique color combinations
+        assert_eq!(COLOR_COMBINATIONS.len(), 15);
+
+        // Verify all bracket and text colors are different in each combination
+        for (bracket, text) in COLOR_COMBINATIONS.iter() {
+            assert_ne!(format!("{bracket:?}"), format!("{text:?}"));
+        }
+    }
+
+    #[test]
+    fn test_colors_wrap_around() {
+        // Test that with more than 15 tasks, colors wrap around
+        let tasks: Vec<String> = (0..20).map(|i| format!("task_{i:02}")).collect();
+
+        let color_0 = get_task_color_with_context("task_00", &tasks);
+        let color_15 = get_task_color_with_context("task_15", &tasks);
+
+        // Task 0 and Task 15 should have the same color (wrap around)
+        assert_eq!(format!("{color_0:?}"), format!("{color_15:?}"));
+    }
 }

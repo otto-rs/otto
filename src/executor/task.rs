@@ -164,3 +164,253 @@ fn calculate_hash(action: &String) -> String {
     let result = hasher.finalize();
     hex::encode(result)[..8].to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cfg::param::ParamSpecs;
+    use tempfile::TempDir;
+
+    fn make_task_spec(name: &str, before: Vec<String>, action: &str) -> TaskSpec {
+        TaskSpec {
+            name: name.to_string(),
+            help: None,
+            before,
+            after: vec![],
+            input: vec![],
+            output: vec![],
+            envs: HashMap::new(),
+            params: ParamSpecs::default(),
+            action: action.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_calculate_hash() {
+        let action = "echo hello".to_string();
+        let hash = calculate_hash(&action);
+
+        // Hash should be 8 characters
+        assert_eq!(hash.len(), 8);
+        // Hash should be hexadecimal
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+
+        // Same action should produce same hash
+        let hash2 = calculate_hash(&action);
+        assert_eq!(hash, hash2);
+
+        // Different action should produce different hash
+        let action2 = "echo world".to_string();
+        let hash3 = calculate_hash(&action2);
+        assert_ne!(hash, hash3);
+    }
+
+    #[test]
+    fn test_task_new() {
+        let task = Task::new(
+            "build".to_string(),
+            vec!["test".to_string()],
+            vec!["src/main.rs".to_string()],
+            vec!["target/app".to_string()],
+            HashMap::new(),
+            HashMap::new(),
+            "cargo build".to_string(),
+        );
+
+        assert_eq!(task.name, "build");
+        assert_eq!(task.task_deps, vec!["test"]);
+        assert_eq!(task.file_deps, vec!["src/main.rs"]);
+        assert_eq!(task.output_deps, vec!["target/app"]);
+        assert_eq!(task.action, "cargo build");
+        assert_eq!(task.hash.len(), 8);
+    }
+
+    #[test]
+    fn test_task_with_envs_and_values() {
+        let mut envs = HashMap::new();
+        envs.insert("FOO".to_string(), "bar".to_string());
+
+        let mut values = HashMap::new();
+        values.insert("name".to_string(), Value::Item("test".to_string()));
+
+        let task = Task::new(
+            "test".to_string(),
+            vec![],
+            vec![],
+            vec![],
+            envs.clone(),
+            values.clone(),
+            "echo $FOO".to_string(),
+        );
+
+        assert_eq!(task.envs, envs);
+        assert_eq!(task.values, values);
+    }
+
+    #[test]
+    fn test_task_equality() {
+        let task1 = Task::new(
+            "build".to_string(),
+            vec![],
+            vec![],
+            vec![],
+            HashMap::new(),
+            HashMap::new(),
+            "cargo build".to_string(),
+        );
+
+        let task2 = Task::new(
+            "build".to_string(),
+            vec![],
+            vec![],
+            vec![],
+            HashMap::new(),
+            HashMap::new(),
+            "cargo build".to_string(),
+        );
+
+        assert_eq!(task1, task2);
+    }
+
+    #[test]
+    fn test_resolve_file_globs_absolute_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+        std::fs::write(&file_path, "test content").unwrap();
+
+        let patterns = vec![file_path.to_string_lossy().to_string()];
+        let resolved = Task::resolve_file_globs(&patterns, temp_dir.path());
+
+        assert_eq!(resolved.len(), 1);
+        assert!(resolved[0].contains("test.txt"));
+    }
+
+    #[test]
+    fn test_resolve_file_globs_relative_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+        std::fs::write(&file_path, "test content").unwrap();
+
+        let patterns = vec!["test.txt".to_string()];
+        let resolved = Task::resolve_file_globs(&patterns, temp_dir.path());
+
+        assert_eq!(resolved.len(), 1);
+        assert!(resolved[0].contains("test.txt"));
+    }
+
+    #[test]
+    fn test_resolve_file_globs_with_glob_pattern() {
+        let temp_dir = TempDir::new().unwrap();
+        std::fs::write(temp_dir.path().join("file1.rs"), "").unwrap();
+        std::fs::write(temp_dir.path().join("file2.rs"), "").unwrap();
+        std::fs::write(temp_dir.path().join("file3.txt"), "").unwrap();
+
+        let patterns = vec!["*.rs".to_string()];
+        let resolved = Task::resolve_file_globs(&patterns, temp_dir.path());
+
+        // Should find both .rs files
+        assert_eq!(resolved.len(), 2);
+        assert!(resolved.iter().all(|p| p.ends_with(".rs")));
+    }
+
+    #[test]
+    fn test_resolve_file_globs_nonexistent() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let patterns = vec!["nonexistent.txt".to_string()];
+        let resolved = Task::resolve_file_globs(&patterns, temp_dir.path());
+
+        // Should still return the path even if it doesn't exist
+        assert_eq!(resolved.len(), 1);
+        assert!(resolved[0].contains("nonexistent.txt"));
+    }
+
+    #[test]
+    fn test_evaluate_merged_envs_empty() {
+        let temp_dir = TempDir::new().unwrap();
+        let result = Task::evaluate_merged_envs(&HashMap::new(), &HashMap::new(), temp_dir.path());
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_evaluate_merged_envs_global_only() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut global_envs = HashMap::new();
+        global_envs.insert("GLOBAL_VAR".to_string(), "global_value".to_string());
+
+        let result = Task::evaluate_merged_envs(&global_envs, &HashMap::new(), temp_dir.path());
+
+        assert!(result.is_ok());
+        let evaluated = result.unwrap();
+        assert_eq!(evaluated.get("GLOBAL_VAR"), Some(&"global_value".to_string()));
+    }
+
+    #[test]
+    fn test_evaluate_merged_envs_task_overrides_global() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut global_envs = HashMap::new();
+        global_envs.insert("VAR".to_string(), "global".to_string());
+
+        let mut task_envs = HashMap::new();
+        task_envs.insert("VAR".to_string(), "task".to_string());
+
+        let result = Task::evaluate_merged_envs(&global_envs, &task_envs, temp_dir.path());
+
+        assert!(result.is_ok());
+        let evaluated = result.unwrap();
+        // Task-level should override global
+        assert_eq!(evaluated.get("VAR"), Some(&"task".to_string()));
+    }
+
+    #[test]
+    fn test_from_task_spec() {
+        let task_spec = make_task_spec("test", vec!["build".to_string()], "echo test");
+
+        let task = Task::from_task(&task_spec);
+
+        assert_eq!(task.name, "test");
+        assert_eq!(task.task_deps, vec!["build"]);
+        assert_eq!(task.action, "echo test");
+    }
+
+    #[test]
+    fn test_from_task_with_cwd() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let mut task_spec = make_task_spec("test", vec![], "cat input.txt > output.txt");
+        task_spec.input = vec!["input.txt".to_string()];
+        task_spec.output = vec!["output.txt".to_string()];
+
+        let task = Task::from_task_with_cwd(&task_spec, temp_dir.path());
+
+        // File paths should be resolved relative to cwd
+        assert!(task.file_deps[0].contains("input.txt"));
+        assert!(task.output_deps[0].contains("output.txt"));
+    }
+
+    #[test]
+    fn test_from_task_with_global_envs() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let mut global_envs = HashMap::new();
+        global_envs.insert("GLOBAL_VAR".to_string(), "global_value".to_string());
+
+        let task_spec = make_task_spec("test", vec![], "echo $GLOBAL_VAR");
+
+        let task = Task::from_task_with_cwd_and_global_envs(&task_spec, temp_dir.path(), &global_envs);
+
+        assert_eq!(task.envs.get("GLOBAL_VAR"), Some(&"global_value".to_string()));
+    }
+
+    #[test]
+    fn test_task_action_trimmed() {
+        let task_spec = make_task_spec("test", vec![], "  \n  echo test  \n  ");
+
+        let task = Task::from_task(&task_spec);
+
+        // Action should be trimmed
+        assert_eq!(task.action, "echo test");
+    }
+}

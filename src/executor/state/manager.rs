@@ -6,6 +6,7 @@ use std::time::SystemTime;
 use super::db::DatabaseManager;
 use super::metadata::RunMetadata;
 use super::schema::{RunStatus, TaskStatus};
+use crate::ports::StateStore;
 
 /// State manager for recording and querying run/task state
 pub struct StateManager {
@@ -933,6 +934,97 @@ impl StateManager {
         )?;
 
         Ok(conn.last_insert_rowid())
+    }
+}
+
+/// Implement StateStore trait for StateManager
+/// This allows StateManager to be used through the trait abstraction
+impl StateStore for StateManager {
+    fn record_run_start(&self, metadata: &RunMetadata) -> Result<i64> {
+        StateManager::record_run_start(self, metadata)
+    }
+
+    fn record_run_complete(&self, timestamp: u64, status: RunStatus, size_bytes: Option<u64>) -> Result<()> {
+        StateManager::record_run_complete(self, timestamp, status, size_bytes)
+    }
+
+    fn record_task_start(
+        &self,
+        run_id: i64,
+        task_name: &str,
+        script_hash: Option<&str>,
+        stdout_path: Option<&PathBuf>,
+        stderr_path: Option<&PathBuf>,
+        script_path: Option<&PathBuf>,
+    ) -> Result<i64> {
+        StateManager::record_task_start(
+            self,
+            run_id,
+            task_name,
+            script_hash,
+            stdout_path,
+            stderr_path,
+            script_path,
+        )
+    }
+
+    fn record_task_complete(&self, task_id: i64, exit_code: i32, status: TaskStatus) -> Result<()> {
+        StateManager::record_task_complete(self, task_id, exit_code, status)
+    }
+
+    fn record_task_skipped(&self, run_id: i64, task_name: &str, script_hash: Option<&str>) -> Result<i64> {
+        StateManager::record_task_skipped(self, run_id, task_name, script_hash)
+    }
+
+    fn get_recent_runs(&self, limit: usize, project_filter: Option<&str>) -> Result<Vec<RunRecord>> {
+        StateManager::get_recent_runs(self, limit, project_filter)
+    }
+
+    fn get_run_tasks(&self, run_id: i64) -> Result<Vec<TaskRecord>> {
+        StateManager::get_run_tasks(self, run_id)
+    }
+
+    fn get_task_history(&self, task_name: &str, limit: usize) -> Result<Vec<TaskRecord>> {
+        StateManager::get_task_history(self, task_name, limit)
+    }
+
+    fn get_overall_stats(&self) -> Result<OverallStats> {
+        StateManager::get_overall_stats(self)
+    }
+
+    fn get_all_projects(&self) -> Result<Vec<ProjectSummary>> {
+        StateManager::get_all_projects(self)
+    }
+
+    fn get_task_stats(&self, task_name: &str) -> Result<Vec<TaskStats>> {
+        StateManager::get_task_stats(self, task_name)
+    }
+
+    fn get_all_task_stats(&self, limit: Option<usize>) -> Result<Vec<TaskStats>> {
+        StateManager::get_all_task_stats(self, limit)
+    }
+
+    fn get_runs_with_filters(
+        &self,
+        status_filter: Option<RunStatus>,
+        project_filter: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<RunRecord>> {
+        StateManager::get_runs_with_filters(self, status_filter, project_filter, limit)
+    }
+
+    fn find_old_runs(
+        &self,
+        keep_days: u64,
+        keep_last: Option<usize>,
+        keep_failed_days: Option<u64>,
+        project_filter: Option<&str>,
+    ) -> Result<Vec<RunRecord>> {
+        StateManager::find_old_runs(self, keep_days, keep_last, keep_failed_days, project_filter)
+    }
+
+    fn delete_run(&self, timestamp: u64, delete_filesystem: bool) -> Result<Option<RunRecord>> {
+        StateManager::delete_run(self, timestamp, delete_filesystem)
     }
 }
 

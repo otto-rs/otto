@@ -2,8 +2,10 @@ use chrono::{Local, TimeZone};
 use colored::Colorize;
 use console::measure_text_width;
 use eyre::Result;
+use std::sync::Arc;
 
 use crate::executor::{RunStatus, StateManager};
+use crate::ports::StateStore;
 
 fn display_width(s: &str) -> usize {
     measure_text_width(s)
@@ -69,22 +71,31 @@ pub struct HistoryCommand {
 
 impl HistoryCommand {
     pub fn execute(&self) -> Result<()> {
-        let manager = match StateManager::try_new() {
-            Some(m) => m,
-            None => {
-                eprintln!("{}", "No history database found. Run otto to create it.".yellow());
-                return Ok(());
-            }
+        self.execute_with_store(None)
+    }
+
+    /// Execute with an optional injected StateStore (for testing)
+    pub fn execute_with_store(&self, store: Option<Arc<dyn StateStore>>) -> Result<()> {
+        // Use injected store or create default StateManager
+        let store: Arc<dyn StateStore> = match store {
+            Some(s) => s,
+            None => match StateManager::try_new() {
+                Some(m) => Arc::new(m),
+                None => {
+                    eprintln!("{}", "No history database found. Run otto to create it.".yellow());
+                    return Ok(());
+                }
+            },
         };
 
         if let Some(ref task_name) = self.task_name {
-            self.show_task_history(&manager, task_name)
+            self.show_task_history(store.as_ref(), task_name)
         } else {
-            self.show_run_history(&manager)
+            self.show_run_history(store.as_ref())
         }
     }
 
-    fn show_run_history(&self, manager: &StateManager) -> Result<()> {
+    fn show_run_history(&self, store: &dyn StateStore) -> Result<()> {
         let status_filter = self.status.as_ref().and_then(|s| match s.as_str() {
             "success" => Some(RunStatus::Success),
             "failed" => Some(RunStatus::Failed),
@@ -92,7 +103,7 @@ impl HistoryCommand {
             _ => None,
         });
 
-        let runs = manager.get_runs_with_filters(status_filter, self.project.as_deref(), self.limit)?;
+        let runs = store.get_runs_with_filters(status_filter, self.project.as_deref(), self.limit)?;
 
         if runs.is_empty() {
             println!("{}", "No runs found.".yellow());
@@ -181,8 +192,8 @@ impl HistoryCommand {
         Ok(())
     }
 
-    fn show_task_history(&self, manager: &StateManager, task_name: &str) -> Result<()> {
-        let history = manager.get_task_history(task_name, self.limit)?;
+    fn show_task_history(&self, store: &dyn StateStore, task_name: &str) -> Result<()> {
+        let history = store.get_task_history(task_name, self.limit)?;
 
         if history.is_empty() {
             println!("{}", format!("No history found for task '{}'.", task_name).yellow());
@@ -321,6 +332,57 @@ fn format_task_status(status: &crate::executor::state::TaskStatus) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::executor::state::{RunMetadata, TaskStatus};
+    use crate::ports::MemoryStateStore;
+    use std::path::PathBuf;
+
+    fn create_test_store_with_runs() -> Arc<MemoryStateStore> {
+        let store = MemoryStateStore::new();
+
+        // Add some test runs
+        let metadata1 = RunMetadata::minimal(
+            Some(PathBuf::from("/test/project1/otto.yml")),
+            "abc123".to_string(),
+            1700000000,
+        );
+        let run_id1 = store.record_run_start(&metadata1).unwrap();
+        store
+            .record_run_complete(1700000000, RunStatus::Success, Some(1024))
+            .unwrap();
+
+        // Add tasks to the run
+        let task_id1 = store
+            .record_task_start(run_id1, "build", Some("hash1"), None, None, None)
+            .unwrap();
+        store.record_task_complete(task_id1, 0, TaskStatus::Completed).unwrap();
+
+        let task_id2 = store
+            .record_task_start(run_id1, "test", Some("hash2"), None, None, None)
+            .unwrap();
+        store.record_task_complete(task_id2, 0, TaskStatus::Completed).unwrap();
+
+        // Add a second run
+        let metadata2 = RunMetadata::minimal(
+            Some(PathBuf::from("/test/project1/otto.yml")),
+            "abc123".to_string(),
+            1700001000,
+        );
+        let run_id2 = store.record_run_start(&metadata2).unwrap();
+        store
+            .record_run_complete(1700001000, RunStatus::Failed, Some(2048))
+            .unwrap();
+
+        let task_id3 = store
+            .record_task_start(run_id2, "build", Some("hash1"), None, None, None)
+            .unwrap();
+        store.record_task_complete(task_id3, 1, TaskStatus::Failed).unwrap();
+
+        Arc::new(store)
+    }
+
+    fn create_empty_store() -> Arc<MemoryStateStore> {
+        Arc::new(MemoryStateStore::new())
+    }
 
     #[test]
     fn test_format_duration() {
@@ -346,5 +408,284 @@ mod tests {
         let result = format_timestamp(timestamp);
         assert!(result.contains("-"));
         assert!(result.contains(":"));
+    }
+
+    #[test]
+    fn test_format_run_status() {
+        let success = format_run_status(&RunStatus::Success);
+        let failed = format_run_status(&RunStatus::Failed);
+        let running = format_run_status(&RunStatus::Running);
+
+        assert!(success.contains("✓") || success.contains("green"));
+        assert!(failed.contains("✗") || failed.contains("red"));
+        assert!(running.contains("⋯") || running.contains("yellow"));
+    }
+
+    #[test]
+    fn test_format_task_status() {
+        let completed = format_task_status(&TaskStatus::Completed);
+        let failed = format_task_status(&TaskStatus::Failed);
+        let running = format_task_status(&TaskStatus::Running);
+        let skipped = format_task_status(&TaskStatus::Skipped);
+        let pending = format_task_status(&TaskStatus::Pending);
+
+        assert!(!completed.is_empty());
+        assert!(!failed.is_empty());
+        assert!(!running.is_empty());
+        assert!(!skipped.is_empty());
+        assert!(!pending.is_empty());
+    }
+
+    #[test]
+    fn test_display_width() {
+        assert_eq!(display_width("hello"), 5);
+        assert_eq!(display_width(""), 0);
+        assert_eq!(display_width("test string"), 11);
+    }
+
+    #[test]
+    fn test_pad_left() {
+        assert_eq!(pad_left("hi", 5), "hi   ");
+        assert_eq!(pad_left("hello", 5), "hello");
+        assert_eq!(pad_left("toolong", 3), "toolong");
+    }
+
+    #[test]
+    fn test_pad_right() {
+        assert_eq!(pad_right("hi", 5), "   hi");
+        assert_eq!(pad_right("hello", 5), "hello");
+        assert_eq!(pad_right("toolong", 3), "toolong");
+    }
+
+    #[test]
+    fn test_pad_center() {
+        assert_eq!(pad_center("hi", 6), "  hi  ");
+        assert_eq!(pad_center("hello", 5), "hello");
+        assert_eq!(pad_center("x", 4), " x  ");
+    }
+
+    #[test]
+    fn test_execute_with_empty_store() {
+        let store = create_empty_store();
+        let cmd = HistoryCommand {
+            task_name: None,
+            limit: 20,
+            status: None,
+            project: None,
+            json: false,
+        };
+
+        let result = cmd.execute_with_store(Some(store));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_execute_with_runs() {
+        let store = create_test_store_with_runs();
+        let cmd = HistoryCommand {
+            task_name: None,
+            limit: 20,
+            status: None,
+            project: None,
+            json: false,
+        };
+
+        let result = cmd.execute_with_store(Some(store));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_execute_with_json_output() {
+        let store = create_test_store_with_runs();
+        let cmd = HistoryCommand {
+            task_name: None,
+            limit: 20,
+            status: None,
+            project: None,
+            json: true,
+        };
+
+        let result = cmd.execute_with_store(Some(store));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_execute_with_status_filter_success() {
+        let store = create_test_store_with_runs();
+        let cmd = HistoryCommand {
+            task_name: None,
+            limit: 20,
+            status: Some("success".to_string()),
+            project: None,
+            json: false,
+        };
+
+        let result = cmd.execute_with_store(Some(store));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_execute_with_status_filter_failed() {
+        let store = create_test_store_with_runs();
+        let cmd = HistoryCommand {
+            task_name: None,
+            limit: 20,
+            status: Some("failed".to_string()),
+            project: None,
+            json: false,
+        };
+
+        let result = cmd.execute_with_store(Some(store));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_execute_with_status_filter_running() {
+        let store = create_test_store_with_runs();
+        let cmd = HistoryCommand {
+            task_name: None,
+            limit: 20,
+            status: Some("running".to_string()),
+            project: None,
+            json: false,
+        };
+
+        let result = cmd.execute_with_store(Some(store));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_execute_with_invalid_status_filter() {
+        let store = create_test_store_with_runs();
+        let cmd = HistoryCommand {
+            task_name: None,
+            limit: 20,
+            status: Some("invalid".to_string()),
+            project: None,
+            json: false,
+        };
+
+        let result = cmd.execute_with_store(Some(store));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_execute_with_project_filter() {
+        let store = create_test_store_with_runs();
+        let cmd = HistoryCommand {
+            task_name: None,
+            limit: 20,
+            status: None,
+            project: Some("abc123".to_string()),
+            json: false,
+        };
+
+        let result = cmd.execute_with_store(Some(store));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_execute_with_limit() {
+        let store = create_test_store_with_runs();
+        let cmd = HistoryCommand {
+            task_name: None,
+            limit: 1,
+            status: None,
+            project: None,
+            json: false,
+        };
+
+        let result = cmd.execute_with_store(Some(store));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_execute_task_history() {
+        let store = create_test_store_with_runs();
+        let cmd = HistoryCommand {
+            task_name: Some("build".to_string()),
+            limit: 20,
+            status: None,
+            project: None,
+            json: false,
+        };
+
+        let result = cmd.execute_with_store(Some(store));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_execute_task_history_json() {
+        let store = create_test_store_with_runs();
+        let cmd = HistoryCommand {
+            task_name: Some("build".to_string()),
+            limit: 20,
+            status: None,
+            project: None,
+            json: true,
+        };
+
+        let result = cmd.execute_with_store(Some(store));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_execute_task_history_nonexistent() {
+        let store = create_test_store_with_runs();
+        let cmd = HistoryCommand {
+            task_name: Some("nonexistent".to_string()),
+            limit: 20,
+            status: None,
+            project: None,
+            json: false,
+        };
+
+        let result = cmd.execute_with_store(Some(store));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_execute_task_history_empty_store() {
+        let store = create_empty_store();
+        let cmd = HistoryCommand {
+            task_name: Some("build".to_string()),
+            limit: 20,
+            status: None,
+            project: None,
+            json: false,
+        };
+
+        let result = cmd.execute_with_store(Some(store));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_show_run_history_directly() {
+        let store = create_test_store_with_runs();
+        let cmd = HistoryCommand {
+            task_name: None,
+            limit: 20,
+            status: None,
+            project: None,
+            json: false,
+        };
+
+        let result = cmd.show_run_history(store.as_ref());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_show_task_history_directly() {
+        let store = create_test_store_with_runs();
+        let cmd = HistoryCommand {
+            task_name: None,
+            limit: 20,
+            status: None,
+            project: None,
+            json: false,
+        };
+
+        let result = cmd.show_task_history(store.as_ref(), "build");
+        assert!(result.is_ok());
     }
 }

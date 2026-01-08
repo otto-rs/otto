@@ -2,9 +2,11 @@ use chrono::{DateTime, Utc};
 use eyre::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use crate::executor::state::{RunMetadata, StateManager};
+use crate::ports::StateStore;
 
 /// Clean old otto run directories
 #[derive(Debug, clap::Parser)]
@@ -46,6 +48,11 @@ struct RunInfo {
 
 impl CleanCommand {
     pub async fn execute(&self) -> Result<()> {
+        self.execute_with_store(None).await
+    }
+
+    /// Execute cleanup with an optional injected StateStore (for testing)
+    pub async fn execute_with_store(&self, store: Option<Arc<dyn StateStore>>) -> Result<()> {
         let otto_home = self.get_otto_home()?;
 
         if !otto_home.exists() {
@@ -54,8 +61,12 @@ impl CleanCommand {
         }
 
         if !self.no_db {
-            if let Some(manager) = StateManager::try_new() {
-                return self.execute_with_database(&manager).await;
+            // Use injected store or create default StateManager
+            let store: Option<Arc<dyn StateStore>> =
+                store.or_else(|| StateManager::try_new().map(|m| Arc::new(m) as Arc<dyn StateStore>));
+
+            if let Some(store) = store {
+                return self.execute_with_database(store.as_ref()).await;
             }
             println!("Database not available, falling back to filesystem scan...");
         }
@@ -65,10 +76,10 @@ impl CleanCommand {
     }
 
     /// Execute cleanup using database queries
-    async fn execute_with_database(&self, manager: &StateManager) -> Result<()> {
+    async fn execute_with_database(&self, store: &dyn StateStore) -> Result<()> {
         println!("Querying database for old runs...");
 
-        let runs_to_delete = manager.find_old_runs(
+        let runs_to_delete = store.find_old_runs(
             self.keep_days,
             self.keep_last,
             self.keep_failed,
@@ -117,7 +128,7 @@ impl CleanCommand {
             let mut deleted_size = 0u64;
 
             for run in &runs_to_delete {
-                match manager.delete_run(run.timestamp, true) {
+                match store.delete_run(run.timestamp, true) {
                     Ok(Some(_)) => {
                         deleted_size += run.size_bytes.unwrap_or(0);
                         let date_time = self.format_timestamp(run.timestamp);
@@ -381,6 +392,8 @@ impl CleanCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::executor::state::RunStatus;
+    use crate::ports::MemoryStateStore;
     use std::fs;
     use tempfile::TempDir;
 
@@ -760,6 +773,279 @@ mod tests {
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].project_hash, "def456");
         assert_eq!(runs[0].ottofile_path, None);
+        Ok(())
+    }
+
+    // ========================================
+    // Database-based cleanup tests using MemoryStateStore
+    // ========================================
+
+    fn now_timestamp() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    fn create_store_with_runs() -> Arc<MemoryStateStore> {
+        let store = MemoryStateStore::new();
+        let now = now_timestamp();
+
+        // Create old successful run (40 days old)
+        let old_meta = RunMetadata::minimal(
+            Some(PathBuf::from("/project1/otto.yml")),
+            "abc123".to_string(),
+            now - (40 * 86400),
+        );
+        store.record_run_start(&old_meta).unwrap();
+        store
+            .record_run_complete(now - (40 * 86400), RunStatus::Success, Some(100_000))
+            .unwrap();
+
+        // Create old failed run (35 days old)
+        let old_failed_meta = RunMetadata::minimal(
+            Some(PathBuf::from("/project1/otto.yml")),
+            "abc123".to_string(),
+            now - (35 * 86400),
+        );
+        store.record_run_start(&old_failed_meta).unwrap();
+        store
+            .record_run_complete(now - (35 * 86400), RunStatus::Failed, Some(50_000))
+            .unwrap();
+
+        // Create recent run (10 days old)
+        let recent_meta = RunMetadata::minimal(
+            Some(PathBuf::from("/project1/otto.yml")),
+            "abc123".to_string(),
+            now - (10 * 86400),
+        );
+        store.record_run_start(&recent_meta).unwrap();
+        store
+            .record_run_complete(now - (10 * 86400), RunStatus::Success, Some(75_000))
+            .unwrap();
+
+        // Create run from different project (45 days old)
+        let other_project_meta = RunMetadata::minimal(
+            Some(PathBuf::from("/project2/otto.yml")),
+            "def456".to_string(),
+            now - (45 * 86400),
+        );
+        store.record_run_start(&other_project_meta).unwrap();
+        store
+            .record_run_complete(now - (45 * 86400), RunStatus::Success, Some(200_000))
+            .unwrap();
+
+        Arc::new(store)
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_database_empty_store() -> Result<()> {
+        let store = Arc::new(MemoryStateStore::new());
+        let cmd = CleanCommand {
+            keep_days: 30,
+            keep_last: None,
+            keep_failed: None,
+            dry_run: true,
+            project_filter: None,
+            no_db: false,
+        };
+
+        let result = cmd.execute_with_store(Some(store)).await;
+        assert!(result.is_ok());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_database_dry_run() -> Result<()> {
+        let store = create_store_with_runs();
+
+        // Verify initial state
+        let initial_runs = store.get_recent_runs(100, None)?;
+        assert_eq!(initial_runs.len(), 4);
+
+        let cmd = CleanCommand {
+            keep_days: 30,
+            keep_last: None,
+            keep_failed: None,
+            dry_run: true,
+            project_filter: None,
+            no_db: false,
+        };
+
+        let result = cmd.execute_with_store(Some(store.clone())).await;
+        assert!(result.is_ok());
+
+        // Dry run should not delete anything
+        let final_runs = store.get_recent_runs(100, None)?;
+        assert_eq!(final_runs.len(), 4);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_database_actual_delete() -> Result<()> {
+        let store = create_store_with_runs();
+
+        // Verify initial state
+        let initial_runs = store.get_recent_runs(100, None)?;
+        assert_eq!(initial_runs.len(), 4);
+
+        let cmd = CleanCommand {
+            keep_days: 30,
+            keep_last: None,
+            keep_failed: None,
+            dry_run: false,
+            project_filter: None,
+            no_db: false,
+        };
+
+        let result = cmd.execute_with_store(Some(store.clone())).await;
+        assert!(result.is_ok());
+
+        // Should have deleted 3 old runs (40 day, 35 day, 45 day)
+        let final_runs = store.get_recent_runs(100, None)?;
+        assert_eq!(final_runs.len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_database_project_filter() -> Result<()> {
+        let store = create_store_with_runs();
+
+        let cmd = CleanCommand {
+            keep_days: 30,
+            keep_last: None,
+            keep_failed: None,
+            dry_run: false,
+            project_filter: Some("abc123".to_string()),
+            no_db: false,
+        };
+
+        let result = cmd.execute_with_store(Some(store.clone())).await;
+        assert!(result.is_ok());
+
+        // Should have deleted 2 old runs from abc123, kept def456's old run
+        let final_runs = store.get_recent_runs(100, None)?;
+        // Remaining: recent abc123 + old def456
+        assert_eq!(final_runs.len(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_database_keep_last() -> Result<()> {
+        let store = create_store_with_runs();
+
+        let cmd = CleanCommand {
+            keep_days: 0, // Would delete everything
+            keep_last: Some(2),
+            keep_failed: None,
+            dry_run: false,
+            project_filter: None,
+            no_db: false,
+        };
+
+        let result = cmd.execute_with_store(Some(store.clone())).await;
+        assert!(result.is_ok());
+
+        // Should keep the 2 most recent runs
+        let final_runs = store.get_recent_runs(100, None)?;
+        assert_eq!(final_runs.len(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_database_keep_failed_longer() -> Result<()> {
+        let store = create_store_with_runs();
+
+        let cmd = CleanCommand {
+            keep_days: 30,
+            keep_last: None,
+            keep_failed: Some(60), // Keep failed runs for 60 days
+            dry_run: false,
+            project_filter: None,
+            no_db: false,
+        };
+
+        let result = cmd.execute_with_store(Some(store.clone())).await;
+        assert!(result.is_ok());
+
+        // Should have deleted 2 old successful runs (40 day, 45 day)
+        // but kept the 35-day failed run (within 60-day retention)
+        let final_runs = store.get_recent_runs(100, None)?;
+        assert_eq!(final_runs.len(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_find_old_runs_basic() -> Result<()> {
+        let store = create_store_with_runs();
+
+        let old_runs = store.find_old_runs(30, None, None, None)?;
+
+        // Should find 3 runs older than 30 days
+        assert_eq!(old_runs.len(), 3);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_find_old_runs_with_keep_last() -> Result<()> {
+        let store = create_store_with_runs();
+
+        let old_runs = store.find_old_runs(0, Some(2), None, None)?;
+
+        // Should find 2 runs to delete (keeping 2 most recent)
+        assert_eq!(old_runs.len(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_find_old_runs_with_project_filter() -> Result<()> {
+        let store = create_store_with_runs();
+
+        let old_runs = store.find_old_runs(30, None, None, Some("abc123"))?;
+
+        // Should find 2 runs older than 30 days from abc123 project
+        assert_eq!(old_runs.len(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_find_old_runs_with_keep_failed() -> Result<()> {
+        let store = create_store_with_runs();
+
+        let old_runs = store.find_old_runs(30, None, Some(60), None)?;
+
+        // Should find 2 successful runs older than 30 days
+        // Failed run (35 days) should not be included (within 60-day retention)
+        assert_eq!(old_runs.len(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_delete_run_from_store() -> Result<()> {
+        let store = create_store_with_runs();
+        let now = now_timestamp();
+        let old_timestamp = now - (40 * 86400);
+
+        // Verify run exists
+        let initial_runs = store.get_recent_runs(100, None)?;
+        assert!(initial_runs.iter().any(|r| r.timestamp == old_timestamp));
+
+        // Delete it
+        let deleted = store.delete_run(old_timestamp, false)?;
+        assert!(deleted.is_some());
+
+        // Verify it's gone
+        let final_runs = store.get_recent_runs(100, None)?;
+        assert!(!final_runs.iter().any(|r| r.timestamp == old_timestamp));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_delete_nonexistent_run() -> Result<()> {
+        let store = Arc::new(MemoryStateStore::new());
+
+        let deleted = store.delete_run(9999999999, false)?;
+        assert!(deleted.is_none());
         Ok(())
     }
 }
