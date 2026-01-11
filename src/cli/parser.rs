@@ -575,21 +575,28 @@ impl Parser {
             })
         };
 
+        // Step 0.5: Expand foreach tasks into subtasks
+        let expanded_tasks = self.expand_foreach_tasks()?;
+
         // Step 1: Compute all task dependencies using simple linear algorithm
-        let task_deps = self.compute_task_deps()?;
+        let task_deps = Self::compute_task_deps_from_specs(&expanded_tasks)?;
 
         let mut tasks_needed = HashSet::new();
         for task_name in requested_tasks {
-            Self::collect_transitive_deps(task_name, &task_deps, &self.config_spec.tasks, &mut tasks_needed)?;
+            Self::collect_transitive_deps(task_name, &task_deps, &expanded_tasks, &mut tasks_needed)?;
         }
 
         let mut tasks = Vec::new();
         for task_name in &tasks_needed {
-            let task_spec = self
-                .config_spec
-                .tasks
+            let task_spec = expanded_tasks
                 .get(task_name)
                 .ok_or_else(|| eyre!("Task '{}' not found", task_name))?;
+
+            // Skip virtual parent tasks - they have no action to execute
+            // Virtual parents are created for foreach dependency tracking but have empty actions
+            if task_spec.action.is_empty() {
+                continue;
+            }
 
             let mut task = Task::from_task_with_cwd_and_global_envs(task_spec, &self.cwd, &global_envs);
 
@@ -671,15 +678,17 @@ impl Parser {
         Ok(tasks)
     }
 
-    fn compute_task_deps(&self) -> Result<HashMap<String, Vec<String>>> {
+    /// Compute task dependencies from a given task specs map.
+    /// This allows computing deps from expanded (foreach-processed) task specs.
+    fn compute_task_deps_from_specs(task_specs: &HashMap<String, TaskSpec>) -> Result<HashMap<String, Vec<String>>> {
         let mut task_deps: HashMap<String, Vec<String>> = HashMap::new();
 
         // Initialize with direct dependencies from 'before' field
-        for (task_name, task_spec) in &self.config_spec.tasks {
+        for (task_name, task_spec) in task_specs {
             task_deps.insert(task_name.clone(), task_spec.before.clone());
         }
 
-        for (task_name, task_spec) in &self.config_spec.tasks {
+        for (task_name, task_spec) in task_specs {
             for after_task in &task_spec.after {
                 if let Some(deps) = task_deps.get_mut(after_task)
                     && !deps.contains(task_name)
@@ -692,9 +701,50 @@ impl Parser {
         Ok(task_deps)
     }
 
+    /// Expand all foreach tasks into their subtasks.
+    /// Returns a new task specs map with:
+    /// - Non-foreach tasks unchanged
+    /// - Foreach tasks replaced by: virtual parent + N subtasks
+    fn expand_foreach_tasks(&self) -> Result<HashMap<String, TaskSpec>> {
+        use crate::cfg::task::TaskSpecs;
+
+        let mut expanded: TaskSpecs = HashMap::new();
+
+        for (name, spec) in &self.config_spec.tasks {
+            if spec.has_foreach() {
+                // Expand foreach task into subtasks
+                let subtasks = spec.expand_foreach(&self.cwd)?;
+
+                if subtasks.is_empty() {
+                    // Zero matches - just keep the virtual parent for dependency tracking
+                    log::warn!("foreach task '{}' expanded to 0 subtasks", name);
+                }
+
+                // Add the virtual parent task for dependency resolution
+                // The parent has no action but preserves before/after relationships
+                let parent = spec.as_virtual_parent();
+                expanded.insert(name.clone(), parent);
+
+                // Add all subtasks
+                // Each subtask depends on the parent's dependencies
+                for mut subtask in subtasks {
+                    // Subtask inherits parent's before dependencies
+                    subtask.before = spec.before.clone();
+                    expanded.insert(subtask.name.clone(), subtask);
+                }
+            } else {
+                // Non-foreach task - keep as-is
+                expanded.insert(name.clone(), spec.clone());
+            }
+        }
+
+        Ok(expanded)
+    }
+
     /// Collect all tasks needed to run a given task, including:
     /// - Transitive dependencies (before/upstream tasks)
     /// - After tasks (downstream tasks that should auto-run)
+    /// - Subtasks (for foreach parent tasks)
     fn collect_transitive_deps(
         task_name: &str,
         task_deps: &HashMap<String, Vec<String>>,
@@ -718,6 +768,15 @@ impl Parser {
         if let Some(spec) = task_specs.get(task_name) {
             for after_task in &spec.after {
                 Self::collect_transitive_deps(after_task, task_deps, task_specs, collected)?;
+            }
+        }
+
+        // Collect subtasks for foreach parent tasks
+        // Subtasks have names like "parent:subtask_id"
+        let prefix = format!("{}:", task_name);
+        for subtask_name in task_specs.keys() {
+            if subtask_name.starts_with(&prefix) {
+                Self::collect_transitive_deps(subtask_name, task_deps, task_specs, collected)?;
             }
         }
 
