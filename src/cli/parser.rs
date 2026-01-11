@@ -597,10 +597,22 @@ impl Parser {
         Ok(resolved_tasks)
     }
 
-    fn get_task_names(&self) -> Vec<&str> {
-        let mut task_names: Vec<&str> = self.config_spec.tasks.keys().map(String::as_str).collect();
-        task_names.push("graph"); // Always include built-in tasks
-        task_names.push("help"); // Always include help as a special command
+    fn get_task_names(&self) -> Vec<String> {
+        let mut task_names: Vec<String> = self.config_spec.tasks.keys().cloned().collect();
+        task_names.push("graph".to_string()); // Always include built-in tasks
+        task_names.push("help".to_string()); // Always include help as a special command
+
+        // Also include expanded subtask names for foreach tasks
+        for (name, spec) in &self.config_spec.tasks {
+            if let Some(ref foreach) = spec.foreach
+                && let Ok(items) = foreach.resolve_items(&self.cwd)
+            {
+                for item in items {
+                    task_names.push(format!("{}:{}", name, item.identifier));
+                }
+            }
+        }
+
         task_names
     }
 
@@ -1569,17 +1581,17 @@ impl Parser {
     }
 }
 
-fn indices(args: &[String], task_names: &[&str]) -> Vec<usize> {
+fn indices(args: &[String], task_names: &[String]) -> Vec<usize> {
     let mut indices = vec![];
     for (i, arg) in args.iter().enumerate() {
-        if task_names.contains(&arg.as_str()) {
+        if task_names.contains(arg) {
             indices.push(i);
         }
     }
     indices
 }
 
-fn partitions(args: &[String], task_names: &[&str]) -> Vec<Vec<String>> {
+fn partitions(args: &[String], task_names: &[String]) -> Vec<Vec<String>> {
     let task_indices = indices(args, task_names);
     if task_indices.is_empty() {
         return vec![];
@@ -1608,9 +1620,9 @@ mod tests {
             "task2".to_string(),
             "arg3".to_string(),
         ];
-        let task_names = &["task1", "task2"];
+        let task_names = vec!["task1".to_string(), "task2".to_string()];
         let expected = vec![0, 2];
-        assert_eq!(indices(&args, task_names), expected);
+        assert_eq!(indices(&args, &task_names), expected);
     }
 
     #[test]
@@ -1621,20 +1633,20 @@ mod tests {
             "task2".to_string(),
             "arg3".to_string(),
         ];
-        let task_names = &["task1", "task2"];
+        let task_names = vec!["task1".to_string(), "task2".to_string()];
         let expected = vec![
             vec!["task1".to_string(), "arg2".to_string()],
             vec!["task2".to_string(), "arg3".to_string()],
         ];
-        assert_eq!(partitions(&args, task_names), expected);
+        assert_eq!(partitions(&args, &task_names), expected);
     }
 
     #[test]
     fn test_partitions_empty() {
         let args = vec!["arg1".to_string(), "arg2".to_string()];
-        let task_names = &["task1", "task2"];
+        let task_names = vec!["task1".to_string(), "task2".to_string()];
         let expected: Vec<Vec<String>> = vec![];
-        assert_eq!(partitions(&args, task_names), expected);
+        assert_eq!(partitions(&args, &task_names), expected);
     }
 
     #[test]
@@ -1650,7 +1662,7 @@ mod tests {
             "--environment=staging".to_string(),
         ];
 
-        let task_names = &["build", "test", "deploy"];
+        let task_names = vec!["build".to_string(), "test".to_string(), "deploy".to_string()];
         let expected = vec![
             vec![
                 "build".to_string(),
@@ -1665,7 +1677,7 @@ mod tests {
             vec!["deploy".to_string(), "--environment=staging".to_string()],
         ];
 
-        assert_eq!(partitions(&args, task_names), expected);
+        assert_eq!(partitions(&args, &task_names), expected);
     }
 
     // New tests for flag functionality

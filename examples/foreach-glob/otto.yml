@@ -1,0 +1,39 @@
+# Example: foreach with glob patterns
+#
+# This example demonstrates using the foreach directive with glob patterns
+# to dynamically create subtasks from files matching a pattern.
+#
+# Run with: otto run-scripts
+# List subtasks: otto --list-subtasks
+# Run specific subtask: otto run-scripts:02-build.sh
+
+otto:
+  api: 1
+  jobs: 4
+  tasks:
+    - run-scripts
+
+tasks:
+  run-scripts:
+    help: Run all scripts in the scripts/ directory in parallel
+    foreach:
+      glob: "scripts/*.sh"
+      as: script
+      parallel: true
+    bash: |
+      echo "=== Running: ${script} ==="
+      echo "Item: ${OTTO_FOREACH_ITEM}"
+      echo "Index: ${OTTO_FOREACH_INDEX}"
+      bash "${script}"
+      echo "=== Finished: ${script} ==="
+
+  # Example of running scripts sequentially
+  run-scripts-serial:
+    help: Run all scripts sequentially (parallel=false)
+    foreach:
+      glob: "scripts/*.sh"
+      as: script
+      parallel: false
+    bash: |
+      echo "Running ${script} (index ${OTTO_FOREACH_INDEX})..."
+      bash "${script}"

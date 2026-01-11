@@ -1,0 +1,78 @@
+# Example: foreach with explicit items list
+#
+# This example demonstrates using the foreach directive with an explicit
+# list of items to create subtasks.
+#
+# Run with: otto deploy
+# List subtasks: otto --list-subtasks
+# Run specific subtask: otto deploy:staging
+
+otto:
+  api: 1
+  jobs: 4
+  tasks:
+    - deploy
+
+tasks:
+  deploy:
+    help: Deploy to multiple environments in parallel
+    foreach:
+      items:
+        - dev
+        - staging
+        - production
+      as: environment
+      parallel: true
+    bash: |
+      echo "=== Deploying to: ${environment} ==="
+      echo "Environment: ${OTTO_FOREACH_ITEM}"
+      echo "Index: ${OTTO_FOREACH_INDEX}"
+
+      # Simulate deployment with different durations per environment
+      case "${environment}" in
+        dev)
+          echo "Deploying to development server..."
+          sleep 0.2
+          ;;
+        staging)
+          echo "Deploying to staging server..."
+          sleep 0.3
+          ;;
+        production)
+          echo "Deploying to production servers..."
+          sleep 0.4
+          ;;
+      esac
+
+      echo "=== Deployment to ${environment} complete! ==="
+
+  # Example: Running health checks on services
+  health-check:
+    help: Run health checks on multiple services
+    foreach:
+      items:
+        - api
+        - web
+        - database
+        - cache
+      as: service
+      parallel: true
+    bash: |
+      echo "Checking health of ${service}..."
+      sleep 0.1
+      echo "${service}: healthy"
+
+  # Example: Sequential processing (useful for ordered operations)
+  migrate:
+    help: Run database migrations sequentially
+    foreach:
+      items:
+        - 001_create_users
+        - 002_create_posts
+        - 003_add_indexes
+      as: migration
+      parallel: false
+    bash: |
+      echo "Running migration: ${migration}"
+      sleep 0.2
+      echo "Migration ${migration} complete"

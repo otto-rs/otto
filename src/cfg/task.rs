@@ -165,23 +165,37 @@ impl ForeachSpec {
     }
 
     fn resolve_range(&self, range: &str) -> Result<Vec<ForeachItem>> {
-        // Parse "start-end" format (inclusive)
-        let parts: Vec<&str> = range.split('-').collect();
-        if parts.len() != 2 {
-            return Err(eyre!(
-                "Invalid range format '{}'. Expected 'start-end' (e.g., '1-10')",
-                range
-            ));
-        }
+        // Parse range format: supports "start..end" (Rust-like) or "start-end" (inclusive)
+        let (start_str, end_str) = if range.contains("..") {
+            // Rust-like format: "1..10"
+            let parts: Vec<&str> = range.split("..").collect();
+            if parts.len() != 2 {
+                return Err(eyre!(
+                    "Invalid range format '{}'. Expected 'start..end' (e.g., '1..10')",
+                    range
+                ));
+            }
+            (parts[0], parts[1])
+        } else {
+            // Hyphen format: "1-10"
+            let parts: Vec<&str> = range.split('-').collect();
+            if parts.len() != 2 {
+                return Err(eyre!(
+                    "Invalid range format '{}'. Expected 'start..end' or 'start-end' (e.g., '1..10' or '1-10')",
+                    range
+                ));
+            }
+            (parts[0], parts[1])
+        };
 
-        let start: usize = parts[0]
+        let start: usize = start_str
             .trim()
             .parse()
-            .map_err(|_| eyre!("Invalid range start: '{}'", parts[0]))?;
-        let end: usize = parts[1]
+            .map_err(|_| eyre!("Invalid range start: '{}'", start_str))?;
+        let end: usize = end_str
             .trim()
             .parse()
-            .map_err(|_| eyre!("Invalid range end: '{}'", parts[1]))?;
+            .map_err(|_| eyre!("Invalid range end: '{}'", end_str))?;
 
         if start > end {
             return Err(eyre!("Invalid range: start ({}) > end ({})", start, end));

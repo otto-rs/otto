@@ -1,0 +1,71 @@
+# Example: foreach with numeric ranges
+#
+# This example demonstrates using the foreach directive with numeric ranges
+# to create subtasks for numbered iterations.
+#
+# Run with: otto stress-test
+# List subtasks: otto --list-subtasks
+# Run specific subtask: otto stress-test:5
+
+otto:
+  api: 1
+  jobs: 8
+  tasks:
+    - stress-test
+
+tasks:
+  stress-test:
+    help: Run 10 parallel stress test iterations
+    foreach:
+      range: "1..10"
+      as: iteration
+      parallel: true
+    bash: |
+      echo "=== Stress test iteration ${iteration} ==="
+      echo "OTTO_FOREACH_ITEM: ${OTTO_FOREACH_ITEM}"
+      echo "OTTO_FOREACH_INDEX: ${OTTO_FOREACH_INDEX}"
+
+      # Simulate varying workloads
+      sleep_time=$(echo "scale=2; ${iteration} * 0.05" | bc)
+      echo "Running workload (${sleep_time}s)..."
+      sleep ${sleep_time}
+
+      echo "=== Iteration ${iteration} complete ==="
+
+  # Example: Process shards in parallel
+  process-shards:
+    help: Process 5 database shards in parallel
+    foreach:
+      range: "0..4"
+      as: shard_id
+      parallel: true
+    bash: |
+      echo "Processing shard ${shard_id}..."
+      sleep 0.2
+      echo "Shard ${shard_id}: processed 1000 records"
+
+  # Example: Sequential batch processing
+  batch-import:
+    help: Import data in sequential batches
+    foreach:
+      range: "1..5"
+      as: batch
+      parallel: false
+    bash: |
+      echo "Importing batch ${batch} of 5..."
+      sleep 0.1
+      echo "Batch ${batch}: imported successfully"
+
+  # Example: Using max_items as safety limit
+  # The max_items setting prevents accidental runaway expansion
+  # This task will error if the range exceeds max_items
+  safe-expansion:
+    help: Run tests with safety limit of 20 items
+    foreach:
+      range: "1..15"
+      as: n
+      parallel: true
+      max_items: 20
+    bash: |
+      echo "Safe test iteration ${n}"
+      sleep 0.05
