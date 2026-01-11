@@ -335,6 +335,12 @@ impl Parser {
         // Inject built-in commands
         self.inject_builtin_commands();
 
+        // Handle --list-subtasks flag
+        if matches.get_flag("list-subtasks") {
+            self.print_subtasks();
+            std::process::exit(0);
+        }
+
         // Extract remaining arguments after global options
         let remaining_args = self.extract_remaining_args(&matches);
 
@@ -457,6 +463,12 @@ impl Parser {
                     .action(clap::ArgAction::SetTrue)
                     .global(true),
             )
+            .arg(
+                Arg::new("list-subtasks")
+                    .long("list-subtasks")
+                    .help("List all foreach subtasks and exit")
+                    .action(clap::ArgAction::SetTrue),
+            )
             .allow_external_subcommands(true)
     }
 
@@ -513,6 +525,41 @@ impl Parser {
             }
         }
         Ok(())
+    }
+
+    /// Print all foreach subtasks and their parent tasks.
+    fn print_subtasks(&self) {
+        let mut has_foreach = false;
+
+        // Sort tasks by name for consistent output
+        let mut task_names: Vec<_> = self.config_spec.tasks.keys().collect();
+        task_names.sort();
+
+        for task_name in task_names {
+            let task_spec = &self.config_spec.tasks[task_name];
+            if let Some(ref foreach) = task_spec.foreach {
+                has_foreach = true;
+
+                // Get the items for this foreach
+                let items = match foreach.resolve_items(&self.cwd) {
+                    Ok(items) => items,
+                    Err(e) => {
+                        eprintln!("{task_name}: Error resolving items: {e}");
+                        continue;
+                    }
+                };
+
+                println!("{task_name} ({} items):", items.len());
+                for item in &items {
+                    println!("  {task_name}:{}", item.identifier);
+                }
+                println!();
+            }
+        }
+
+        if !has_foreach {
+            println!("No tasks with foreach directive found.");
+        }
     }
 
     fn resolve_default_tasks(&self) -> Result<Vec<String>> {
@@ -784,10 +831,32 @@ impl Parser {
     }
 
     fn task_to_command(task_spec: &TaskSpec) -> Command {
+        Self::task_to_command_for_help(task_spec, None)
+    }
+
+    /// Build a clap Command for a task, optionally including foreach item count in help.
+    fn task_to_command_for_help(task_spec: &TaskSpec, cwd: Option<&Path>) -> Command {
         let mut cmd = Command::new(task_spec.name.clone());
 
-        if let Some(ref help) = task_spec.help {
-            cmd = cmd.about(help.clone());
+        // Build help text, including foreach count if available
+        let help_text = if let Some(ref foreach) = task_spec.foreach {
+            let count = cwd
+                .and_then(|cwd| foreach.resolve_items(cwd).ok())
+                .map(|items| items.len())
+                .unwrap_or(0);
+
+            let foreach_indicator = if count > 0 { format!(" [{count} items]") } else { " [foreach]".to_string() };
+
+            match &task_spec.help {
+                Some(help) => format!("{help}{foreach_indicator}"),
+                None => foreach_indicator,
+            }
+        } else {
+            task_spec.help.clone().unwrap_or_default()
+        };
+
+        if !help_text.is_empty() {
+            cmd = cmd.about(help_text);
         }
 
         for param_spec in task_spec.params.values() {
@@ -880,7 +949,7 @@ impl Parser {
             regular_tasks.sort_by_key(|(name, _)| name.as_str());
 
             for (_, task_spec) in regular_tasks {
-                cmd = cmd.subcommand(Self::task_to_command(task_spec));
+                cmd = cmd.subcommand(Self::task_to_command_for_help(task_spec, Some(&self.cwd)));
             }
 
             // Collect and sort built-in commands
@@ -893,7 +962,7 @@ impl Parser {
             builtins.sort_by_key(|(name, _)| name.as_str());
 
             for (_, task_spec) in builtins {
-                cmd = cmd.subcommand(Self::task_to_command(task_spec));
+                cmd = cmd.subcommand(Self::task_to_command_for_help(task_spec, Some(&self.cwd)));
             }
         } else {
             cmd = cmd.after_help(ottofile_not_found_message());
