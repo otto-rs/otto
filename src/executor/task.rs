@@ -182,6 +182,7 @@ mod tests {
             envs: HashMap::new(),
             params: ParamSpecs::default(),
             action: action.to_string(),
+            foreach: None,
         }
     }
 

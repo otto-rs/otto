@@ -93,6 +93,7 @@ impl OttoConverter {
             envs: HashMap::new(),
             params: HashMap::new(),
             action,
+            foreach: None,
         })
     }
 

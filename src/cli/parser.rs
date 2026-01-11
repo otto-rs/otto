@@ -926,6 +926,7 @@ impl Parser {
                 params
             },
             action: "# Built-in graph command".to_string(),
+            foreach: None,
         };
 
         self.config_spec.tasks.insert("Graph".to_string(), graph_task);
@@ -1002,6 +1003,7 @@ impl Parser {
                 params
             },
             action: "# Built-in clean command".to_string(),
+            foreach: None,
         };
 
         self.config_spec.tasks.insert("Clean".to_string(), clean_task);
@@ -1114,6 +1116,7 @@ impl Parser {
                 params
             },
             action: "# Built-in history command".to_string(),
+            foreach: None,
         };
 
         self.config_spec.tasks.insert("History".to_string(), history_task);
@@ -1190,6 +1193,7 @@ impl Parser {
                 params
             },
             action: "# Built-in stats command".to_string(),
+            foreach: None,
         };
 
         self.config_spec.tasks.insert("Stats".to_string(), stats_task);
@@ -1248,6 +1252,7 @@ impl Parser {
                 params
             },
             action: "# Built-in convert command".to_string(),
+            foreach: None,
         };
 
         self.config_spec.tasks.insert("Convert".to_string(), convert_task);
@@ -1378,6 +1383,7 @@ impl Parser {
                 params
             },
             action: "# Built-in upgrade command".to_string(),
+            foreach: None,
         };
 
         self.config_spec.tasks.insert("Upgrade".to_string(), upgrade_task);
@@ -1821,9 +1827,11 @@ mod tests {
         task_deps.insert("cov-report".to_string(), vec!["cov".to_string()]);
 
         let mut task_specs = HashMap::new();
-        let mut cov_spec = TaskSpec::default();
-        cov_spec.name = "cov".to_string();
-        cov_spec.after = vec!["cov-report".to_string()];
+        let cov_spec = TaskSpec {
+            name: "cov".to_string(),
+            after: vec!["cov-report".to_string()],
+            ..Default::default()
+        };
         task_specs.insert("cov".to_string(), cov_spec);
 
         let cov_report_spec = TaskSpec {
@@ -1838,7 +1846,10 @@ mod tests {
         Parser::collect_transitive_deps("cov", &task_deps, &task_specs, &mut collected).unwrap();
 
         assert!(collected.contains("cov"), "cov should be included");
-        assert!(collected.contains("cov-report"), "cov-report should be auto-included via after");
+        assert!(
+            collected.contains("cov-report"),
+            "cov-report should be auto-included via after"
+        );
         assert_eq!(collected.len(), 2);
     }
 
@@ -1849,14 +1860,18 @@ mod tests {
 
         let mut task_specs = HashMap::new();
 
-        let mut a_spec = TaskSpec::default();
-        a_spec.name = "a".to_string();
-        a_spec.after = vec!["b".to_string()];
+        let a_spec = TaskSpec {
+            name: "a".to_string(),
+            after: vec!["b".to_string()],
+            ..Default::default()
+        };
         task_specs.insert("a".to_string(), a_spec);
 
-        let mut b_spec = TaskSpec::default();
-        b_spec.name = "b".to_string();
-        b_spec.after = vec!["c".to_string()];
+        let b_spec = TaskSpec {
+            name: "b".to_string(),
+            after: vec!["c".to_string()],
+            ..Default::default()
+        };
         task_specs.insert("b".to_string(), b_spec);
 
         let c_spec = TaskSpec {
@@ -1887,9 +1902,11 @@ mod tests {
 
         let mut task_specs = HashMap::new();
 
-        let mut a_spec = TaskSpec::default();
-        a_spec.name = "a".to_string();
-        a_spec.after = vec!["b".to_string()];
+        let a_spec = TaskSpec {
+            name: "a".to_string(),
+            after: vec!["b".to_string()],
+            ..Default::default()
+        };
         task_specs.insert("a".to_string(), a_spec);
 
         let b_spec = TaskSpec {
@@ -1923,14 +1940,18 @@ mod tests {
 
         let mut task_specs = HashMap::new();
 
-        let mut a_spec = TaskSpec::default();
-        a_spec.name = "a".to_string();
-        a_spec.after = vec!["b".to_string()];
+        let a_spec = TaskSpec {
+            name: "a".to_string(),
+            after: vec!["b".to_string()],
+            ..Default::default()
+        };
         task_specs.insert("a".to_string(), a_spec);
 
-        let mut b_spec = TaskSpec::default();
-        b_spec.name = "b".to_string();
-        b_spec.after = vec!["a".to_string()]; // Circular after reference
+        let b_spec = TaskSpec {
+            name: "b".to_string(),
+            after: vec!["a".to_string()], // Circular after reference
+            ..Default::default()
+        };
         task_specs.insert("b".to_string(), b_spec);
 
         let mut collected = HashSet::new();

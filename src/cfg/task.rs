@@ -1,16 +1,204 @@
 //#![allow(unused_imports, unused_variables, dead_code)]
 
-use eyre::Result;
+use eyre::{Result, eyre};
 use serde::de::{Deserializer, MapAccess, Visitor};
 use serde::ser::{SerializeMap, Serializer};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
+use std::path::Path;
 use std::vec::Vec;
 
 use crate::cfg::param::{ParamSpecs, deserialize_param_map};
 
 pub type TaskSpecs = HashMap<String, TaskSpec>;
+
+// ============================================================================
+// ForeachSpec - Configuration for dynamic subtask generation
+// ============================================================================
+
+fn default_as() -> String {
+    "item".to_string()
+}
+
+fn default_parallel() -> bool {
+    true
+}
+
+fn default_max_items() -> usize {
+    1000
+}
+
+impl Default for ForeachSpec {
+    fn default() -> Self {
+        Self {
+            glob: None,
+            items: Vec::new(),
+            range: None,
+            var_name: default_as(),
+            parallel: default_parallel(),
+            max_items: default_max_items(),
+        }
+    }
+}
+
+/// Configuration for foreach-based subtask generation
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ForeachSpec {
+    /// Glob pattern to match files
+    #[serde(default)]
+    pub glob: Option<String>,
+
+    /// Explicit list of items
+    #[serde(default)]
+    pub items: Vec<String>,
+
+    /// Numeric range (e.g., "1-10" for 1 through 10 inclusive)
+    #[serde(default)]
+    pub range: Option<String>,
+
+    /// Variable name for the current item (default: "item")
+    #[serde(default = "default_as")]
+    #[serde(rename = "as")]
+    pub var_name: String,
+
+    /// Whether subtasks run in parallel (default: true)
+    #[serde(default = "default_parallel")]
+    pub parallel: bool,
+
+    /// Maximum number of items before erroring (default: 1000)
+    #[serde(default = "default_max_items")]
+    pub max_items: usize,
+}
+
+/// Represents a single item from foreach expansion
+#[derive(Clone, Debug)]
+pub struct ForeachItem {
+    /// The identifier used in subtask naming (e.g., "01-basic.sh")
+    pub identifier: String,
+    /// The full value passed to the script (e.g., "examples/01-basic.sh")
+    pub value: String,
+}
+
+impl ForeachSpec {
+    /// Resolve the foreach source into a list of items
+    pub fn resolve_items(&self, cwd: &Path) -> Result<Vec<ForeachItem>> {
+        let items = if let Some(glob_pattern) = &self.glob {
+            self.resolve_glob(glob_pattern, cwd)?
+        } else if !self.items.is_empty() {
+            self.resolve_list()
+        } else if let Some(range) = &self.range {
+            self.resolve_range(range)?
+        } else {
+            return Err(eyre!("foreach requires glob, items, or range"));
+        };
+
+        // Check max_items limit
+        if items.len() > self.max_items {
+            return Err(eyre!(
+                "foreach matched {} items, exceeding max_items limit ({})",
+                items.len(),
+                self.max_items
+            ));
+        }
+
+        // Warn if zero items
+        if items.is_empty() {
+            log::warn!(
+                "foreach {} matched 0 items",
+                self.glob
+                    .as_ref()
+                    .or(self.range.as_ref())
+                    .unwrap_or(&"items".to_string())
+            );
+        }
+
+        Ok(items)
+    }
+
+    fn resolve_glob(&self, pattern: &str, cwd: &Path) -> Result<Vec<ForeachItem>> {
+        let full_pattern = if Path::new(pattern).is_absolute() {
+            pattern.to_string()
+        } else {
+            cwd.join(pattern).to_string_lossy().to_string()
+        };
+
+        let mut items: Vec<ForeachItem> = Vec::new();
+
+        for entry in glob::glob(&full_pattern).map_err(|e| eyre!("Invalid glob pattern '{}': {}", pattern, e))? {
+            match entry {
+                Ok(path) => {
+                    // Use filename as identifier, full path as value
+                    let identifier = path
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path.to_string_lossy().to_string());
+
+                    // Sanitize identifier: replace whitespace with underscore
+                    let identifier = identifier.replace(' ', "_");
+
+                    let value = path.to_string_lossy().to_string();
+
+                    items.push(ForeachItem { identifier, value });
+                }
+                Err(e) => {
+                    log::warn!("Failed to resolve glob entry: {}", e);
+                }
+            }
+        }
+
+        // Sort alphabetically for deterministic ordering
+        items.sort_by(|a, b| a.identifier.cmp(&b.identifier));
+
+        Ok(items)
+    }
+
+    fn resolve_list(&self) -> Vec<ForeachItem> {
+        self.items
+            .iter()
+            .filter(|item| !item.trim().is_empty())
+            .map(|item| ForeachItem {
+                identifier: item.clone(),
+                value: item.clone(),
+            })
+            .collect()
+    }
+
+    fn resolve_range(&self, range: &str) -> Result<Vec<ForeachItem>> {
+        // Parse "start-end" format (inclusive)
+        let parts: Vec<&str> = range.split('-').collect();
+        if parts.len() != 2 {
+            return Err(eyre!(
+                "Invalid range format '{}'. Expected 'start-end' (e.g., '1-10')",
+                range
+            ));
+        }
+
+        let start: usize = parts[0]
+            .trim()
+            .parse()
+            .map_err(|_| eyre!("Invalid range start: '{}'", parts[0]))?;
+        let end: usize = parts[1]
+            .trim()
+            .parse()
+            .map_err(|_| eyre!("Invalid range end: '{}'", parts[1]))?;
+
+        if start > end {
+            return Err(eyre!("Invalid range: start ({}) > end ({})", start, end));
+        }
+
+        // Calculate padding width for zero-padding
+        let width = end.to_string().len();
+
+        Ok((start..=end)
+            .map(|n| {
+                let identifier = format!("{:0width$}", n, width = width);
+                let value = n.to_string();
+                ForeachItem { identifier, value }
+            })
+            .collect())
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TaskSpec {
@@ -23,6 +211,8 @@ pub struct TaskSpec {
     pub envs: HashMap<String, String>,
     pub params: ParamSpecs,
     pub action: String,
+    /// Optional foreach configuration for subtask generation
+    pub foreach: Option<ForeachSpec>,
 }
 
 // Helper struct for deserialization that accepts bash:, python:, or action: fields
@@ -60,6 +250,10 @@ struct TaskSpecHelper {
     // Legacy support for action: field (deprecated)
     #[serde(default)]
     action: Option<String>,
+
+    // Support for foreach subtask generation
+    #[serde(default)]
+    foreach: Option<ForeachSpec>,
 }
 
 impl<'de> Deserialize<'de> for TaskSpec {
@@ -99,6 +293,7 @@ impl<'de> Deserialize<'de> for TaskSpec {
             envs: helper.envs,
             params: helper.params,
             action,
+            foreach: helper.foreach,
         })
     }
 }
@@ -136,6 +331,10 @@ impl Serialize for TaskSpec {
 
         if !self.params.is_empty() {
             map.serialize_entry("params", &self.params)?;
+        }
+
+        if let Some(ref foreach) = self.foreach {
+            map.serialize_entry("foreach", foreach)?;
         }
 
         // Serialize action as "bash:" if it starts with #!/bin/bash
@@ -217,6 +416,70 @@ impl TaskSpec {
             envs,
             params,
             action,
+            foreach: None,
+        }
+    }
+
+    /// Check if this task has a foreach configuration
+    #[must_use]
+    pub fn has_foreach(&self) -> bool {
+        self.foreach.is_some()
+    }
+
+    /// Expand a foreach task into multiple concrete subtasks.
+    /// Returns the original task in a vec if there's no foreach configuration.
+    pub fn expand_foreach(&self, cwd: &Path) -> Result<Vec<TaskSpec>> {
+        let foreach = match &self.foreach {
+            Some(f) => f,
+            None => return Ok(vec![self.clone()]),
+        };
+
+        let items = foreach.resolve_items(cwd)?;
+
+        // Check for duplicate identifiers
+        let mut seen_identifiers = std::collections::HashSet::new();
+        for item in &items {
+            if !seen_identifiers.insert(&item.identifier) {
+                return Err(eyre!(
+                    "foreach produced duplicate subtask name '{}:{}'",
+                    self.name,
+                    item.identifier
+                ));
+            }
+        }
+
+        items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                let mut subtask = self.clone();
+                subtask.name = format!("{}:{}", self.name, item.identifier);
+                subtask.foreach = None; // Prevent recursive expansion
+
+                // Inject foreach variables into environment
+                subtask.envs.insert(foreach.var_name.clone(), item.value.clone());
+                subtask.envs.insert("OTTO_FOREACH_ITEM".to_string(), item.value.clone());
+                subtask.envs.insert("OTTO_FOREACH_INDEX".to_string(), index.to_string());
+
+                Ok(subtask)
+            })
+            .collect()
+    }
+
+    /// Create a virtual parent task (no action, just for dependency tracking)
+    #[must_use]
+    pub fn as_virtual_parent(&self) -> TaskSpec {
+        TaskSpec {
+            name: self.name.clone(),
+            help: self.help.clone(),
+            after: self.after.clone(),
+            before: self.before.clone(),
+            input: vec![],
+            output: vec![],
+            envs: HashMap::new(),
+            params: ParamSpecs::new(),
+            action: String::new(), // No action - virtual task
+            foreach: None,
         }
     }
 }
@@ -261,4 +524,303 @@ where
         }
     }
     deserializer.deserialize_map(TaskMap)
+}
+
+// ============================================================================
+// Unit tests for foreach functionality
+// ============================================================================
+
+#[cfg(test)]
+mod foreach_tests {
+    use super::*;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_foreach_resolve_items_list() {
+        let foreach = ForeachSpec {
+            items: vec!["dev".to_string(), "staging".to_string(), "prod".to_string()],
+            ..Default::default()
+        };
+
+        let cwd = PathBuf::from("/tmp");
+        let items = foreach.resolve_items(&cwd).unwrap();
+
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].identifier, "dev");
+        assert_eq!(items[0].value, "dev");
+        assert_eq!(items[1].identifier, "staging");
+        assert_eq!(items[2].identifier, "prod");
+    }
+
+    #[test]
+    fn test_foreach_resolve_items_range() {
+        let foreach = ForeachSpec {
+            range: Some("1-5".to_string()),
+            ..Default::default()
+        };
+
+        let cwd = PathBuf::from("/tmp");
+        let items = foreach.resolve_items(&cwd).unwrap();
+
+        assert_eq!(items.len(), 5);
+        assert_eq!(items[0].identifier, "1");
+        assert_eq!(items[0].value, "1");
+        assert_eq!(items[4].identifier, "5");
+        assert_eq!(items[4].value, "5");
+    }
+
+    #[test]
+    fn test_foreach_resolve_items_range_zero_padded() {
+        let foreach = ForeachSpec {
+            range: Some("1-12".to_string()),
+            ..Default::default()
+        };
+
+        let cwd = PathBuf::from("/tmp");
+        let items = foreach.resolve_items(&cwd).unwrap();
+
+        assert_eq!(items.len(), 12);
+        assert_eq!(items[0].identifier, "01"); // Zero-padded to match width of "12"
+        assert_eq!(items[0].value, "1");
+        assert_eq!(items[9].identifier, "10");
+        assert_eq!(items[11].identifier, "12");
+    }
+
+    #[test]
+    fn test_foreach_resolve_items_glob() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+
+        // Create test files
+        std::fs::write(dir.join("a.txt"), "").unwrap();
+        std::fs::write(dir.join("b.txt"), "").unwrap();
+        std::fs::write(dir.join("c.txt"), "").unwrap();
+        std::fs::write(dir.join("skip.md"), "").unwrap(); // Should not match
+
+        let foreach = ForeachSpec {
+            glob: Some("*.txt".to_string()),
+            ..Default::default()
+        };
+
+        let items = foreach.resolve_items(dir).unwrap();
+
+        assert_eq!(items.len(), 3);
+        // Should be sorted alphabetically
+        assert_eq!(items[0].identifier, "a.txt");
+        assert_eq!(items[1].identifier, "b.txt");
+        assert_eq!(items[2].identifier, "c.txt");
+    }
+
+    #[test]
+    fn test_foreach_max_items_limit() {
+        let foreach = ForeachSpec {
+            range: Some("1-100".to_string()),
+            max_items: 10,
+            ..Default::default()
+        };
+
+        let cwd = PathBuf::from("/tmp");
+        let result = foreach.resolve_items(&cwd);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("exceeding max_items"));
+    }
+
+    #[test]
+    fn test_foreach_empty_items_filtered() {
+        let foreach = ForeachSpec {
+            items: vec!["a".to_string(), "".to_string(), "  ".to_string(), "b".to_string()],
+            ..Default::default()
+        };
+
+        let cwd = PathBuf::from("/tmp");
+        let items = foreach.resolve_items(&cwd).unwrap();
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].identifier, "a");
+        assert_eq!(items[1].identifier, "b");
+    }
+
+    #[test]
+    fn test_foreach_invalid_range_format() {
+        let foreach = ForeachSpec {
+            range: Some("invalid".to_string()),
+            ..Default::default()
+        };
+
+        let cwd = PathBuf::from("/tmp");
+        let result = foreach.resolve_items(&cwd);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_foreach_range_start_greater_than_end() {
+        let foreach = ForeachSpec {
+            range: Some("10-5".to_string()),
+            ..Default::default()
+        };
+
+        let cwd = PathBuf::from("/tmp");
+        let result = foreach.resolve_items(&cwd);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("start (10) > end (5)"));
+    }
+
+    #[test]
+    fn test_foreach_requires_source() {
+        let foreach = ForeachSpec::default();
+
+        let cwd = PathBuf::from("/tmp");
+        let result = foreach.resolve_items(&cwd);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("foreach requires glob, items, or range"));
+    }
+
+    #[test]
+    fn test_taskspec_expand_foreach_with_list() {
+        let mut task = TaskSpec::new(
+            "deploy".to_string(),
+            Some("Deploy to environment".to_string()),
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            HashMap::new(),
+            ParamSpecs::new(),
+            "#!/bin/bash\necho deploy".to_string(),
+        );
+        task.foreach = Some(ForeachSpec {
+            items: vec!["dev".to_string(), "staging".to_string(), "prod".to_string()],
+            var_name: "env".to_string(),
+            ..Default::default()
+        });
+
+        let cwd = PathBuf::from("/tmp");
+        let subtasks = task.expand_foreach(&cwd).unwrap();
+
+        assert_eq!(subtasks.len(), 3);
+        assert_eq!(subtasks[0].name, "deploy:dev");
+        assert_eq!(subtasks[1].name, "deploy:staging");
+        assert_eq!(subtasks[2].name, "deploy:prod");
+
+        // Check environment variables
+        assert_eq!(subtasks[0].envs.get("env"), Some(&"dev".to_string()));
+        assert_eq!(subtasks[0].envs.get("OTTO_FOREACH_ITEM"), Some(&"dev".to_string()));
+        assert_eq!(subtasks[0].envs.get("OTTO_FOREACH_INDEX"), Some(&"0".to_string()));
+
+        assert_eq!(subtasks[2].envs.get("OTTO_FOREACH_INDEX"), Some(&"2".to_string()));
+
+        // Subtasks should not have foreach
+        assert!(subtasks[0].foreach.is_none());
+    }
+
+    #[test]
+    fn test_taskspec_expand_foreach_none() {
+        let task = TaskSpec::new(
+            "build".to_string(),
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            HashMap::new(),
+            ParamSpecs::new(),
+            "#!/bin/bash\necho build".to_string(),
+        );
+
+        let cwd = PathBuf::from("/tmp");
+        let subtasks = task.expand_foreach(&cwd).unwrap();
+
+        assert_eq!(subtasks.len(), 1);
+        assert_eq!(subtasks[0].name, "build");
+    }
+
+    #[test]
+    fn test_taskspec_as_virtual_parent() {
+        let mut task = TaskSpec::new(
+            "examples".to_string(),
+            Some("Run examples".to_string()),
+            vec!["cleanup".to_string()],
+            vec!["build".to_string()],
+            vec!["input.txt".to_string()],
+            vec!["output.txt".to_string()],
+            HashMap::from([("KEY".to_string(), "value".to_string())]),
+            ParamSpecs::new(),
+            "#!/bin/bash\necho hello".to_string(),
+        );
+        task.foreach = Some(ForeachSpec::default());
+
+        let parent = task.as_virtual_parent();
+
+        assert_eq!(parent.name, "examples");
+        assert_eq!(parent.help, Some("Run examples".to_string()));
+        assert_eq!(parent.after, vec!["cleanup".to_string()]);
+        assert_eq!(parent.before, vec!["build".to_string()]);
+        assert!(parent.input.is_empty());
+        assert!(parent.output.is_empty());
+        assert!(parent.envs.is_empty());
+        assert!(parent.action.is_empty());
+        assert!(parent.foreach.is_none());
+    }
+
+    #[test]
+    fn test_foreach_yaml_deserialization() {
+        let yaml = r#"
+            help: "Run all examples"
+            foreach:
+              items: [a, b, c]
+              as: example
+              parallel: true
+            bash: |
+              echo ${example}
+        "#;
+
+        let task: TaskSpec = serde_yaml::from_str(yaml).unwrap();
+
+        assert!(task.foreach.is_some());
+        let foreach = task.foreach.unwrap();
+        assert_eq!(foreach.items, vec!["a", "b", "c"]);
+        assert_eq!(foreach.var_name, "example");
+        assert!(foreach.parallel);
+    }
+
+    #[test]
+    fn test_foreach_yaml_deserialization_with_glob() {
+        let yaml = r#"
+            foreach:
+              glob: "examples/*.sh"
+            bash: echo test
+        "#;
+
+        let task: TaskSpec = serde_yaml::from_str(yaml).unwrap();
+
+        assert!(task.foreach.is_some());
+        let foreach = task.foreach.unwrap();
+        assert_eq!(foreach.glob, Some("examples/*.sh".to_string()));
+        assert_eq!(foreach.var_name, "item"); // default
+    }
+
+    #[test]
+    fn test_foreach_yaml_deserialization_with_range() {
+        let yaml = r#"
+            foreach:
+              range: "1-10"
+              as: num
+            bash: echo ${num}
+        "#;
+
+        let task: TaskSpec = serde_yaml::from_str(yaml).unwrap();
+
+        assert!(task.foreach.is_some());
+        let foreach = task.foreach.unwrap();
+        assert_eq!(foreach.range, Some("1-10".to_string()));
+        assert_eq!(foreach.var_name, "num");
+    }
 }
