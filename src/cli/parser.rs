@@ -238,6 +238,17 @@ impl Parser {
         })
     }
 
+    /// Returns the base directory for resolving relative paths in the ottofile.
+    ///
+    /// This is the ottofile's parent directory if an ottofile has been loaded,
+    /// otherwise falls back to the current working directory.
+    ///
+    /// This is important for foreach globs: they should be resolved relative to the
+    /// ottofile location, not the user's current working directory.
+    fn base_dir(&self) -> &Path {
+        self.ottofile.as_ref().and_then(|p| p.parent()).unwrap_or(&self.cwd)
+    }
+
     #[allow(clippy::type_complexity)]
     pub fn parse(&mut self) -> Result<(Vec<Task>, String, Option<PathBuf>, usize, bool)> {
         let help_requested = self.args.contains(&"--help".to_string()) || self.args.contains(&"-h".to_string());
@@ -534,7 +545,7 @@ impl Parser {
 
     fn show_task_help(&self, task_name: &str) -> Result<()> {
         if let Some(task) = self.config_spec.tasks.get(task_name) {
-            let mut task_cmd = Self::task_to_command_for_help(task, Some(&self.cwd));
+            let mut task_cmd = Self::task_to_command_for_help(task, Some(self.base_dir()));
             task_cmd.print_help()?;
         } else {
             eprintln!("Task '{task_name}' not found");
@@ -556,8 +567,8 @@ impl Parser {
             if let Some(ref foreach) = task_spec.foreach {
                 has_foreach = true;
 
-                // Get the items for this foreach
-                let items = match foreach.resolve_items(&self.cwd) {
+                // Get the items for this foreach (resolve relative to ottofile dir)
+                let items = match foreach.resolve_items(self.base_dir()) {
                     Ok(items) => items,
                     Err(e) => {
                         eprintln!("{task_name}: Error resolving items: {e}");
@@ -621,7 +632,7 @@ impl Parser {
         // Also include expanded subtask names for foreach tasks
         for (name, spec) in &self.config_spec.tasks {
             if let Some(ref foreach) = spec.foreach
-                && let Ok(items) = foreach.resolve_items(&self.cwd)
+                && let Ok(items) = foreach.resolve_items(self.base_dir())
             {
                 for item in items {
                     task_names.push(format!("{}:{}", name, item.identifier));
@@ -810,8 +821,8 @@ impl Parser {
 
         for (name, spec) in &self.config_spec.tasks {
             if spec.has_foreach() {
-                // Expand foreach task into subtasks
-                let subtasks = spec.expand_foreach(&self.cwd)?;
+                // Expand foreach task into subtasks (resolve relative to ottofile dir)
+                let subtasks = spec.expand_foreach(self.base_dir())?;
 
                 if subtasks.is_empty() {
                     // Zero matches - just keep the virtual parent for dependency tracking
@@ -1023,7 +1034,7 @@ impl Parser {
             regular_tasks.sort_by_key(|(name, _)| name.as_str());
 
             for (_, task_spec) in regular_tasks {
-                cmd = cmd.subcommand(Self::task_to_command_for_help(task_spec, Some(&self.cwd)));
+                cmd = cmd.subcommand(Self::task_to_command_for_help(task_spec, Some(self.base_dir())));
             }
 
             // Collect and sort built-in commands
@@ -1036,7 +1047,7 @@ impl Parser {
             builtins.sort_by_key(|(name, _)| name.as_str());
 
             for (_, task_spec) in builtins {
-                cmd = cmd.subcommand(Self::task_to_command_for_help(task_spec, Some(&self.cwd)));
+                cmd = cmd.subcommand(Self::task_to_command_for_help(task_spec, Some(self.base_dir())));
             }
         } else {
             cmd = cmd.after_help(ottofile_not_found_message());

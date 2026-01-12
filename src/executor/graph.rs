@@ -57,6 +57,18 @@ impl Default for GraphOptions {
     }
 }
 
+/// Info about a collapsed task for graph rendering
+struct CollapsedTaskInfo {
+    /// Display name (e.g., "examples:* [8 items]" for foreach, or just "build" for regular)
+    display_name: String,
+    /// Dependencies (task names this depends on)
+    deps: Vec<String>,
+    /// File inputs count
+    file_deps_count: usize,
+    /// File outputs count
+    output_deps_count: usize,
+}
+
 /// DAG visualizer for Otto tasks
 pub struct DagVisualizer {
     options: GraphOptions,
@@ -310,38 +322,33 @@ impl DagVisualizer {
         output.push_str("│           Otto Task DAG             │\n");
         output.push_str("└─────────────────────────────────────┘\n\n");
 
-        // Find leaf tasks (tasks that nothing depends on - the top-level tasks you'd run)
-        let all_task_names: std::collections::HashSet<String> =
-            dag.raw_nodes().iter().map(|node| node.weight.name.clone()).collect();
+        // Collapse foreach subtasks: group tasks like "examples:foo", "examples:bar" into "examples:* [N]"
+        let collapsed_tasks = Self::collapse_foreach_subtasks(dag);
 
-        let mut leaf_tasks: Vec<_> = dag
-            .raw_nodes()
+        // Find leaf tasks (tasks that nothing depends on - the top-level tasks you'd run)
+        let mut leaf_tasks: Vec<_> = collapsed_tasks
             .iter()
-            .filter(|node| {
+            .filter(|(name, _)| {
                 // A task is a leaf if no other task depends on it
-                !all_task_names.iter().any(|other_task_name| {
-                    dag.raw_nodes().iter().any(|other_node| {
-                        other_node.weight.name == *other_task_name
-                            && other_node.weight.task_deps.contains(&node.weight.name)
-                    })
-                })
+                !collapsed_tasks.values().any(|info| info.deps.contains(*name))
             })
             .collect();
 
         // Sort leaf tasks alphabetically for consistent output
-        leaf_tasks.sort_by(|a, b| a.weight.name.cmp(&b.weight.name));
+        leaf_tasks.sort_by(|a, b| a.0.cmp(b.0));
 
         if leaf_tasks.is_empty() {
             output.push_str("No leaf tasks found (possible circular dependencies)\n");
             return Ok(output);
         }
 
-        for (i, leaf) in leaf_tasks.iter().enumerate() {
+        for (i, (name, info)) in leaf_tasks.iter().enumerate() {
             let is_last_leaf = i == leaf_tasks.len() - 1;
-            Self::render_ascii_subtree(
+            Self::render_collapsed_ascii_subtree(
                 &mut output,
-                &leaf.weight,
-                dag,
+                name,
+                info,
+                &collapsed_tasks,
                 0,
                 &mut std::collections::HashSet::new(),
                 is_last_leaf,
@@ -355,6 +362,172 @@ impl DagVisualizer {
         output.push_str("└─────────────────────────────────────┘\n");
 
         Ok(output)
+    }
+
+    /// Collapse foreach subtasks into a single display entry
+    fn collapse_foreach_subtasks(dag: &DAG<Task>) -> HashMap<String, CollapsedTaskInfo> {
+        let mut result: HashMap<String, CollapsedTaskInfo> = HashMap::new();
+        let mut foreach_groups: HashMap<String, Vec<&Task>> = HashMap::new();
+
+        // First pass: identify foreach subtasks and group them
+        for node in dag.raw_nodes() {
+            let task = &node.weight;
+            if let Some((parent, _subtask)) = task.name.split_once(':') {
+                // This is a foreach subtask
+                foreach_groups.entry(parent.to_string()).or_default().push(task);
+            }
+        }
+
+        // Second pass: process all tasks
+        for node in dag.raw_nodes() {
+            let task = &node.weight;
+
+            if let Some((parent, _)) = task.name.split_once(':') {
+                // This is a foreach subtask - only add the parent once
+                if !result.contains_key(parent) {
+                    let subtasks = foreach_groups.get(parent).unwrap();
+                    let count = subtasks.len();
+
+                    // Infer the pattern from subtask names (e.g., all end in .rs -> *.rs)
+                    let pattern = Self::infer_subtask_pattern(subtasks);
+
+                    // Get deps from first subtask (they should all be the same, minus internal deps)
+                    let deps: Vec<String> = subtasks
+                        .first()
+                        .map(|t| {
+                            t.task_deps
+                                .iter()
+                                .filter(|d| !d.starts_with(&format!("{}:", parent)))
+                                .cloned()
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                    result.insert(
+                        parent.to_string(),
+                        CollapsedTaskInfo {
+                            display_name: format!("{}:{} [{} items]", parent, pattern, count),
+                            deps,
+                            file_deps_count: subtasks.first().map(|t| t.file_deps.len()).unwrap_or(0),
+                            output_deps_count: subtasks.first().map(|t| t.output_deps.len()).unwrap_or(0),
+                        },
+                    );
+                }
+            } else if !foreach_groups.contains_key(&task.name) {
+                // Regular task (not a foreach parent that has subtasks)
+                result.insert(
+                    task.name.clone(),
+                    CollapsedTaskInfo {
+                        display_name: task.name.clone(),
+                        deps: task.task_deps.clone(),
+                        file_deps_count: task.file_deps.len(),
+                        output_deps_count: task.output_deps.len(),
+                    },
+                );
+            }
+        }
+
+        result
+    }
+
+    /// Infer the glob pattern from subtask names
+    ///
+    /// If all subtask identifiers share a common extension (e.g., .rs, .sh), returns `*.<ext>`
+    /// Otherwise returns `*`
+    fn infer_subtask_pattern(subtasks: &[&Task]) -> String {
+        if subtasks.is_empty() {
+            return "*".to_string();
+        }
+
+        // Extract the identifier part (after the colon) from each subtask name
+        let identifiers: Vec<&str> = subtasks
+            .iter()
+            .filter_map(|t| t.name.split_once(':').map(|(_, id)| id))
+            .collect();
+
+        if identifiers.is_empty() {
+            return "*".to_string();
+        }
+
+        // Check for common file extension
+        let first_ext = identifiers[0].rsplit_once('.').map(|(_, ext)| ext);
+
+        if let Some(ext) = first_ext {
+            // Verify all identifiers share this extension
+            let all_match = identifiers
+                .iter()
+                .all(|id| id.rsplit_once('.').map(|(_, e)| e == ext).unwrap_or(false));
+
+            if all_match {
+                return format!("*.{}", ext);
+            }
+        }
+
+        "*".to_string()
+    }
+
+    fn render_collapsed_ascii_subtree(
+        output: &mut String,
+        task_name: &str,
+        info: &CollapsedTaskInfo,
+        all_tasks: &HashMap<String, CollapsedTaskInfo>,
+        depth: usize,
+        visited: &mut std::collections::HashSet<String>,
+        is_last: bool,
+    ) -> Result<()> {
+        let indent = "  ".repeat(depth);
+        let connector = if is_last { "└─" } else { "├─" };
+
+        if visited.contains(task_name) {
+            output.push_str(&format!(
+                "{}{} {} (circular ref)\n",
+                indent, connector, info.display_name
+            ));
+            return Ok(());
+        }
+
+        visited.insert(task_name.to_string());
+
+        // Show task info
+        output.push_str(&format!("{}{} {}", indent, connector, info.display_name));
+        if info.file_deps_count > 0 {
+            output.push_str(&format!(" [inputs:{}]", info.file_deps_count));
+        }
+        if info.output_deps_count > 0 {
+            output.push_str(&format!(" [outputs:{}]", info.output_deps_count));
+        }
+        output.push('\n');
+
+        // Find tasks that this task depends on
+        let dependencies: Vec<_> = info
+            .deps
+            .iter()
+            .filter_map(|dep_name| {
+                // Handle collapsed names - deps might reference subtasks but we show parents
+                let lookup_name = if let Some((parent, _)) = dep_name.split_once(':') {
+                    parent.to_string()
+                } else {
+                    dep_name.clone()
+                };
+                all_tasks.get(&lookup_name).map(|info| (lookup_name, info))
+            })
+            .collect();
+
+        for (i, (dep_name, dep_info)) in dependencies.iter().enumerate() {
+            let is_last_dependency = i == dependencies.len() - 1;
+            Self::render_collapsed_ascii_subtree(
+                output,
+                dep_name,
+                dep_info,
+                all_tasks,
+                depth + 1,
+                visited,
+                is_last_dependency,
+            )?;
+        }
+
+        visited.remove(task_name);
+        Ok(())
     }
 
     fn create_node_label(&self, task: &Task) -> String {
@@ -445,50 +618,6 @@ impl DagVisualizer {
             }
         }
 
-        Ok(())
-    }
-
-    fn render_ascii_subtree(
-        output: &mut String,
-        task: &Task,
-        dag: &DAG<Task>,
-        depth: usize,
-        visited: &mut std::collections::HashSet<String>,
-        is_last: bool,
-    ) -> Result<()> {
-        let indent = "  ".repeat(depth);
-        let connector = if is_last { "└─" } else { "├─" };
-
-        if visited.contains(&task.name) {
-            output.push_str(&format!("{}{} {} (circular ref)\n", indent, connector, task.name));
-            return Ok(());
-        }
-
-        visited.insert(task.name.clone());
-
-        // Show task info
-        output.push_str(&format!("{}{} {}", indent, connector, task.name));
-        if !task.file_deps.is_empty() {
-            output.push_str(&format!(" [inputs:{}]", task.file_deps.len()));
-        }
-        if !task.output_deps.is_empty() {
-            output.push_str(&format!(" [outputs:{}]", task.output_deps.len()));
-        }
-        output.push('\n');
-
-        // Find tasks that this task depends on
-        let dependencies: Vec<_> = task
-            .task_deps
-            .iter()
-            .filter_map(|dep_name| dag.raw_nodes().iter().find(|node| node.weight.name == *dep_name))
-            .collect();
-
-        for (i, dependency) in dependencies.iter().enumerate() {
-            let is_last_dependency = i == dependencies.len() - 1;
-            Self::render_ascii_subtree(output, &dependency.weight, dag, depth + 1, visited, is_last_dependency)?;
-        }
-
-        visited.remove(&task.name);
         Ok(())
     }
 
@@ -618,5 +747,73 @@ mod tests {
         assert_eq!(visualizer.escape_dot_string("hello\nworld"), "hello\\nworld");
         assert_eq!(visualizer.escape_dot_string("say \"hello\""), "say \\\"hello\\\"");
         assert_eq!(visualizer.escape_dot_string("path\\to\\file"), "path\\\\to\\\\file");
+    }
+
+    #[test]
+    fn test_infer_subtask_pattern_rs_extension() {
+        let subtasks: Vec<Task> = vec![
+            create_test_task("examples:04_task_manager_api.rs", vec![]),
+            create_test_task("examples:05_scheduler_api.rs", vec![]),
+            create_test_task("examples:06_event_bus.rs", vec![]),
+        ];
+        let refs: Vec<&Task> = subtasks.iter().collect();
+        let pattern = DagVisualizer::infer_subtask_pattern(&refs);
+        assert_eq!(pattern, "*.rs");
+    }
+
+    #[test]
+    fn test_infer_subtask_pattern_sh_extension() {
+        let subtasks: Vec<Task> = vec![
+            create_test_task("scripts:build.sh", vec![]),
+            create_test_task("scripts:deploy.sh", vec![]),
+        ];
+        let refs: Vec<&Task> = subtasks.iter().collect();
+        let pattern = DagVisualizer::infer_subtask_pattern(&refs);
+        assert_eq!(pattern, "*.sh");
+    }
+
+    #[test]
+    fn test_infer_subtask_pattern_mixed_extensions() {
+        let subtasks: Vec<Task> = vec![
+            create_test_task("examples:basic.rs", vec![]),
+            create_test_task("examples:script.sh", vec![]),
+        ];
+        let refs: Vec<&Task> = subtasks.iter().collect();
+        let pattern = DagVisualizer::infer_subtask_pattern(&refs);
+        assert_eq!(pattern, "*"); // Mixed extensions fall back to *
+    }
+
+    #[test]
+    fn test_infer_subtask_pattern_no_extension() {
+        let subtasks: Vec<Task> = vec![
+            create_test_task("deploy:dev", vec![]),
+            create_test_task("deploy:staging", vec![]),
+            create_test_task("deploy:prod", vec![]),
+        ];
+        let refs: Vec<&Task> = subtasks.iter().collect();
+        let pattern = DagVisualizer::infer_subtask_pattern(&refs);
+        assert_eq!(pattern, "*"); // No common extension
+    }
+
+    #[test]
+    fn test_ascii_collapses_foreach_subtasks() -> Result<()> {
+        let mut dag = DAG::new();
+
+        let task1 = create_test_task("examples:04_task_manager_api.rs", vec![]);
+        let task2 = create_test_task("examples:05_scheduler_api.rs", vec![]);
+        let task3 = create_test_task("examples:06_event_bus.rs", vec![]);
+
+        dag.add_node(task1);
+        dag.add_node(task2);
+        dag.add_node(task3);
+
+        let visualizer = DagVisualizer::with_defaults();
+        let ascii = visualizer.generate_ascii(&dag)?;
+
+        // Should show collapsed pattern, not individual subtasks
+        assert!(ascii.contains("examples:*.rs [3 items]"));
+        assert!(!ascii.contains("04_task_manager_api.rs"));
+
+        Ok(())
     }
 }
