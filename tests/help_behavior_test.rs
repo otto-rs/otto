@@ -268,3 +268,179 @@ tasks:
             .stdout(predicate::str::contains("ERROR: No ottofile found").not());
     }
 }
+
+#[test]
+fn test_task_help_with_long_flag() {
+    let temp = tempdir().unwrap();
+    let ottofile_path = temp.path().join("otto.yml");
+    let mut file = fs::File::create(&ottofile_path).unwrap();
+    writeln!(
+        file,
+        r#"
+otto:
+  api: 1
+tasks:
+  build:
+    help: Build the project
+    bash: echo building
+  test:
+    help: Run tests
+    bash: echo testing
+"#
+    )
+    .unwrap();
+
+    let mut cmd = cargo_bin_cmd!("otto");
+    cmd.current_dir(&temp).args(["build", "--help"]);
+
+    cmd.assert()
+        .success()
+        .code(0)
+        // Should show task-specific help
+        .stdout(predicate::str::contains("Build the project"))
+        .stdout(predicate::str::contains("Usage: build"))
+        // Should NOT run the task
+        .stdout(predicate::str::contains("building").not());
+}
+
+#[test]
+fn test_task_help_with_short_flag() {
+    let temp = tempdir().unwrap();
+    let ottofile_path = temp.path().join("otto.yml");
+    let mut file = fs::File::create(&ottofile_path).unwrap();
+    writeln!(
+        file,
+        r#"
+otto:
+  api: 1
+tasks:
+  build:
+    help: Build the project
+    bash: echo building
+"#
+    )
+    .unwrap();
+
+    let mut cmd = cargo_bin_cmd!("otto");
+    cmd.current_dir(&temp).args(["build", "-h"]);
+
+    cmd.assert()
+        .success()
+        .code(0)
+        // Should show task-specific help
+        .stdout(predicate::str::contains("Build the project"))
+        .stdout(predicate::str::contains("Usage: build"))
+        // Should NOT run the task
+        .stdout(predicate::str::contains("building").not());
+}
+
+#[test]
+fn test_foreach_task_help_with_long_flag() {
+    let temp = tempdir().unwrap();
+    let ottofile_path = temp.path().join("otto.yml");
+    let mut file = fs::File::create(&ottofile_path).unwrap();
+    writeln!(
+        file,
+        r#"
+otto:
+  api: 1
+tasks:
+  examples:
+    help: Run all examples
+    foreach:
+      items: [one, two, three]
+      as: item
+    bash: |
+      echo "Running example: $item"
+"#
+    )
+    .unwrap();
+
+    let mut cmd = cargo_bin_cmd!("otto");
+    cmd.current_dir(&temp).args(["examples", "--help"]);
+
+    cmd.assert()
+        .success()
+        .code(0)
+        // Should show task-specific help
+        .stdout(predicate::str::contains("Run all examples"))
+        .stdout(predicate::str::contains("Usage: examples"))
+        // Should NOT run the task (no example output)
+        .stdout(predicate::str::contains("Running example").not());
+}
+
+#[test]
+fn test_foreach_task_help_with_short_flag() {
+    let temp = tempdir().unwrap();
+    let ottofile_path = temp.path().join("otto.yml");
+    let mut file = fs::File::create(&ottofile_path).unwrap();
+    writeln!(
+        file,
+        r#"
+otto:
+  api: 1
+tasks:
+  examples:
+    help: Run all examples
+    foreach:
+      items: [one, two, three]
+      as: item
+    bash: |
+      echo "Running example: $item"
+"#
+    )
+    .unwrap();
+
+    let mut cmd = cargo_bin_cmd!("otto");
+    cmd.current_dir(&temp).args(["examples", "-h"]);
+
+    cmd.assert()
+        .success()
+        .code(0)
+        // Should show task-specific help
+        .stdout(predicate::str::contains("Run all examples"))
+        .stdout(predicate::str::contains("Usage: examples"))
+        // Should NOT run the task
+        .stdout(predicate::str::contains("Running example").not());
+}
+
+#[test]
+fn test_task_with_params_help_shows_params() {
+    let temp = tempdir().unwrap();
+    let ottofile_path = temp.path().join("otto.yml");
+    let mut file = fs::File::create(&ottofile_path).unwrap();
+    writeln!(
+        file,
+        r#"
+otto:
+  api: 1
+tasks:
+  deploy:
+    help: Deploy the application
+    params:
+      --env:
+        help: Target environment
+        default: dev
+      --verbose:
+        help: Enable verbose output
+    bash: echo "Deploying to $env"
+"#
+    )
+    .unwrap();
+
+    let mut cmd = cargo_bin_cmd!("otto");
+    cmd.current_dir(&temp).args(["deploy", "--help"]);
+
+    cmd.assert()
+        .success()
+        .code(0)
+        // Should show task help
+        .stdout(predicate::str::contains("Deploy the application"))
+        // Should show params
+        .stdout(predicate::str::contains("--env"))
+        .stdout(predicate::str::contains("Target environment"))
+        .stdout(predicate::str::contains("--verbose"))
+        .stdout(predicate::str::contains("Enable verbose output"))
+        // Should NOT run the task
+        .stdout(predicate::str::contains("Deploying to").not());
+}

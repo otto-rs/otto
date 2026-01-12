@@ -494,9 +494,16 @@ impl Parser {
     fn should_show_help(&self, args: &[String]) -> bool {
         // Show help if:
         // 1. Explicit help command: "otto help" or "otto help <task>"
-        // 2. No args AND no default tasks defined
+        // 2. Task with --help or -h flag: "otto <task> --help"
+        // 3. No args AND no default tasks defined
         if !args.is_empty() {
-            return args[0] == "help";
+            if args[0] == "help" {
+                return true;
+            }
+            // Check if --help or -h is present (subcommand help)
+            if args.contains(&"--help".to_string()) || args.contains(&"-h".to_string()) {
+                return true;
+            }
         }
 
         let default_tasks = &self.config_spec.otto.tasks;
@@ -516,13 +523,22 @@ impl Parser {
         } else if args.len() == 2 && args[0] == "help" {
             // "otto help <task>" - show task-specific help
             let task_name = &args[1];
-            if let Some(task) = self.config_spec.tasks.get(task_name) {
-                let mut task_cmd = Self::task_to_command(task);
-                task_cmd.print_help()?;
-            } else {
-                eprintln!("Task '{task_name}' not found");
-                std::process::exit(1);
-            }
+            self.show_task_help(task_name)?;
+        } else if args.contains(&"--help".to_string()) || args.contains(&"-h".to_string()) {
+            // "otto <task> --help" or "otto <task> -h" - show task-specific help
+            let task_name = &args[0];
+            self.show_task_help(task_name)?;
+        }
+        Ok(())
+    }
+
+    fn show_task_help(&self, task_name: &str) -> Result<()> {
+        if let Some(task) = self.config_spec.tasks.get(task_name) {
+            let mut task_cmd = Self::task_to_command_for_help(task, Some(&self.cwd));
+            task_cmd.print_help()?;
+        } else {
+            eprintln!("Task '{task_name}' not found");
+            std::process::exit(1);
         }
         Ok(())
     }
