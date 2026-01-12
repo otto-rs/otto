@@ -650,8 +650,11 @@ impl Parser {
             })
         };
 
+        // Step 0.4: Check which requested tasks have --Serial flag
+        let serial_tasks: HashSet<String> = self.detect_serial_tasks(requested_tasks);
+
         // Step 0.5: Expand foreach tasks into subtasks
-        let expanded_tasks = self.expand_foreach_tasks()?;
+        let expanded_tasks = self.expand_foreach_tasks_with_serial(&serial_tasks)?;
 
         // Step 1: Compute all task dependencies using simple linear algorithm
         let task_deps = Self::compute_task_deps_from_specs(&expanded_tasks)?;
@@ -776,11 +779,31 @@ impl Parser {
         Ok(task_deps)
     }
 
+    /// Detect which requested tasks have --Serial flag in their arguments
+    fn detect_serial_tasks(&self, requested_tasks: &[String]) -> HashSet<String> {
+        let mut serial_tasks = HashSet::new();
+
+        for task_name in requested_tasks {
+            // Find partition for this task
+            if let Some(args) = self.pargs.iter().find(|args| !args.is_empty() && args[0] == *task_name) {
+                // Check if --Serial is present
+                if args.contains(&"--Serial".to_string()) {
+                    serial_tasks.insert(task_name.clone());
+                }
+            }
+        }
+
+        serial_tasks
+    }
+
     /// Expand all foreach tasks into their subtasks.
+    ///
     /// Returns a new task specs map with:
     /// - Non-foreach tasks unchanged
     /// - Foreach tasks replaced by: virtual parent + N subtasks
-    fn expand_foreach_tasks(&self) -> Result<HashMap<String, TaskSpec>> {
+    ///
+    /// When a task is in serial_tasks, subtasks are chained sequentially.
+    fn expand_foreach_tasks_with_serial(&self, serial_tasks: &HashSet<String>) -> Result<HashMap<String, TaskSpec>> {
         use crate::cfg::task::TaskSpecs;
 
         let mut expanded: TaskSpecs = HashMap::new();
@@ -800,11 +823,24 @@ impl Parser {
                 let parent = spec.as_virtual_parent();
                 expanded.insert(name.clone(), parent);
 
+                // Check if this task should run serially
+                let run_serial = serial_tasks.contains(name);
+
                 // Add all subtasks
                 // Each subtask depends on the parent's dependencies
+                let mut prev_subtask_name: Option<String> = None;
                 for mut subtask in subtasks {
                     // Subtask inherits parent's before dependencies
                     subtask.before = spec.before.clone();
+
+                    // If running serially, chain subtasks: each depends on the previous
+                    if run_serial {
+                        if let Some(prev_name) = &prev_subtask_name {
+                            subtask.before.push(prev_name.clone());
+                        }
+                        prev_subtask_name = Some(subtask.name.clone());
+                    }
+
                     expanded.insert(subtask.name.clone(), subtask);
                 }
             } else {
@@ -890,6 +926,16 @@ impl Parser {
         for param_spec in task_spec.params.values() {
             let arg = Self::param_to_arg(param_spec);
             cmd = cmd.arg(arg);
+        }
+
+        // Auto-inject --Serial flag for foreach tasks
+        if task_spec.has_foreach() {
+            cmd = cmd.arg(
+                Arg::new("Serial")
+                    .long("Serial")
+                    .help("[builtin] Run subtasks sequentially instead of in parallel")
+                    .action(clap::ArgAction::SetTrue),
+            );
         }
 
         cmd
@@ -1590,10 +1636,32 @@ impl Parser {
             let result = hasher.finalize();
             let hash = hex::encode(result)[..8].to_string();
             let config_spec: ConfigSpec = serde_yaml::from_str(&content)?;
+
+            // Validate that no tasks use reserved builtin param names
+            Self::validate_no_builtin_params(&config_spec)?;
+
             Ok((config_spec, hash, Some(ottofile)))
         } else {
             Err(eyre!("{}", ottofile_not_found_message()))
         }
+    }
+
+    fn validate_no_builtin_params(config: &ConfigSpec) -> Result<()> {
+        use crate::cli::builtins::is_builtin_param;
+
+        for (task_name, task_spec) in &config.tasks {
+            for param_name in task_spec.params.keys() {
+                if is_builtin_param(param_name) {
+                    return Err(eyre!(
+                        "Task '{}' defines reserved builtin param '--{}'. \
+                         Capitalized params are reserved for otto builtins.",
+                        task_name,
+                        param_name
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }
 

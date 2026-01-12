@@ -444,3 +444,92 @@ tasks:
         // Should NOT run the task
         .stdout(predicate::str::contains("Deploying to").not());
 }
+
+#[test]
+fn test_foreach_task_help_shows_builtin_serial_flag() {
+    let temp = tempdir().unwrap();
+    let ottofile_path = temp.path().join("otto.yml");
+    let mut file = fs::File::create(&ottofile_path).unwrap();
+    writeln!(
+        file,
+        r#"
+otto:
+  api: 1
+tasks:
+  examples:
+    help: Run all examples
+    foreach:
+      items: [one, two, three]
+      as: item
+    bash: echo "Running $item"
+"#
+    )
+    .unwrap();
+
+    let mut cmd = cargo_bin_cmd!("otto");
+    cmd.current_dir(&temp).args(["examples", "--help"]);
+
+    cmd.assert()
+        .success()
+        .code(0)
+        // Should show builtin --Serial flag
+        .stdout(predicate::str::contains("--Serial"))
+        .stdout(predicate::str::contains("[builtin]"));
+}
+
+#[test]
+fn test_non_foreach_task_does_not_have_serial_flag() {
+    let temp = tempdir().unwrap();
+    let ottofile_path = temp.path().join("otto.yml");
+    let mut file = fs::File::create(&ottofile_path).unwrap();
+    writeln!(
+        file,
+        r#"
+otto:
+  api: 1
+tasks:
+  build:
+    help: Build the project
+    bash: echo building
+"#
+    )
+    .unwrap();
+
+    let mut cmd = cargo_bin_cmd!("otto");
+    cmd.current_dir(&temp).args(["build", "--help"]);
+
+    cmd.assert()
+        .success()
+        .code(0)
+        // Should NOT have --Serial flag (not a foreach task)
+        .stdout(predicate::str::contains("--Serial").not());
+}
+
+#[test]
+fn test_reserved_builtin_param_errors_at_parse_time() {
+    let temp = tempdir().unwrap();
+    let ottofile_path = temp.path().join("otto.yml");
+    let mut file = fs::File::create(&ottofile_path).unwrap();
+    writeln!(
+        file,
+        r#"
+otto:
+  api: 1
+tasks:
+  test:
+    help: Test task
+    params:
+      --Serial:
+        help: My serial flag
+    bash: echo test
+"#
+    )
+    .unwrap();
+
+    let mut cmd = cargo_bin_cmd!("otto");
+    cmd.current_dir(&temp).args(["test"]);
+
+    cmd.assert()
+        .failure()
+        .stderr(predicate::str::contains("reserved builtin param"));
+}

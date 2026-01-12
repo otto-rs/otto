@@ -353,3 +353,76 @@ tasks:
     assert_eq!(task.envs.get("quiet").unwrap(), "false");
     assert_eq!(task.envs.get("env").unwrap(), "production");
 }
+
+#[test]
+#[serial]
+fn test_serial_flag_chains_foreach_subtasks() {
+    let temp_dir = TempDir::new().unwrap();
+    let otto_file = temp_dir.path().join("otto.yml");
+
+    let config = r#"
+otto:
+  api: 1
+  tasks: [examples]
+
+tasks:
+  examples:
+    help: Run examples
+    foreach:
+      items: [a, b, c, d]
+      as: item
+    bash: echo "${item}"
+    "#;
+
+    fs::write(&otto_file, config).unwrap();
+
+    // Without --Serial, subtasks should run in parallel (no dependencies between them)
+    let args_parallel = vec![
+        "otto".to_string(),
+        "-o".to_string(),
+        otto_file.to_string_lossy().to_string(),
+        "examples".to_string(),
+    ];
+
+    let mut parser = Parser::new(args_parallel).unwrap();
+    let (tasks_parallel, _, _, _, _) = parser.parse().unwrap();
+
+    // Subtasks should not depend on each other
+    for task in &tasks_parallel {
+        // Check that no subtask depends on another subtask (only parent deps)
+        for dep in &task.task_deps {
+            assert!(
+                !dep.starts_with("examples:"),
+                "Parallel subtasks should not depend on each other"
+            );
+        }
+    }
+
+    // With --Serial, subtasks should be chained (each depends on previous)
+    let args_serial = vec![
+        "otto".to_string(),
+        "-o".to_string(),
+        otto_file.to_string_lossy().to_string(),
+        "examples".to_string(),
+        "--Serial".to_string(),
+    ];
+
+    let mut parser = Parser::new(args_serial).unwrap();
+    let (tasks_serial, _, _, _, _) = parser.parse().unwrap();
+
+    // Collect subtask names and their dependencies
+    let subtasks: Vec<_> = tasks_serial
+        .iter()
+        .filter(|t| t.name.starts_with("examples:"))
+        .collect();
+
+    // Verify that at least some subtasks depend on other subtasks (chained)
+    let has_subtask_deps = subtasks
+        .iter()
+        .any(|t| t.task_deps.iter().any(|d| d.starts_with("examples:")));
+
+    assert!(
+        has_subtask_deps,
+        "Serial subtasks should have dependencies on previous subtasks"
+    );
+}

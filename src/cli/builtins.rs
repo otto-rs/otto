@@ -18,6 +18,17 @@ pub fn is_builtin(name: &str) -> bool {
     BUILTIN_COMMANDS.contains(&name)
 }
 
+/// Built-in params that are auto-injected on certain tasks (capitalized)
+///
+/// These params are automatically added by otto and cannot be defined by users.
+/// - Serial: Auto-injected on foreach tasks to allow sequential execution
+pub const BUILTIN_PARAMS: &[&str] = &["Serial"];
+
+/// Check if a param name is reserved for builtins
+pub fn is_builtin_param(name: &str) -> bool {
+    BUILTIN_PARAMS.contains(&name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -45,5 +56,24 @@ mod tests {
         // Random names should NOT match
         assert!(!is_builtin("test"));
         assert!(!is_builtin("build"));
+    }
+
+    #[test]
+    fn test_builtin_params_are_capitalized() {
+        for param in BUILTIN_PARAMS {
+            assert!(param.chars().next().unwrap().is_uppercase());
+        }
+    }
+
+    #[test]
+    fn test_is_builtin_param() {
+        assert!(is_builtin_param("Serial"));
+
+        // Lowercase should NOT match
+        assert!(!is_builtin_param("serial"));
+
+        // Random names should NOT match
+        assert!(!is_builtin_param("verbose"));
+        assert!(!is_builtin_param("format"));
     }
 }
