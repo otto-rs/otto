@@ -5,6 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 use super::task::{DAG, Task};
+use crate::cfg::task::{ForeachSpec, TaskSpecs};
 use crate::cli::Parser;
 
 /// Graph visualization options
@@ -121,10 +122,13 @@ impl DagVisualizer {
         let mut parser = Parser::new(args)?;
         let (all_tasks, _, _) = parser.parse_all_tasks()?;
 
+        // Get original task specs for foreach metadata lookup
+        let original_specs = parser.original_task_specs();
+
         let dag = Self::from_tasks(all_tasks)?;
 
         let visualizer = DagVisualizer::new(options);
-        let result = visualizer.visualize(&dag)?;
+        let result = visualizer.visualize(&dag, original_specs)?;
 
         println!("{result}");
 
@@ -194,15 +198,17 @@ impl DagVisualizer {
     }
 
     /// Visualize the DAG and save to file or display
-    pub fn visualize(&self, dag: &DAG<Task>) -> Result<String> {
+    pub fn visualize(&self, dag: &DAG<Task>, original_specs: &TaskSpecs) -> Result<String> {
         match self.options.format {
-            GraphFormat::Ascii => self.generate_ascii(dag),
+            GraphFormat::Ascii => self.generate_ascii(dag, original_specs),
             GraphFormat::Dot => self.generate_dot(dag),
-            GraphFormat::Svg | GraphFormat::Png | GraphFormat::Pdf | GraphFormat::Auto => self.generate_image(dag),
+            GraphFormat::Svg | GraphFormat::Png | GraphFormat::Pdf | GraphFormat::Auto => {
+                self.generate_image(dag, original_specs)
+            }
         }
     }
 
-    pub fn generate_image(&self, dag: &DAG<Task>) -> Result<String> {
+    pub fn generate_image(&self, dag: &DAG<Task>, original_specs: &TaskSpecs) -> Result<String> {
         let dot_content = self.generate_dot(dag)?;
 
         // Determine output format and path
@@ -216,7 +222,7 @@ impl DagVisualizer {
                 On Windows: Download from https://graphviz.org/download/\n\
                 \n\
                 Falling back to ASCII output:\n{}",
-                self.generate_ascii(dag)?
+                self.generate_ascii(dag, original_specs)?
             ));
         }
 
@@ -322,15 +328,15 @@ impl DagVisualizer {
         Ok(dot)
     }
 
-    pub fn generate_ascii(&self, dag: &DAG<Task>) -> Result<String> {
+    pub fn generate_ascii(&self, dag: &DAG<Task>, original_specs: &TaskSpecs) -> Result<String> {
         let mut output = String::new();
 
         output.push_str("┌─────────────────────────────────────┐\n");
         output.push_str("│           Otto Task DAG             │\n");
         output.push_str("└─────────────────────────────────────┘\n\n");
 
-        // Collapse foreach subtasks: group tasks like "examples:foo", "examples:bar" into "examples:* [N]"
-        let collapsed_tasks = Self::collapse_foreach_subtasks(dag);
+        // Collapse foreach subtasks: group tasks like "examples:foo", "examples:bar" into "examples:{...}"
+        let collapsed_tasks = Self::collapse_foreach_subtasks(dag, original_specs);
 
         // Find leaf tasks (tasks that nothing depends on - the top-level tasks you'd run)
         let mut leaf_tasks: Vec<_> = collapsed_tasks
@@ -372,7 +378,12 @@ impl DagVisualizer {
     }
 
     /// Collapse foreach subtasks into a single display entry
-    fn collapse_foreach_subtasks(dag: &DAG<Task>) -> HashMap<String, CollapsedTaskInfo> {
+    ///
+    /// Uses original_specs to determine display format based on ForeachSpec:
+    /// - For items: show `{item1,item2,...}` for small lists, `{...} [N items]` for large
+    /// - For glob: show `pattern [N items]`
+    /// - For range: show `start..end`
+    fn collapse_foreach_subtasks(dag: &DAG<Task>, original_specs: &TaskSpecs) -> HashMap<String, CollapsedTaskInfo> {
         let mut result: HashMap<String, CollapsedTaskInfo> = HashMap::new();
         let mut foreach_groups: HashMap<String, Vec<&Task>> = HashMap::new();
 
@@ -395,8 +406,20 @@ impl DagVisualizer {
                     let subtasks = foreach_groups.get(parent).unwrap();
                     let count = subtasks.len();
 
-                    // Infer the pattern from subtask names (e.g., all end in .rs -> *.rs)
-                    let pattern = Self::infer_subtask_pattern(subtasks);
+                    // Try to get display name from original ForeachSpec, fall back to inference
+                    let display_name = if let Some(parent_spec) = original_specs.get(parent) {
+                        if let Some(foreach_spec) = parent_spec.foreach.as_ref() {
+                            Self::format_foreach_display(parent, foreach_spec, count)
+                        } else {
+                            // No foreach spec - use inference fallback
+                            let pattern = Self::infer_subtask_pattern(subtasks);
+                            format!("{}:{} [{} items]", parent, pattern, count)
+                        }
+                    } else {
+                        // Parent not found in original specs - use inference fallback
+                        let pattern = Self::infer_subtask_pattern(subtasks);
+                        format!("{}:{} [{} items]", parent, pattern, count)
+                    };
 
                     // Get deps from first subtask (they should all be the same, minus internal deps)
                     let deps: Vec<String> = subtasks
@@ -413,7 +436,7 @@ impl DagVisualizer {
                     result.insert(
                         parent.to_string(),
                         CollapsedTaskInfo {
-                            display_name: format!("{}:{} [{} items]", parent, pattern, count),
+                            display_name,
                             deps,
                             file_deps_count: subtasks.first().map(|t| t.file_deps.len()).unwrap_or(0),
                             output_deps_count: subtasks.first().map(|t| t.output_deps.len()).unwrap_or(0),
@@ -435,6 +458,38 @@ impl DagVisualizer {
         }
 
         result
+    }
+
+    /// Format the display name for a foreach task based on its ForeachSpec
+    ///
+    /// - For items: `parent:{item1,item2,...}` for ≤6 items, `parent:{...} [N items]` for more
+    /// - For glob: `parent:pattern [N items]`
+    /// - For range: `parent:start..end`
+    fn format_foreach_display(parent: &str, foreach: &ForeachSpec, count: usize) -> String {
+        if let Some(ref glob) = foreach.glob {
+            // Glob notation: examples:*.sh [8 items]
+            format!("{}:{} [{} items]", parent, glob, count)
+        } else if !foreach.items.is_empty() {
+            // Check for special characters that would break brace notation
+            let has_special_chars = foreach
+                .items
+                .iter()
+                .any(|item| item.contains(',') || item.contains('{') || item.contains('}'));
+
+            if has_special_chars || foreach.items.len() > 6 {
+                // Too many items or special chars: install:{...} [15 items]
+                format!("{}:{{...}} [{} items]", parent, foreach.items.len())
+            } else {
+                // Brace notation for small lists: install:{td,ts,cs}
+                format!("{}:{{{}}}", parent, foreach.items.join(","))
+            }
+        } else if let Some(ref range) = foreach.range {
+            // Range notation: batch:1..10
+            format!("{}:{}", parent, range)
+        } else {
+            // Fallback
+            format!("{}:* [{} items]", parent, count)
+        }
     }
 
     /// Infer the glob pattern from subtask names
@@ -671,8 +726,8 @@ impl DagVisualizer {
         Ok(())
     }
 
-    pub fn write_ascii_file(&self, dag: &DAG<Task>, path: &Path) -> Result<()> {
-        let ascii_content = self.generate_ascii(dag)?;
+    pub fn write_ascii_file(&self, dag: &DAG<Task>, original_specs: &TaskSpecs, path: &Path) -> Result<()> {
+        let ascii_content = self.generate_ascii(dag, original_specs)?;
         std::fs::write(path, ascii_content)?;
         Ok(())
     }
@@ -736,7 +791,8 @@ mod tests {
         dag.add_node(task3);
 
         let visualizer = DagVisualizer::with_defaults();
-        let ascii = visualizer.generate_ascii(&dag)?;
+        let empty_specs = TaskSpecs::new();
+        let ascii = visualizer.generate_ascii(&dag, &empty_specs)?;
 
         assert!(ascii.contains("Otto Task DAG"));
         assert!(ascii.contains("setup"));
@@ -822,11 +878,118 @@ mod tests {
         dag.add_node(task3);
 
         let visualizer = DagVisualizer::with_defaults();
-        let ascii = visualizer.generate_ascii(&dag)?;
+        // Empty specs falls back to pattern inference (*.rs)
+        let empty_specs = TaskSpecs::new();
+        let ascii = visualizer.generate_ascii(&dag, &empty_specs)?;
 
-        // Should show collapsed pattern, not individual subtasks
+        // Should show collapsed pattern inferred from extensions, not individual subtasks
         assert!(ascii.contains("examples:*.rs [3 items]"));
         assert!(!ascii.contains("04_task_manager_api.rs"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_foreach_display_items_small() {
+        let foreach = ForeachSpec {
+            items: vec!["td".to_string(), "ts".to_string(), "cs".to_string()],
+            ..Default::default()
+        };
+        let display = DagVisualizer::format_foreach_display("install", &foreach, 3);
+        assert_eq!(display, "install:{td,ts,cs}");
+    }
+
+    #[test]
+    fn test_format_foreach_display_items_large() {
+        let foreach = ForeachSpec {
+            items: vec![
+                "a".to_string(),
+                "b".to_string(),
+                "c".to_string(),
+                "d".to_string(),
+                "e".to_string(),
+                "f".to_string(),
+                "g".to_string(),
+            ],
+            ..Default::default()
+        };
+        let display = DagVisualizer::format_foreach_display("batch", &foreach, 7);
+        assert_eq!(display, "batch:{...} [7 items]");
+    }
+
+    #[test]
+    fn test_format_foreach_display_glob() {
+        let foreach = ForeachSpec {
+            glob: Some("*.sh".to_string()),
+            ..Default::default()
+        };
+        let display = DagVisualizer::format_foreach_display("scripts", &foreach, 8);
+        assert_eq!(display, "scripts:*.sh [8 items]");
+    }
+
+    #[test]
+    fn test_format_foreach_display_range() {
+        let foreach = ForeachSpec {
+            range: Some("1-10".to_string()),
+            ..Default::default()
+        };
+        let display = DagVisualizer::format_foreach_display("batch", &foreach, 10);
+        assert_eq!(display, "batch:1-10");
+    }
+
+    #[test]
+    fn test_format_foreach_display_items_with_special_chars() {
+        // Items with commas should fall back to {...} notation
+        let foreach = ForeachSpec {
+            items: vec!["a,b".to_string(), "c,d".to_string()],
+            ..Default::default()
+        };
+        let display = DagVisualizer::format_foreach_display("special", &foreach, 2);
+        assert_eq!(display, "special:{...} [2 items]");
+    }
+
+    #[test]
+    fn test_collapse_with_original_specs() -> Result<()> {
+        use crate::cfg::param::ParamSpecs;
+        use crate::cfg::task::TaskSpec;
+
+        let mut dag = DAG::new();
+
+        let task1 = create_test_task("install:td", vec![]);
+        let task2 = create_test_task("install:ts", vec![]);
+        let task3 = create_test_task("install:cs", vec![]);
+
+        dag.add_node(task1);
+        dag.add_node(task2);
+        dag.add_node(task3);
+
+        // Create original specs with ForeachSpec
+        let mut original_specs = TaskSpecs::new();
+        original_specs.insert(
+            "install".to_string(),
+            TaskSpec {
+                name: "install".to_string(),
+                help: None,
+                before: vec![],
+                after: vec![],
+                input: vec![],
+                output: vec![],
+                envs: HashMap::new(),
+                params: ParamSpecs::default(),
+                action: "echo test".to_string(),
+                foreach: Some(ForeachSpec {
+                    items: vec!["td".to_string(), "ts".to_string(), "cs".to_string()],
+                    ..Default::default()
+                }),
+            },
+        );
+
+        let visualizer = DagVisualizer::with_defaults();
+        let ascii = visualizer.generate_ascii(&dag, &original_specs)?;
+
+        // Should use brace notation from ForeachSpec
+        assert!(ascii.contains("install:{td,ts,cs}"));
+        assert!(!ascii.contains("install:* [3 items]")); // Should NOT fall back to inference
 
         Ok(())
     }

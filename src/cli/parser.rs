@@ -19,6 +19,7 @@ use sha2::{Digest, Sha256};
 use crate::cfg::config::{ConfigSpec, ParamSpec, TaskSpec, Value};
 use crate::cfg::env as env_eval;
 use crate::cfg::param::ParamType;
+use crate::cfg::task::TaskSpecs;
 use crate::cli::builtins::BUILTIN_COMMANDS;
 
 pub type DAG<T> = Dag<T, (), u32>;
@@ -247,6 +248,15 @@ impl Parser {
     /// ottofile location, not the user's current working directory.
     fn base_dir(&self) -> &Path {
         self.ottofile.as_ref().and_then(|p| p.parent()).unwrap_or(&self.cwd)
+    }
+
+    /// Returns a reference to the original task specs from the ottofile.
+    ///
+    /// This provides access to the raw TaskSpecs including ForeachSpec metadata,
+    /// before foreach expansion. Useful for graph visualization to determine
+    /// how to display collapsed subtask groups (e.g., showing glob pattern vs items list).
+    pub fn original_task_specs(&self) -> &TaskSpecs {
+        &self.config_spec.tasks
     }
 
     #[allow(clippy::type_complexity)]
