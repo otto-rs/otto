@@ -33,6 +33,7 @@ async fn test_task_execution_with_output() -> Result<()> {
 
     let task_spec = Task::new(
         "test_task".to_string(),
+        None,
         vec![],
         vec![],
         vec![],
@@ -62,6 +63,7 @@ async fn test_task_dependencies() -> Result<()> {
 
     let task1_spec = Task::new(
         "task1".to_string(),
+        None,
         vec![],
         vec![],
         vec![],
@@ -72,6 +74,7 @@ async fn test_task_dependencies() -> Result<()> {
 
     let task2_spec = Task::new(
         "task2".to_string(),
+        None,
         vec!["task1".to_string()],
         vec![],
         vec![],
@@ -82,6 +85,7 @@ async fn test_task_dependencies() -> Result<()> {
 
     let task3_spec = Task::new(
         "task3".to_string(),
+        None,
         vec!["task2".to_string()],
         vec![],
         vec![],
@@ -118,6 +122,7 @@ async fn test_task_failure() -> Result<()> {
 
     let task_spec = Task::new(
         "failing_task".to_string(),
+        None,
         vec![],
         vec![],
         vec![],
@@ -148,6 +153,7 @@ async fn test_output_capture() -> Result<()> {
 
     let task_spec = Task::new(
         "output_test".to_string(),
+        None,
         vec![],
         vec![],
         vec![],
@@ -179,6 +185,7 @@ async fn test_dependency_ordering() -> Result<()> {
 
     let task1_spec = Task::new(
         "task1".to_string(),
+        None,
         vec!["task2".to_string(), "task3".to_string()],
         vec![],
         vec![],
@@ -189,6 +196,7 @@ async fn test_dependency_ordering() -> Result<()> {
 
     let task2_spec = Task::new(
         "task2".to_string(),
+        None,
         vec!["task4".to_string()],
         vec![],
         vec![],
@@ -199,6 +207,7 @@ async fn test_dependency_ordering() -> Result<()> {
 
     let task3_spec = Task::new(
         "task3".to_string(),
+        None,
         vec!["task4".to_string()],
         vec![],
         vec![],
@@ -209,6 +218,7 @@ async fn test_dependency_ordering() -> Result<()> {
 
     let task4_spec = Task::new(
         "task4".to_string(),
+        None,
         vec![],
         vec![],
         vec![],
@@ -254,6 +264,7 @@ async fn test_parallel_execution() -> Result<()> {
 
     let task1_spec = Task::new(
         "parallel1".to_string(),
+        None,
         vec![],
         vec![],
         vec![],
@@ -264,6 +275,7 @@ async fn test_parallel_execution() -> Result<()> {
 
     let task2_spec = Task::new(
         "parallel2".to_string(),
+        None,
         vec![],
         vec![],
         vec![],

@@ -14,6 +14,8 @@ pub type DAG<T> = Dag<T, (), u32>;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Task {
     pub name: String,
+    /// Parent task name for foreach subtasks (e.g., "install" for "install:td")
+    pub parent: Option<String>,
     pub task_deps: Vec<String>,
     pub file_deps: Vec<String>,
     pub output_deps: Vec<String>,
@@ -25,8 +27,10 @@ pub struct Task {
 
 impl Task {
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: String,
+        parent: Option<String>,
         task_deps: Vec<String>,
         file_deps: Vec<String>,
         output_deps: Vec<String>,
@@ -37,6 +41,7 @@ impl Task {
         let hash = calculate_hash(&action);
         Self {
             name,
+            parent,
             task_deps,
             file_deps,
             output_deps,
@@ -71,6 +76,13 @@ impl Task {
         let name = task_spec.name.clone();
         let task_deps = task_spec.before.clone();
 
+        // Derive parent for subtasks (names with colons like "install:td")
+        let parent = if name.contains(':') {
+            name.split(':').next().map(|s| s.to_string())
+        } else {
+            None
+        };
+
         // Resolve file globs from input to canonical paths using explicit cwd
         let file_deps = Self::resolve_file_globs(&task_spec.input, cwd);
 
@@ -86,7 +98,16 @@ impl Task {
         // The after dependencies will be handled during DAG construction
         let values = HashMap::new();
         let action = task_spec.action.trim().to_string(); // Trim whitespace from script content
-        Self::new(name, task_deps, file_deps, output_deps, evaluated_envs, values, action)
+        Self::new(
+            name,
+            parent,
+            task_deps,
+            file_deps,
+            output_deps,
+            evaluated_envs,
+            values,
+            action,
+        )
     }
 
     /// Evaluate and merge environment variables from global and task-level sources
@@ -210,6 +231,7 @@ mod tests {
     fn test_task_new() {
         let task = Task::new(
             "build".to_string(),
+            None,
             vec!["test".to_string()],
             vec!["src/main.rs".to_string()],
             vec!["target/app".to_string()],
@@ -219,6 +241,7 @@ mod tests {
         );
 
         assert_eq!(task.name, "build");
+        assert_eq!(task.parent, None);
         assert_eq!(task.task_deps, vec!["test"]);
         assert_eq!(task.file_deps, vec!["src/main.rs"]);
         assert_eq!(task.output_deps, vec!["target/app"]);
@@ -236,6 +259,7 @@ mod tests {
 
         let task = Task::new(
             "test".to_string(),
+            None,
             vec![],
             vec![],
             vec![],
@@ -252,6 +276,7 @@ mod tests {
     fn test_task_equality() {
         let task1 = Task::new(
             "build".to_string(),
+            None,
             vec![],
             vec![],
             vec![],
@@ -262,6 +287,7 @@ mod tests {
 
         let task2 = Task::new(
             "build".to_string(),
+            None,
             vec![],
             vec![],
             vec![],
@@ -413,5 +439,32 @@ mod tests {
 
         // Action should be trimmed
         assert_eq!(task.action, "echo test");
+    }
+
+    #[test]
+    fn test_subtask_has_parent_field() {
+        // Test that subtasks (names with colons) get parent field set
+        let task_spec = make_task_spec("install:td", vec![], "echo test");
+        let task = Task::from_task(&task_spec);
+
+        assert_eq!(task.parent, Some("install".to_string()));
+    }
+
+    #[test]
+    fn test_regular_task_has_no_parent() {
+        // Test that regular tasks (no colons) have parent = None
+        let task_spec = make_task_spec("build", vec![], "echo build");
+        let task = Task::from_task(&task_spec);
+
+        assert_eq!(task.parent, None);
+    }
+
+    #[test]
+    fn test_nested_colon_parent() {
+        // Test that nested colon names extract first segment as parent
+        let task_spec = make_task_spec("group:sub:item", vec![], "echo nested");
+        let task = Task::from_task(&task_spec);
+
+        assert_eq!(task.parent, Some("group".to_string()));
     }
 }

@@ -884,6 +884,7 @@ mod tests {
 
         let task = Task::new(
             "test".to_string(),
+            None,
             vec![],
             vec![],
             vec![],
@@ -913,6 +914,7 @@ mod tests {
         let tasks = vec![
             Task::new(
                 "task1".to_string(),
+                None,
                 vec!["task2".to_string()],
                 vec![],
                 vec![],
@@ -922,6 +924,7 @@ mod tests {
             ),
             Task::new(
                 "task2".to_string(),
+                None,
                 vec![],
                 vec![],
                 vec![],
@@ -955,6 +958,7 @@ mod tests {
         let tasks = vec![
             Task::new(
                 "task1".to_string(),
+                None,
                 vec![],
                 vec![],
                 vec![],
@@ -964,6 +968,7 @@ mod tests {
             ),
             Task::new(
                 "task2".to_string(),
+                None,
                 vec!["task1".to_string()],
                 vec![],
                 vec![],
@@ -996,6 +1001,7 @@ mod tests {
 
         let task = Task::new(
             "copy_task".to_string(),
+            None,
             vec![],
             vec![input_file.to_string_lossy().to_string()],
             vec![output_file.to_string_lossy().to_string()],
@@ -1076,6 +1082,7 @@ mod tests {
 
         let task = Task::new(
             "test_nonexistent".to_string(),
+            None,
             vec![],
             vec![nonexistent_file.to_string_lossy().to_string()],
             vec![output_file.to_string_lossy().to_string()],
@@ -1123,6 +1130,7 @@ mod tests {
 
         let task = Task::new(
             "multi_files".to_string(),
+            None,
             vec![],
             vec![
                 input1.to_string_lossy().to_string(),
@@ -1201,6 +1209,7 @@ mod tests {
 
         let task1 = Task::new(
             "step1".to_string(),
+            None,
             vec![],
             vec![input_file.to_string_lossy().to_string()],
             vec![intermediate_file.to_string_lossy().to_string()],
@@ -1211,6 +1220,7 @@ mod tests {
 
         let task2 = Task::new(
             "step2".to_string(),
+            None,
             vec!["step1".to_string()],                             // Task dependency
             vec![intermediate_file.to_string_lossy().to_string()], // File dependency
             vec![output_file.to_string_lossy().to_string()],
@@ -1265,6 +1275,7 @@ mod tests {
 
         let task = Task::new(
             "timestamp_test".to_string(),
+            None,
             vec![],
             vec![input_file.to_string_lossy().to_string()],
             vec![output_file.to_string_lossy().to_string()],
@@ -1301,6 +1312,7 @@ mod tests {
         // Task with no file dependencies
         let task = Task::new(
             "no_file_deps".to_string(),
+            None,
             vec![],
             vec![], // No input files
             vec![], // No output files
@@ -1343,6 +1355,7 @@ mod tests {
 
         let task = Task::new(
             "dir_input".to_string(),
+            None,
             vec![],
             vec![src_dir.to_string_lossy().to_string()], // Directory as input
             vec![output_file.to_string_lossy().to_string()],
@@ -1391,6 +1404,7 @@ mod tests {
 
         let task = Task::new(
             "many_inputs".to_string(),
+            None,
             vec![],
             input_files,
             vec![output_file.to_string_lossy().to_string()],
@@ -1440,6 +1454,7 @@ mod tests {
         // Task that uses its output as input (circular dependency)
         let task = Task::new(
             "circular".to_string(),
+            None,
             vec![],
             vec![file_a.to_string_lossy().to_string()],
             vec![file_a.to_string_lossy().to_string()], // Same file as input and output
@@ -1481,6 +1496,7 @@ mod tests {
 
         let task = Task::new(
             "real_execution".to_string(),
+            None,
             vec![],
             vec![input_file.to_string_lossy().to_string()],
             vec![output_file.to_string_lossy().to_string()],
@@ -1536,6 +1552,7 @@ mod tests {
         for i in 1..=4 {
             let task = Task::new(
                 format!("task{i}"),
+                None,
                 vec![],
                 vec![],
                 vec![],
@@ -1578,6 +1595,7 @@ mod tests {
 
             let tasks = vec![Task::new(
                 "test".to_string(),
+                None,
                 vec![],
                 vec![],
                 vec![],
@@ -1616,6 +1634,7 @@ mod tests {
 
         let task = Task::new(
             "skip_test".to_string(),
+            None,
             vec![],
             vec![input_file.to_string_lossy().to_string()],
             vec![output_file.to_string_lossy().to_string()],
@@ -1657,6 +1676,7 @@ mod tests {
 
         let task = Task::new(
             "tui_test".to_string(),
+            None,
             vec![],
             vec![],
             vec![],
@@ -1725,6 +1745,7 @@ mod tests {
 
         let task = Task::new(
             "duration_test".to_string(),
+            None,
             vec![],
             vec![],
             vec![],
@@ -1792,6 +1813,7 @@ mod tests {
         // Create a task with a file dependency in a path that will cause issues
         let task = Task::new(
             "error_test".to_string(),
+            None,
             vec![],
             vec!["/dev/null/impossible/path".to_string()],
             vec![work_dir.join("output.txt").to_string_lossy().to_string()],
@@ -1831,6 +1853,7 @@ mod tests {
             // Task that will be skipped (output up to date)
             Task::new(
                 "skip_task".to_string(),
+                None,
                 vec![],
                 vec![input1.to_string_lossy().to_string()],
                 vec![output1.to_string_lossy().to_string()],
@@ -1841,6 +1864,7 @@ mod tests {
             // Task that will run
             Task::new(
                 "run_task".to_string(),
+                None,
                 vec![],
                 vec![],
                 vec![],
@@ -1851,6 +1875,7 @@ mod tests {
             // Task with dependency on both
             Task::new(
                 "dependent_task".to_string(),
+                None,
                 vec!["skip_task".to_string(), "run_task".to_string()],
                 vec![],
                 vec![],

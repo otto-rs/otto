@@ -763,6 +763,7 @@ mod tests {
 
         let task = Task::new(
             "test_task".to_string(),
+            None,
             vec!["dep_task".to_string()],
             vec![],
             vec![],
@@ -820,6 +821,7 @@ mod tests {
 
         let task = Task::new(
             "test_task".to_string(),
+            None,
             vec!["dep_task".to_string()],
             vec![],
             vec![],
@@ -877,6 +879,7 @@ mod tests {
 
         let task = Task::new(
             "test_task".to_string(),
+            None,
             vec![],
             vec![],
             vec![],

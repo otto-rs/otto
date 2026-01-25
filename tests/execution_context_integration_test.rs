@@ -93,8 +93,15 @@ tasks:
         let executor_tasks: Vec<otto::executor::Task> = execution_tasks
             .into_iter()
             .map(|parser_task| {
+                // Derive parent for subtasks (names with colons like "install:td")
+                let parent = if parser_task.name.contains(':') {
+                    parser_task.name.split(':').next().map(|s| s.to_string())
+                } else {
+                    None
+                };
                 otto::executor::Task::new(
                     parser_task.name,
+                    parent,
                     parser_task.task_deps,
                     parser_task.file_deps,
                     parser_task.output_deps,
