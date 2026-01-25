@@ -1,0 +1,79 @@
+# Example: Subtask Targeting
+#
+# This example demonstrates how to run specific subtasks from a foreach task,
+# rather than running all subtasks.
+#
+# Key features demonstrated:
+#   1. Running ONE specific subtask: `otto install:typescript`
+#   2. Running ALL subtasks via parent: `otto install`
+#   3. Task depending on specific subtask: `otto deploy` only needs `install:typescript`
+#   4. Graph display showing `install:{golang,python,typescript}` notation
+#
+# Try these commands:
+#   otto install              # Runs ALL: install:golang, install:python, install:typescript
+#   otto install:typescript   # Runs ONLY install:typescript
+#   otto install:python       # Runs ONLY install:python
+#   otto deploy               # Runs install:typescript (dependency), then deploy
+#   otto Graph                # Shows task graph with improved notation
+
+otto:
+  api: 1
+  tasks:
+    - ci
+
+tasks:
+  # A foreach task that installs different language toolchains
+  install:
+    help: Install language toolchains (run all with `otto install`, or one with `otto install:python`)
+    foreach:
+      items:
+        - golang
+        - python
+        - typescript
+      as: lang
+    bash: |
+      echo "=== Installing ${lang} toolchain ==="
+      sleep 0.2
+      echo "  Downloading ${lang}..."
+      sleep 0.1
+      echo "  Configuring ${lang}..."
+      sleep 0.1
+      echo "  ${lang} installed successfully!"
+
+  # A task that only depends on ONE specific subtask
+  # This demonstrates that `deploy` doesn't need golang or python installed
+  deploy:
+    help: Deploy the TypeScript app (only needs typescript toolchain)
+    before:
+      - install:typescript
+    bash: |
+      echo "=== Deploying TypeScript application ==="
+      echo "  (Note: only install:typescript ran, not install:golang or install:python)"
+      sleep 0.2
+      echo "  Deployment complete!"
+
+  # A task that depends on multiple specific subtasks (but not all)
+  test-backend:
+    help: Run backend tests (needs golang and python)
+    before:
+      - install:golang
+      - install:python
+    bash: |
+      echo "=== Running backend tests ==="
+      echo "  Testing Go services..."
+      sleep 0.1
+      echo "  Testing Python services..."
+      sleep 0.1
+      echo "  All backend tests passed!"
+
+  # Full CI pipeline that runs everything
+  ci:
+    help: Full CI pipeline
+    before:
+      - install
+      - test-backend
+      - deploy
+    bash: |
+      echo ""
+      echo "=== CI Complete ==="
+      echo "All tasks finished successfully!"
