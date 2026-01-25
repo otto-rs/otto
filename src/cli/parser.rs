@@ -834,8 +834,8 @@ impl Parser {
                 let parent = spec.as_virtual_parent();
                 expanded.insert(name.clone(), parent);
 
-                // Check if this task should run serially
-                let run_serial = serial_tasks.contains(name);
+                // Check if this task should run serially (CLI --Serial flag OR config parallel: false)
+                let run_serial = serial_tasks.contains(name) || spec.foreach.as_ref().is_some_and(|f| !f.parallel);
 
                 // Add all subtasks
                 // Each subtask depends on the parent's dependencies
@@ -894,11 +894,14 @@ impl Parser {
         }
 
         // Collect subtasks for foreach parent tasks
-        // Subtasks have names like "parent:subtask_id"
-        let prefix = format!("{}:", task_name);
-        for subtask_name in task_specs.keys() {
-            if subtask_name.starts_with(&prefix) {
-                Self::collect_transitive_deps(subtask_name, task_deps, task_specs, collected)?;
+        // Only expand subtasks if this is a parent task (no colon in name)
+        // If user requests "install:td", don't also collect install:ts, install:cs
+        if !task_name.contains(':') {
+            let prefix = format!("{}:", task_name);
+            for subtask_name in task_specs.keys() {
+                if subtask_name.starts_with(&prefix) {
+                    Self::collect_transitive_deps(subtask_name, task_deps, task_specs, collected)?;
+                }
             }
         }
 
@@ -2197,5 +2200,693 @@ mod tests {
         assert!(collected.contains("a"));
         assert!(collected.contains("b"));
         assert_eq!(collected.len(), 2);
+    }
+
+    // Tests for foreach parallel: false feature
+
+    #[test]
+    fn test_foreach_subtasks_chained_when_parallel_false() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let ottofile_path = temp_dir.path().join("otto.yml");
+
+        // Create an ottofile with parallel: false
+        let config = r#"
+tasks:
+  install:
+    foreach:
+      items: [a, b, c]
+      as: pkg
+      parallel: false
+    bash: echo ${pkg}
+"#;
+        fs::write(&ottofile_path, config).unwrap();
+
+        let args = vec![
+            "otto".to_string(),
+            "--ottofile".to_string(),
+            ottofile_path.to_string_lossy().to_string(),
+            "install".to_string(),
+        ];
+
+        let mut parser = Parser::new(args).unwrap();
+        let result = parser.parse().unwrap();
+        let (tasks, _, _, _, _) = result;
+
+        // Find the subtasks and verify they are chained
+        let subtask_a = tasks.iter().find(|t| t.name == "install:a");
+        let subtask_b = tasks.iter().find(|t| t.name == "install:b");
+        let subtask_c = tasks.iter().find(|t| t.name == "install:c");
+
+        assert!(subtask_a.is_some(), "subtask install:a should exist");
+        assert!(subtask_b.is_some(), "subtask install:b should exist");
+        assert!(subtask_c.is_some(), "subtask install:c should exist");
+
+        // With parallel: false, subtasks should be chained:
+        // - install:a has no subtask dependency (first in chain)
+        // - install:b depends on install:a
+        // - install:c depends on install:b
+        let _a = subtask_a.unwrap();
+        let b = subtask_b.unwrap();
+        let c = subtask_c.unwrap();
+
+        // Check that b depends on a and c depends on b
+        assert!(
+            b.task_deps.contains(&"install:a".to_string()),
+            "install:b should depend on install:a, got: {:?}",
+            b.task_deps
+        );
+        assert!(
+            c.task_deps.contains(&"install:b".to_string()),
+            "install:c should depend on install:b, got: {:?}",
+            c.task_deps
+        );
+    }
+
+    #[test]
+    fn test_foreach_subtasks_not_chained_when_parallel_true() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let ottofile_path = temp_dir.path().join("otto.yml");
+
+        // Create an ottofile with parallel: true (explicit, same as default)
+        let config = r#"
+tasks:
+  install:
+    foreach:
+      items: [a, b, c]
+      as: pkg
+      parallel: true
+    bash: echo ${pkg}
+"#;
+        fs::write(&ottofile_path, config).unwrap();
+
+        let args = vec![
+            "otto".to_string(),
+            "--ottofile".to_string(),
+            ottofile_path.to_string_lossy().to_string(),
+            "install".to_string(),
+        ];
+
+        let mut parser = Parser::new(args).unwrap();
+        let result = parser.parse().unwrap();
+        let (tasks, _, _, _, _) = result;
+
+        // Find the subtasks
+        let subtask_a = tasks.iter().find(|t| t.name == "install:a");
+        let subtask_b = tasks.iter().find(|t| t.name == "install:b");
+        let subtask_c = tasks.iter().find(|t| t.name == "install:c");
+
+        assert!(subtask_a.is_some(), "subtask install:a should exist");
+        assert!(subtask_b.is_some(), "subtask install:b should exist");
+        assert!(subtask_c.is_some(), "subtask install:c should exist");
+
+        // With parallel: true, subtasks should NOT be chained
+        let b = subtask_b.unwrap();
+        let c = subtask_c.unwrap();
+
+        // b should NOT depend on a, c should NOT depend on b
+        assert!(
+            !b.task_deps.contains(&"install:a".to_string()),
+            "install:b should NOT depend on install:a when parallel: true, got: {:?}",
+            b.task_deps
+        );
+        assert!(
+            !c.task_deps.contains(&"install:b".to_string()),
+            "install:c should NOT depend on install:b when parallel: true, got: {:?}",
+            c.task_deps
+        );
+    }
+
+    #[test]
+    fn test_foreach_subtasks_parallel_by_default() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let ottofile_path = temp_dir.path().join("otto.yml");
+
+        // Create an ottofile WITHOUT specifying parallel (should default to true)
+        let config = r#"
+tasks:
+  install:
+    foreach:
+      items: [a, b, c]
+      as: pkg
+    bash: echo ${pkg}
+"#;
+        fs::write(&ottofile_path, config).unwrap();
+
+        let args = vec![
+            "otto".to_string(),
+            "--ottofile".to_string(),
+            ottofile_path.to_string_lossy().to_string(),
+            "install".to_string(),
+        ];
+
+        let mut parser = Parser::new(args).unwrap();
+        let result = parser.parse().unwrap();
+        let (tasks, _, _, _, _) = result;
+
+        // Find subtask b
+        let subtask_b = tasks.iter().find(|t| t.name == "install:b").unwrap();
+
+        // Default (parallel: true) means b should NOT depend on a
+        assert!(
+            !subtask_b.task_deps.contains(&"install:a".to_string()),
+            "By default, install:b should NOT depend on install:a, got: {:?}",
+            subtask_b.task_deps
+        );
+    }
+
+    // Tests for subtask targeting (task:subtask notation)
+
+    #[test]
+    fn test_collect_transitive_deps_parent_expands_subtasks() {
+        // When running parent task "install", all subtasks should be collected
+
+        let task_deps = HashMap::new();
+
+        let mut task_specs = HashMap::new();
+
+        // Virtual parent task
+        let parent_spec = TaskSpec {
+            name: "install".to_string(),
+            action: String::new(), // Virtual parent has no action
+            ..Default::default()
+        };
+        task_specs.insert("install".to_string(), parent_spec);
+
+        // Subtasks
+        let subtask_td = TaskSpec {
+            name: "install:td".to_string(),
+            action: "echo td".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("install:td".to_string(), subtask_td);
+
+        let subtask_ts = TaskSpec {
+            name: "install:ts".to_string(),
+            action: "echo ts".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("install:ts".to_string(), subtask_ts);
+
+        let subtask_cs = TaskSpec {
+            name: "install:cs".to_string(),
+            action: "echo cs".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("install:cs".to_string(), subtask_cs);
+
+        let mut collected = HashSet::new();
+
+        // Running "install" (parent) should expand to all subtasks
+        Parser::collect_transitive_deps("install", &task_deps, &task_specs, &mut collected).unwrap();
+
+        assert!(collected.contains("install"), "parent should be collected");
+        assert!(collected.contains("install:td"), "subtask td should be collected");
+        assert!(collected.contains("install:ts"), "subtask ts should be collected");
+        assert!(collected.contains("install:cs"), "subtask cs should be collected");
+        assert_eq!(collected.len(), 4);
+    }
+
+    #[test]
+    fn test_collect_transitive_deps_subtask_does_not_expand_siblings() {
+        // When running a specific subtask "install:td", should NOT collect siblings
+        let task_deps = HashMap::new();
+
+        let mut task_specs = HashMap::new();
+
+        // Virtual parent task
+        let parent_spec = TaskSpec {
+            name: "install".to_string(),
+            action: String::new(),
+            ..Default::default()
+        };
+        task_specs.insert("install".to_string(), parent_spec);
+
+        // Subtasks
+        let subtask_td = TaskSpec {
+            name: "install:td".to_string(),
+            action: "echo td".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("install:td".to_string(), subtask_td);
+
+        let subtask_ts = TaskSpec {
+            name: "install:ts".to_string(),
+            action: "echo ts".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("install:ts".to_string(), subtask_ts);
+
+        let subtask_cs = TaskSpec {
+            name: "install:cs".to_string(),
+            action: "echo cs".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("install:cs".to_string(), subtask_cs);
+
+        let mut collected = HashSet::new();
+
+        // Running "install:td" should NOT expand to sibling subtasks
+        Parser::collect_transitive_deps("install:td", &task_deps, &task_specs, &mut collected).unwrap();
+
+        assert!(
+            collected.contains("install:td"),
+            "requested subtask should be collected"
+        );
+        assert!(
+            !collected.contains("install:ts"),
+            "sibling subtask ts should NOT be collected"
+        );
+        assert!(
+            !collected.contains("install:cs"),
+            "sibling subtask cs should NOT be collected"
+        );
+        assert!(!collected.contains("install"), "parent should NOT be collected");
+        assert_eq!(collected.len(), 1);
+    }
+
+    #[test]
+    fn test_collect_transitive_deps_subtask_with_deps() {
+        // Subtask with its own dependencies should still collect those
+        let mut task_deps = HashMap::new();
+        task_deps.insert("install:td".to_string(), vec!["setup".to_string()]);
+        task_deps.insert("setup".to_string(), vec![]);
+
+        let mut task_specs = HashMap::new();
+
+        let parent_spec = TaskSpec {
+            name: "install".to_string(),
+            action: String::new(),
+            ..Default::default()
+        };
+        task_specs.insert("install".to_string(), parent_spec);
+
+        let subtask_td = TaskSpec {
+            name: "install:td".to_string(),
+            action: "echo td".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("install:td".to_string(), subtask_td);
+
+        let subtask_ts = TaskSpec {
+            name: "install:ts".to_string(),
+            action: "echo ts".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("install:ts".to_string(), subtask_ts);
+
+        let setup_spec = TaskSpec {
+            name: "setup".to_string(),
+            action: "echo setup".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("setup".to_string(), setup_spec);
+
+        let mut collected = HashSet::new();
+
+        // Running "install:td" should collect its dependency "setup" but NOT sibling subtasks
+        Parser::collect_transitive_deps("install:td", &task_deps, &task_specs, &mut collected).unwrap();
+
+        assert!(
+            collected.contains("install:td"),
+            "requested subtask should be collected"
+        );
+        assert!(collected.contains("setup"), "dependency should be collected");
+        assert!(
+            !collected.contains("install:ts"),
+            "sibling subtask should NOT be collected"
+        );
+        assert_eq!(collected.len(), 2);
+    }
+
+    #[test]
+    fn test_collect_transitive_deps_multiple_subtasks_requested() {
+        // Test requesting multiple specific subtasks (e.g., install:td install:cs)
+        let task_deps = HashMap::new();
+
+        let mut task_specs = HashMap::new();
+
+        let parent_spec = TaskSpec {
+            name: "install".to_string(),
+            action: String::new(),
+            ..Default::default()
+        };
+        task_specs.insert("install".to_string(), parent_spec);
+
+        let subtask_td = TaskSpec {
+            name: "install:td".to_string(),
+            action: "echo td".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("install:td".to_string(), subtask_td);
+
+        let subtask_ts = TaskSpec {
+            name: "install:ts".to_string(),
+            action: "echo ts".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("install:ts".to_string(), subtask_ts);
+
+        let subtask_cs = TaskSpec {
+            name: "install:cs".to_string(),
+            action: "echo cs".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("install:cs".to_string(), subtask_cs);
+
+        let mut collected = HashSet::new();
+
+        // Collect install:td
+        Parser::collect_transitive_deps("install:td", &task_deps, &task_specs, &mut collected).unwrap();
+        // Collect install:cs
+        Parser::collect_transitive_deps("install:cs", &task_deps, &task_specs, &mut collected).unwrap();
+
+        assert!(
+            collected.contains("install:td"),
+            "first requested subtask should be collected"
+        );
+        assert!(
+            collected.contains("install:cs"),
+            "second requested subtask should be collected"
+        );
+        assert!(
+            !collected.contains("install:ts"),
+            "unrequested sibling should NOT be collected"
+        );
+        assert!(!collected.contains("install"), "parent should NOT be collected");
+        assert_eq!(collected.len(), 2);
+    }
+
+    #[test]
+    fn test_collect_transitive_deps_nested_colon_names() {
+        // Test task names with multiple colons (e.g., "group:subgroup:item")
+        let task_deps = HashMap::new();
+
+        let mut task_specs = HashMap::new();
+
+        // Even with nested colons, contains(':') returns true, so no expansion
+        let nested_task = TaskSpec {
+            name: "group:sub:item".to_string(),
+            action: "echo nested".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("group:sub:item".to_string(), nested_task);
+
+        // Another nested task that shouldn't be collected
+        let other_nested = TaskSpec {
+            name: "group:sub:other".to_string(),
+            action: "echo other".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("group:sub:other".to_string(), other_nested);
+
+        let mut collected = HashSet::new();
+
+        Parser::collect_transitive_deps("group:sub:item", &task_deps, &task_specs, &mut collected).unwrap();
+
+        assert!(collected.contains("group:sub:item"));
+        assert!(
+            !collected.contains("group:sub:other"),
+            "nested sibling should NOT be collected"
+        );
+        assert_eq!(collected.len(), 1);
+    }
+
+    #[test]
+    fn test_collect_transitive_deps_subtask_with_after() {
+        // Test that subtasks can use 'after' and it still works correctly
+        let task_deps = HashMap::new();
+
+        let mut task_specs = HashMap::new();
+
+        let parent_spec = TaskSpec {
+            name: "install".to_string(),
+            action: String::new(),
+            ..Default::default()
+        };
+        task_specs.insert("install".to_string(), parent_spec);
+
+        // install:td has an 'after' that should trigger report
+        let subtask_td = TaskSpec {
+            name: "install:td".to_string(),
+            action: "echo td".to_string(),
+            after: vec!["report".to_string()],
+            ..Default::default()
+        };
+        task_specs.insert("install:td".to_string(), subtask_td);
+
+        let subtask_ts = TaskSpec {
+            name: "install:ts".to_string(),
+            action: "echo ts".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("install:ts".to_string(), subtask_ts);
+
+        let report_spec = TaskSpec {
+            name: "report".to_string(),
+            action: "echo report".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("report".to_string(), report_spec);
+
+        let mut collected = HashSet::new();
+
+        Parser::collect_transitive_deps("install:td", &task_deps, &task_specs, &mut collected).unwrap();
+
+        assert!(
+            collected.contains("install:td"),
+            "requested subtask should be collected"
+        );
+        assert!(collected.contains("report"), "'after' task should be collected");
+        assert!(!collected.contains("install:ts"), "sibling should NOT be collected");
+        assert_eq!(collected.len(), 2);
+    }
+
+    #[test]
+    fn test_collect_transitive_deps_dependency_on_specific_subtask() {
+        // Test: task 'deploy' depends on a specific subtask 'install:td'
+        // Running 'deploy' should collect install:td but NOT other install subtasks
+        let mut task_deps = HashMap::new();
+        task_deps.insert("deploy".to_string(), vec!["install:td".to_string()]);
+
+        let mut task_specs = HashMap::new();
+
+        let parent_spec = TaskSpec {
+            name: "install".to_string(),
+            action: String::new(),
+            ..Default::default()
+        };
+        task_specs.insert("install".to_string(), parent_spec);
+
+        let subtask_td = TaskSpec {
+            name: "install:td".to_string(),
+            action: "echo td".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("install:td".to_string(), subtask_td);
+
+        let subtask_ts = TaskSpec {
+            name: "install:ts".to_string(),
+            action: "echo ts".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("install:ts".to_string(), subtask_ts);
+
+        let deploy_spec = TaskSpec {
+            name: "deploy".to_string(),
+            action: "echo deploy".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("deploy".to_string(), deploy_spec);
+
+        let mut collected = HashSet::new();
+
+        Parser::collect_transitive_deps("deploy", &task_deps, &task_specs, &mut collected).unwrap();
+
+        assert!(collected.contains("deploy"), "requested task should be collected");
+        assert!(
+            collected.contains("install:td"),
+            "dependency subtask should be collected"
+        );
+        assert!(
+            !collected.contains("install:ts"),
+            "other subtask should NOT be collected"
+        );
+        assert!(!collected.contains("install"), "parent should NOT be collected");
+        assert_eq!(collected.len(), 2);
+    }
+
+    #[test]
+    fn test_collect_transitive_deps_regular_task_no_expansion() {
+        // Regular tasks (no colons) that have no subtasks should not try to expand
+        let task_deps = HashMap::new();
+
+        let mut task_specs = HashMap::new();
+
+        let build_spec = TaskSpec {
+            name: "build".to_string(),
+            action: "echo build".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("build".to_string(), build_spec);
+
+        let test_spec = TaskSpec {
+            name: "test".to_string(),
+            action: "echo test".to_string(),
+            ..Default::default()
+        };
+        task_specs.insert("test".to_string(), test_spec);
+
+        let mut collected = HashSet::new();
+
+        Parser::collect_transitive_deps("build", &task_deps, &task_specs, &mut collected).unwrap();
+
+        assert!(collected.contains("build"));
+        assert!(!collected.contains("test"));
+        assert_eq!(collected.len(), 1);
+    }
+
+    #[test]
+    fn test_subtask_targeting_integration() {
+        // Integration test: parse an ottofile with foreach and request specific subtask
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let ottofile_path = temp_dir.path().join("otto.yml");
+
+        let config = r#"
+tasks:
+  install:
+    foreach:
+      items: [td, ts, cs]
+      as: pkg
+    bash: echo "Installing ${pkg}"
+"#;
+        fs::write(&ottofile_path, config).unwrap();
+
+        let args = vec![
+            "otto".to_string(),
+            "--ottofile".to_string(),
+            ottofile_path.to_string_lossy().to_string(),
+            "install:td".to_string(), // Request ONLY this subtask
+        ];
+
+        let mut parser = Parser::new(args).unwrap();
+        let result = parser.parse().unwrap();
+        let (tasks, _, _, _, _) = result;
+
+        // Should only have install:td, NOT install:ts or install:cs
+        let task_names: Vec<&str> = tasks.iter().map(|t| t.name.as_str()).collect();
+        assert!(
+            task_names.contains(&"install:td"),
+            "requested subtask should be present"
+        );
+        assert!(
+            !task_names.contains(&"install:ts"),
+            "sibling subtask should NOT be present"
+        );
+        assert!(
+            !task_names.contains(&"install:cs"),
+            "sibling subtask should NOT be present"
+        );
+        assert_eq!(tasks.len(), 1);
+    }
+
+    #[test]
+    fn test_parent_task_runs_all_subtasks_integration() {
+        // Integration test: requesting parent task should run all subtasks
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let ottofile_path = temp_dir.path().join("otto.yml");
+
+        let config = r#"
+tasks:
+  install:
+    foreach:
+      items: [td, ts, cs]
+      as: pkg
+    bash: echo "Installing ${pkg}"
+"#;
+        fs::write(&ottofile_path, config).unwrap();
+
+        let args = vec![
+            "otto".to_string(),
+            "--ottofile".to_string(),
+            ottofile_path.to_string_lossy().to_string(),
+            "install".to_string(), // Request parent
+        ];
+
+        let mut parser = Parser::new(args).unwrap();
+        let result = parser.parse().unwrap();
+        let (tasks, _, _, _, _) = result;
+
+        // Should have all subtasks
+        let task_names: Vec<&str> = tasks.iter().map(|t| t.name.as_str()).collect();
+        assert!(task_names.contains(&"install:td"));
+        assert!(task_names.contains(&"install:ts"));
+        assert!(task_names.contains(&"install:cs"));
+        assert_eq!(tasks.len(), 3); // All 3 subtasks (parent is virtual, filtered out)
+    }
+
+    #[test]
+    fn test_dependency_on_subtask_integration() {
+        // Integration test: task depending on specific subtask
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let ottofile_path = temp_dir.path().join("otto.yml");
+
+        let config = r#"
+tasks:
+  install:
+    foreach:
+      items: [td, ts, cs]
+      as: pkg
+    bash: echo "Installing ${pkg}"
+
+  deploy:
+    before: ["install:td"]
+    bash: echo "Deploying"
+"#;
+        fs::write(&ottofile_path, config).unwrap();
+
+        let args = vec![
+            "otto".to_string(),
+            "--ottofile".to_string(),
+            ottofile_path.to_string_lossy().to_string(),
+            "deploy".to_string(),
+        ];
+
+        let mut parser = Parser::new(args).unwrap();
+        let result = parser.parse().unwrap();
+        let (tasks, _, _, _, _) = result;
+
+        let task_names: Vec<&str> = tasks.iter().map(|t| t.name.as_str()).collect();
+        assert!(task_names.contains(&"deploy"), "deploy should be present");
+        assert!(
+            task_names.contains(&"install:td"),
+            "dependency subtask should be present"
+        );
+        assert!(
+            !task_names.contains(&"install:ts"),
+            "other subtask should NOT be present"
+        );
+        assert!(
+            !task_names.contains(&"install:cs"),
+            "other subtask should NOT be present"
+        );
+        assert_eq!(tasks.len(), 2);
     }
 }
