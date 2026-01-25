@@ -779,6 +779,8 @@ impl Parser {
 
     /// Compute task dependencies from a given task specs map.
     /// This allows computing deps from expanded (foreach-processed) task specs.
+    ///
+    /// Validates that all referenced dependencies exist in the task specs.
     fn compute_task_deps_from_specs(task_specs: &HashMap<String, TaskSpec>) -> Result<HashMap<String, Vec<String>>> {
         let mut task_deps: HashMap<String, Vec<String>> = HashMap::new();
 
@@ -793,6 +795,21 @@ impl Parser {
                     && !deps.contains(task_name)
                 {
                     deps.push(task_name.clone());
+                }
+            }
+        }
+
+        // Validate all dependencies exist
+        // This catches typos like "install:tx" when only "install:td" exists
+        for (task_name, deps) in &task_deps {
+            for dep in deps {
+                if !task_specs.contains_key(dep) {
+                    return Err(eyre!(
+                        "Task '{}' has unknown dependency '{}'\n\
+                         Hint: Check for typos in the task name.",
+                        task_name,
+                        dep
+                    ));
                 }
             }
         }
@@ -2898,5 +2915,125 @@ tasks:
             "other subtask should NOT be present"
         );
         assert_eq!(tasks.len(), 2);
+    }
+
+    #[test]
+    fn test_unknown_dependency_errors() {
+        // Test that referencing an unknown dependency produces an error
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let ottofile_path = temp_dir.path().join("otto.yml");
+
+        let config = r#"
+tasks:
+  build:
+    before: ["nonexistent_task"]
+    bash: echo "Building"
+"#;
+        fs::write(&ottofile_path, config).unwrap();
+
+        let args = vec![
+            "otto".to_string(),
+            "--ottofile".to_string(),
+            ottofile_path.to_string_lossy().to_string(),
+            "build".to_string(),
+        ];
+
+        let mut parser = Parser::new(args).unwrap();
+        let result = parser.parse();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("unknown dependency"),
+            "Error should mention unknown dependency: {}",
+            err
+        );
+        assert!(
+            err.to_string().contains("nonexistent_task"),
+            "Error should mention the dependency name: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_unknown_subtask_dependency_errors() {
+        // Test that referencing a typo'd subtask produces an error
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let ottofile_path = temp_dir.path().join("otto.yml");
+
+        let config = r#"
+tasks:
+  install:
+    foreach:
+      items: [td, ts, cs]
+    bash: echo "Installing ${item}"
+
+  deploy:
+    before: ["install:tx"]  # Typo: should be "install:td"
+    bash: echo "Deploying"
+"#;
+        fs::write(&ottofile_path, config).unwrap();
+
+        let args = vec![
+            "otto".to_string(),
+            "--ottofile".to_string(),
+            ottofile_path.to_string_lossy().to_string(),
+            "deploy".to_string(),
+        ];
+
+        let mut parser = Parser::new(args).unwrap();
+        let result = parser.parse();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("unknown dependency"),
+            "Error should mention unknown dependency: {}",
+            err
+        );
+        assert!(
+            err.to_string().contains("install:tx"),
+            "Error should mention the typo'd subtask: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_valid_dependencies_succeed() {
+        // Test that valid dependencies don't trigger the error
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let ottofile_path = temp_dir.path().join("otto.yml");
+
+        let config = r#"
+tasks:
+  setup:
+    bash: echo "Setting up"
+
+  build:
+    before: ["setup"]
+    bash: echo "Building"
+"#;
+        fs::write(&ottofile_path, config).unwrap();
+
+        let args = vec![
+            "otto".to_string(),
+            "--ottofile".to_string(),
+            ottofile_path.to_string_lossy().to_string(),
+            "build".to_string(),
+        ];
+
+        let mut parser = Parser::new(args).unwrap();
+        let result = parser.parse();
+
+        assert!(result.is_ok(), "Valid dependencies should succeed: {:?}", result.err());
     }
 }
