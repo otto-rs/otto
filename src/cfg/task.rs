@@ -227,6 +227,8 @@ pub struct TaskSpec {
     pub action: String,
     /// Optional foreach configuration for subtask generation
     pub foreach: Option<ForeachSpec>,
+    /// True for foreach-created virtual parent tasks (no action, just dependency tracking)
+    pub virtual_parent: bool,
 }
 
 // Helper struct for deserialization that accepts bash:, python:, or action: fields
@@ -308,6 +310,7 @@ impl<'de> Deserialize<'de> for TaskSpec {
             params: helper.params,
             action,
             foreach: helper.foreach,
+            virtual_parent: false,
         })
     }
 }
@@ -431,6 +434,7 @@ impl TaskSpec {
             params,
             action,
             foreach: None,
+            virtual_parent: false,
         }
     }
 
@@ -494,6 +498,7 @@ impl TaskSpec {
             params: ParamSpecs::new(),
             action: String::new(), // No action - virtual task
             foreach: None,
+            virtual_parent: true,
         }
     }
 }
@@ -782,6 +787,7 @@ mod foreach_tests {
         assert!(parent.envs.is_empty());
         assert!(parent.action.is_empty());
         assert!(parent.foreach.is_none());
+        assert!(parent.virtual_parent);
     }
 
     #[test]

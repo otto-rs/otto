@@ -693,7 +693,7 @@ impl Parser {
 
             // Skip virtual parent tasks - they have no action to execute
             // Virtual parents are created for foreach dependency tracking but have empty actions
-            if task_spec.action.is_empty() {
+            if task_spec.virtual_parent {
                 continue;
             }
 
@@ -1170,6 +1170,7 @@ impl Parser {
             },
             action: "# Built-in graph command".to_string(),
             foreach: None,
+            virtual_parent: false,
         };
 
         self.config_spec.tasks.insert("Graph".to_string(), graph_task);
@@ -1247,6 +1248,7 @@ impl Parser {
             },
             action: "# Built-in clean command".to_string(),
             foreach: None,
+            virtual_parent: false,
         };
 
         self.config_spec.tasks.insert("Clean".to_string(), clean_task);
@@ -1360,6 +1362,7 @@ impl Parser {
             },
             action: "# Built-in history command".to_string(),
             foreach: None,
+            virtual_parent: false,
         };
 
         self.config_spec.tasks.insert("History".to_string(), history_task);
@@ -1437,6 +1440,7 @@ impl Parser {
             },
             action: "# Built-in stats command".to_string(),
             foreach: None,
+            virtual_parent: false,
         };
 
         self.config_spec.tasks.insert("Stats".to_string(), stats_task);
@@ -1496,6 +1500,7 @@ impl Parser {
             },
             action: "# Built-in convert command".to_string(),
             foreach: None,
+            virtual_parent: false,
         };
 
         self.config_spec.tasks.insert("Convert".to_string(), convert_task);
@@ -1627,6 +1632,7 @@ impl Parser {
             },
             action: "# Built-in upgrade command".to_string(),
             foreach: None,
+            virtual_parent: false,
         };
 
         self.config_spec.tasks.insert("Upgrade".to_string(), upgrade_task);

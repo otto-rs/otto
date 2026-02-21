@@ -94,6 +94,7 @@ impl OttoConverter {
             params: HashMap::new(),
             action,
             foreach: None,
+            virtual_parent: false,
         })
     }
 

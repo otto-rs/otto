@@ -78,6 +78,7 @@ impl TestFixture {
                 params: HashMap::new(),
                 help: None,
                 foreach: None,
+                virtual_parent: false,
             },
             &self.temp_path,
         )
@@ -103,6 +104,7 @@ impl TestFixture {
                 params: HashMap::new(),
                 help: None,
                 foreach: None,
+                virtual_parent: false,
             },
             &self.temp_path,
         )
@@ -330,6 +332,7 @@ async fn test_file_dependencies_error_handling() -> Result<()> {
             params: HashMap::new(),
             help: None,
             foreach: None,
+            virtual_parent: false,
         },
         temp_path,
     );
@@ -375,6 +378,7 @@ async fn test_file_dependencies_error_handling() -> Result<()> {
             params: HashMap::new(),
             help: None,
             foreach: None,
+            virtual_parent: false,
         },
         temp_path,
     );
@@ -478,6 +482,7 @@ async fn test_mixed_task_and_file_dependencies() -> Result<()> {
             params: HashMap::new(),
             help: None,
             foreach: None,
+            virtual_parent: false,
         },
         temp_path,
     );
@@ -501,6 +506,7 @@ async fn test_mixed_task_and_file_dependencies() -> Result<()> {
             params: HashMap::new(),
             help: None,
             foreach: None,
+            virtual_parent: false,
         },
         temp_path,
     );
@@ -580,6 +586,7 @@ async fn test_file_dependencies_incremental_detection() -> Result<()> {
             params: HashMap::new(),
             help: None,
             foreach: None,
+            virtual_parent: false,
         },
         temp_path,
     );
@@ -725,6 +732,7 @@ async fn test_file_dependencies_multiple_files() -> Result<()> {
             params: HashMap::new(),
             help: None,
             foreach: None,
+            virtual_parent: false,
         },
         temp_path,
     );
@@ -895,6 +903,7 @@ async fn test_file_dependencies_task_skipping() -> Result<()> {
             params: HashMap::new(),
             help: None,
             foreach: None,
+            virtual_parent: false,
         },
         temp_path,
     );
@@ -961,6 +970,7 @@ async fn test_file_dependencies_modification_detection() -> Result<()> {
             params: HashMap::new(),
             help: None,
             foreach: None,
+            virtual_parent: false,
         },
         &fixture.temp_path,
     );

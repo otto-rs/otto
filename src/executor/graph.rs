@@ -981,6 +981,7 @@ mod tests {
                     items: vec!["td".to_string(), "ts".to_string(), "cs".to_string()],
                     ..Default::default()
                 }),
+                virtual_parent: false,
             },
         );
 

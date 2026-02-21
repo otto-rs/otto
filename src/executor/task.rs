@@ -204,6 +204,7 @@ mod tests {
             params: ParamSpecs::default(),
             action: action.to_string(),
             foreach: None,
+            virtual_parent: false,
         }
     }
 
