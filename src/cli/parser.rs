@@ -801,16 +801,221 @@ impl Parser {
     ///
     /// When a parent task has a resolved param and its dependency declares a param
     /// with the same name but wasn't given an explicit CLI value, the dependency
-    /// inherits the parent's value. This is a no-op stub for Phase 1 restructuring;
-    /// the actual propagation logic is added in Phase 2.
+    /// inherits the parent's value. Propagation is transitive through chains
+    /// (deploy -> middle -> build) as long as each intermediate task declares the
+    /// param. Diamond conflicts (two parents propagating different values) are
+    /// rejected with a clear error.
     fn propagate_params(
         &self,
-        _expanded_tasks: &HashMap<String, TaskSpec>,
-        _task_deps: &HashMap<String, Vec<String>>,
-        _task_entries: &mut Vec<(String, Task)>,
-        _cli_provided_params: &HashMap<String, HashSet<String>>,
+        expanded_tasks: &HashMap<String, TaskSpec>,
+        task_deps: &HashMap<String, Vec<String>>,
+        task_entries: &mut [(String, Task)],
+        cli_provided_params: &HashMap<String, HashSet<String>>,
     ) -> Result<()> {
+        let entry_names: HashSet<String> = task_entries.iter().map(|(n, _)| n.clone()).collect();
+
+        // Build dependency graph filtered to only entry tasks, resolving virtual parents
+        let filtered_deps = Self::build_filtered_deps(task_deps, &entry_names, expanded_tasks);
+
+        // Build reverse index: dep -> list of dependents (value sources for propagation)
+        let dependents_of = Self::build_reverse_index(&filtered_deps);
+
+        // Topological sort in propagation order (dependents before deps)
+        let ordered = Self::topo_sort_propagation_order(&filtered_deps, &entry_names);
+
+        // Build name-to-index map for task_entries (owned keys to avoid borrow conflict)
+        let name_to_idx: HashMap<String, usize> = task_entries
+            .iter()
+            .enumerate()
+            .map(|(i, (name, _))| (name.clone(), i))
+            .collect();
+
+        // Pre-populate resolved values from CLI-provided params
+        let mut resolved_values: HashMap<String, HashMap<String, String>> = HashMap::new();
+        for (task_name, task) in task_entries.iter() {
+            let mut values = HashMap::new();
+            for (param_name, value) in &task.values {
+                if let Value::Item(v) = value {
+                    values.insert(param_name.clone(), v.clone());
+                }
+            }
+            resolved_values.insert(task_name.clone(), values);
+        }
+
+        // Process tasks in propagation order
+        let empty_set = HashSet::new();
+        for task_name in &ordered {
+            let Some(task_spec) = expanded_tasks.get(task_name) else {
+                continue;
+            };
+            let cli_provided = cli_provided_params.get(task_name).unwrap_or(&empty_set);
+
+            for param_spec in task_spec.params.values() {
+                if cli_provided.contains(&param_spec.name) {
+                    continue; // CLI value takes precedence
+                }
+
+                // Collect values from all dependents (parents)
+                let mut inherited: Vec<(&str, &str)> = Vec::new();
+                if let Some(parents) = dependents_of.get(task_name.as_str()) {
+                    for parent_name in parents {
+                        if let Some(parent_resolved) = resolved_values.get(*parent_name)
+                            && let Some(value) = parent_resolved.get(&param_spec.name)
+                        {
+                            inherited.push((parent_name, value));
+                        }
+                    }
+                }
+
+                if inherited.is_empty() {
+                    continue;
+                }
+
+                // Check all parents agree on the value
+                let first_value = inherited[0].1;
+                if !inherited.iter().all(|(_, v)| *v == first_value) {
+                    let details: Vec<String> = inherited
+                        .iter()
+                        .map(|(parent, value)| format!("  {} provides '{}'", parent, value))
+                        .collect();
+                    return Err(eyre!(
+                        "Conflicting param propagation for '{}' on task '{}':\n{}\n\
+                         Hint: Use explicit CLI values to resolve the conflict, \
+                         e.g., otto {} --{} <value>",
+                        param_spec.name,
+                        task_name,
+                        details.join("\n"),
+                        task_name,
+                        param_spec.name,
+                    ));
+                }
+
+                // Validate choices constraint on propagated value
+                if !param_spec.choices.is_empty() && !param_spec.choices.contains(&first_value.to_string()) {
+                    let source_task = inherited[0].0;
+                    return Err(eyre!(
+                        "Propagated value '{}' for param '{}' on task '{}' (from task '{}') \
+                         is not in allowed choices: [{}]",
+                        first_value,
+                        param_spec.name,
+                        task_name,
+                        source_task,
+                        param_spec.choices.join(", "),
+                    ));
+                }
+
+                // Inherit the value
+                let value = first_value.to_string();
+                resolved_values
+                    .entry(task_name.clone())
+                    .or_default()
+                    .insert(param_spec.name.clone(), value.clone());
+
+                if let Some(&idx) = name_to_idx.get(task_name.as_str()) {
+                    let (_, task) = &mut task_entries[idx];
+                    task.values.insert(param_spec.name.clone(), Value::Item(value.clone()));
+                    let env_name = param_spec.name.replace('-', "_");
+                    task.envs.insert(env_name, value);
+                }
+            }
+        }
+
         Ok(())
+    }
+
+    /// Build dependency graph filtered to only include tasks in entry_names,
+    /// resolving virtual parent references to their subtasks.
+    fn build_filtered_deps(
+        task_deps: &HashMap<String, Vec<String>>,
+        entry_names: &HashSet<String>,
+        expanded_tasks: &HashMap<String, TaskSpec>,
+    ) -> HashMap<String, Vec<String>> {
+        let mut filtered: HashMap<String, Vec<String>> = HashMap::new();
+        for name in entry_names {
+            let mut deps = Vec::new();
+            if let Some(raw_deps) = task_deps.get(name) {
+                for dep in raw_deps {
+                    if expanded_tasks.get(dep).is_some_and(|s| s.virtual_parent) {
+                        // Virtual parent -> redirect to subtasks
+                        let prefix = format!("{dep}:");
+                        for subtask in entry_names {
+                            if subtask.starts_with(&prefix) {
+                                deps.push(subtask.clone());
+                            }
+                        }
+                    } else if entry_names.contains(dep) {
+                        deps.push(dep.clone());
+                    }
+                }
+            }
+            filtered.insert(name.clone(), deps);
+        }
+        filtered
+    }
+
+    /// Build reverse index: maps each task to the list of tasks that depend on it
+    /// (i.e., its dependents/parents in propagation terminology).
+    fn build_reverse_index(filtered_deps: &HashMap<String, Vec<String>>) -> HashMap<&str, Vec<&str>> {
+        let mut reverse: HashMap<&str, Vec<&str>> = HashMap::new();
+        for (task_name, deps) in filtered_deps {
+            for dep in deps {
+                reverse.entry(dep.as_str()).or_default().push(task_name.as_str());
+            }
+        }
+        reverse
+    }
+
+    /// Topological sort in propagation order: dependents before their deps.
+    ///
+    /// In the depends-on graph (A -> B means A depends on B), nodes with no tasks
+    /// depending on them (in-degree 0) are processed first. These are the leaf
+    /// dependents that propagate values downward.
+    fn topo_sort_propagation_order(
+        filtered_deps: &HashMap<String, Vec<String>>,
+        entry_names: &HashSet<String>,
+    ) -> Vec<String> {
+        use std::collections::VecDeque;
+
+        // Compute in-degree: how many tasks list each task as a dependency
+        let mut in_degree: HashMap<&str, usize> = entry_names.iter().map(|n| (n.as_str(), 0)).collect();
+        for deps in filtered_deps.values() {
+            for dep in deps {
+                *in_degree.entry(dep.as_str()).or_default() += 1;
+            }
+        }
+
+        // Start with nodes that have in-degree 0 (no task depends on them)
+        let mut queue: VecDeque<String> = in_degree
+            .iter()
+            .filter(|(_, count)| **count == 0)
+            .map(|(&name, _)| name.to_string())
+            .collect();
+        // Sort for deterministic ordering
+        let mut sorted_queue: Vec<String> = queue.drain(..).collect();
+        sorted_queue.sort();
+        queue.extend(sorted_queue);
+
+        let mut result = Vec::new();
+        while let Some(node) = queue.pop_front() {
+            result.push(node.clone());
+            if let Some(deps) = filtered_deps.get(&node) {
+                // Collect and sort for deterministic ordering
+                let mut next: Vec<&str> = Vec::new();
+                for dep in deps {
+                    let count = in_degree.get_mut(dep.as_str()).unwrap();
+                    *count -= 1;
+                    if *count == 0 {
+                        next.push(dep);
+                    }
+                }
+                next.sort();
+                for dep in next {
+                    queue.push_back(dep.to_string());
+                }
+            }
+        }
+
+        result
     }
 
     /// Compute task dependencies from a given task specs map.
