@@ -685,7 +685,16 @@ impl Parser {
             Self::collect_transitive_deps(task_name, &task_deps, &expanded_tasks, &mut tasks_needed)?;
         }
 
-        let mut tasks = Vec::new();
+        // Param resolution uses a multi-phase approach to support propagation:
+        //   Phase 1: Apply CLI-provided values only
+        //   Phase 2: Propagate values from dependents to dependencies (by name-matching)
+        //   Phase 3: Apply defaults for any still-unset params
+
+        // Collect task data with CLI-provided tracking
+        let mut task_entries: Vec<(String, Task)> = Vec::new();
+        let mut cli_provided_params: HashMap<String, HashSet<String>> = HashMap::new();
+
+        // Phase 1: Create tasks and apply CLI-provided values
         for task_name in &tasks_needed {
             let task_spec = expanded_tasks
                 .get(task_name)
@@ -698,6 +707,7 @@ impl Parser {
             }
 
             let mut task = Task::from_task_with_cwd_and_global_envs(task_spec, &self.cwd, &global_envs);
+            let mut cli_provided = HashSet::new();
 
             // Find the partition for this task's arguments
             let task_args = self.pargs.iter().find(|args| !args.is_empty() && args[0] == *task_name);
@@ -712,69 +722,95 @@ impl Parser {
                 for param_spec in task_spec.params.values() {
                     match param_spec.param_type {
                         ParamType::FLG => {
-                            // Boolean flag - use get_flag()
+                            // Boolean flag - CLI-provided if user explicitly passed it
                             let flag_value = matches.get_flag(param_spec.name.as_str());
-                            let value_str = if flag_value { "true" } else { "false" };
-
-                            task.values
-                                .insert(param_spec.name.clone(), Value::Item(value_str.to_string()));
-                            // Convert hyphens to underscores for bash compatibility
-                            let env_name = param_spec.name.replace('-', "_");
-                            task.envs.insert(env_name, value_str.to_string());
+                            if flag_value {
+                                cli_provided.insert(param_spec.name.clone());
+                                task.values
+                                    .insert(param_spec.name.clone(), Value::Item("true".to_string()));
+                                let env_name = param_spec.name.replace('-', "_");
+                                task.envs.insert(env_name, "true".to_string());
+                            }
+                            // Don't apply default yet — deferred to Phase 3
                         }
                         ParamType::OPT | ParamType::POS => {
-                            // Argument with value - use get_one::<String>()
-                            if let Some(value) = matches.get_one::<String>(param_spec.name.as_str()) {
+                            // Check if value was provided on CLI vs from clap default
+                            if matches.value_source(param_spec.name.as_str())
+                                == Some(clap::parser::ValueSource::CommandLine)
+                                && let Some(value) = matches.get_one::<String>(param_spec.name.as_str())
+                            {
+                                cli_provided.insert(param_spec.name.clone());
                                 task.values
                                     .insert(param_spec.name.clone(), Value::Item(value.to_string()));
-                                // Convert hyphens to underscores for bash compatibility
                                 let env_name = param_spec.name.replace('-', "_");
                                 task.envs.insert(env_name, value.to_string());
-                            } else if let Some(ref default) = param_spec.default {
-                                // Apply default value if not provided
-                                task.values
-                                    .insert(param_spec.name.clone(), Value::Item(default.clone()));
-                                // Convert hyphens to underscores for bash compatibility
-                                let env_name = param_spec.name.replace('-', "_");
-                                task.envs.insert(env_name, default.clone());
                             }
-                        }
-                    }
-                }
-            } else {
-                // No arguments provided - apply defaults for all parameters
-                for param_spec in task_spec.params.values() {
-                    match param_spec.param_type {
-                        ParamType::FLG => {
-                            // Boolean flag defaults to false (or the specified default)
-                            let default_value = param_spec.default.as_deref().unwrap_or("false");
-                            task.values
-                                .insert(param_spec.name.clone(), Value::Item(default_value.to_string()));
-                            // Convert hyphens to underscores for bash compatibility
-                            let env_name = param_spec.name.replace('-', "_");
-                            task.envs.insert(env_name, default_value.to_string());
-                        }
-                        ParamType::OPT | ParamType::POS => {
-                            // Apply default value if specified
-                            if let Some(ref default) = param_spec.default {
-                                task.values
-                                    .insert(param_spec.name.clone(), Value::Item(default.clone()));
-                                // Convert hyphens to underscores for bash compatibility
-                                let env_name = param_spec.name.replace('-', "_");
-                                task.envs.insert(env_name, default.clone());
-                            }
+                            // Don't apply default yet — deferred to Phase 3
                         }
                     }
                 }
             }
+            // No args: no CLI-provided values, defaults applied in Phase 3
 
             // Override task_deps with computed dependencies
             task.task_deps = task_deps.get(task_name).map(|deps| deps.to_vec()).unwrap_or_default();
 
-            tasks.push(task);
+            cli_provided_params.insert(task_name.clone(), cli_provided);
+            task_entries.push((task_name.clone(), task));
         }
 
+        // Phase 2: Propagate values from dependents to dependencies
+        // (see param-propagation-design.md for full algorithm)
+        self.propagate_params(&expanded_tasks, &task_deps, &mut task_entries, &cli_provided_params)?;
+
+        // Phase 3: Apply defaults for any still-unset params
+        for (task_name, task) in &mut task_entries {
+            let task_spec = match expanded_tasks.get(task_name) {
+                Some(spec) => spec,
+                None => continue,
+            };
+            for param_spec in task_spec.params.values() {
+                if task.values.contains_key(&param_spec.name) {
+                    continue; // Already set from CLI or propagation
+                }
+                match param_spec.param_type {
+                    ParamType::FLG => {
+                        let default_value = param_spec.default.as_deref().unwrap_or("false");
+                        task.values
+                            .insert(param_spec.name.clone(), Value::Item(default_value.to_string()));
+                        let env_name = param_spec.name.replace('-', "_");
+                        task.envs.insert(env_name, default_value.to_string());
+                    }
+                    ParamType::OPT | ParamType::POS => {
+                        if let Some(ref default) = param_spec.default {
+                            task.values
+                                .insert(param_spec.name.clone(), Value::Item(default.clone()));
+                            let env_name = param_spec.name.replace('-', "_");
+                            task.envs.insert(env_name, default.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        let tasks = task_entries.into_iter().map(|(_, task)| task).collect();
         Ok(tasks)
+    }
+
+    /// Propagate param values from dependents (parents) to their dependencies.
+    ///
+    /// When a parent task has a resolved param and its dependency declares a param
+    /// with the same name but wasn't given an explicit CLI value, the dependency
+    /// inherits the parent's value. This is a no-op stub for Phase 1 restructuring;
+    /// the actual propagation logic is added in Phase 2.
+    fn propagate_params(
+        &self,
+        _expanded_tasks: &HashMap<String, TaskSpec>,
+        _task_deps: &HashMap<String, Vec<String>>,
+        _task_entries: &mut Vec<(String, Task)>,
+        _cli_provided_params: &HashMap<String, HashSet<String>>,
+    ) -> Result<()> {
+        Ok(())
     }
 
     /// Compute task dependencies from a given task specs map.
