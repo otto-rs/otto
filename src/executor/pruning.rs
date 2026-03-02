@@ -54,10 +54,102 @@ pub async fn auto_prune(otto_home: &Path, retention: &RetentionSpec) {
         return;
     }
 
+    // Prune orphaned cache entries
+    if let Err(e) = prune_orphaned_cache(otto_home) {
+        warn!("Cache prune failed: {}", e);
+    }
+
     // Touch marker file
     if let Err(e) = fs::File::create(&marker) {
         warn!("Failed to update .last_prune marker: {}", e);
     }
+}
+
+/// Remove orphaned cache entries that are no longer referenced by any run.
+///
+/// For each project dir under otto_home, scans the `.cache/` directory
+/// and checks if any remaining run's symlinks reference each cached script.
+/// Unreferenced cache files are deleted.
+fn prune_orphaned_cache(otto_home: &Path) -> Result<()> {
+    let entries = match fs::read_dir(otto_home) {
+        Ok(e) => e,
+        Err(_) => return Ok(()), // otto_home doesn't exist or unreadable
+    };
+
+    for entry in entries {
+        let entry = entry?;
+        let project_dir = entry.path();
+        if !project_dir.is_dir() {
+            continue;
+        }
+        let dir_name = match project_dir.file_name().and_then(|n| n.to_str()) {
+            Some(name) => name.to_string(),
+            None => continue,
+        };
+        // Only process otto project directories (otto-<hash>)
+        if !dir_name.starts_with("otto-") {
+            continue;
+        }
+
+        let cache_dir = project_dir.join(".cache");
+        if !cache_dir.is_dir() {
+            continue;
+        }
+
+        // Collect all symlink targets referenced by remaining runs
+        let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
+        if let Ok(run_entries) = fs::read_dir(&project_dir) {
+            for run_entry in run_entries.flatten() {
+                let run_path = run_entry.path();
+                if !run_path.is_dir() {
+                    continue;
+                }
+                let run_name = run_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                // Skip .cache directory itself
+                if run_name == ".cache" {
+                    continue;
+                }
+                // Walk tasks dir for symlinks
+                let tasks_dir = run_path.join("tasks");
+                if let Ok(task_entries) = fs::read_dir(&tasks_dir) {
+                    for task_entry in task_entries.flatten() {
+                        let task_dir = task_entry.path();
+                        if !task_dir.is_dir() {
+                            continue;
+                        }
+                        // Check for script.sh or script.py symlinks
+                        for script_name in &["script.sh", "script.py"] {
+                            let script_path = task_dir.join(script_name);
+                            if let Ok(target) = fs::read_link(&script_path) {
+                                // Target is like ../../../.cache/<hash>.sh
+                                if let Some(filename) = target.file_name().and_then(|n| n.to_str()) {
+                                    referenced.insert(filename.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Delete unreferenced cache files
+        if let Ok(cache_entries) = fs::read_dir(&cache_dir) {
+            for cache_entry in cache_entries.flatten() {
+                let cache_path = cache_entry.path();
+                if !cache_path.is_file() {
+                    continue;
+                }
+                if let Some(filename) = cache_path.file_name().and_then(|n| n.to_str())
+                    && !referenced.contains(filename)
+                {
+                    log::debug!("Removing orphaned cache entry: {}", cache_path.display());
+                    let _ = fs::remove_file(&cache_path);
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -154,5 +246,76 @@ mod tests {
 
         auto_prune(temp_dir.path(), &retention).await;
         assert!(temp_dir.path().join(".last_prune").exists());
+    }
+
+    // =========================================================================
+    // Cache pruning tests
+    // =========================================================================
+
+    fn setup_cache_test(temp_dir: &TempDir) -> (PathBuf, PathBuf, PathBuf) {
+        let project_dir = temp_dir.path().join("otto-abc123");
+        let cache_dir = project_dir.join(".cache");
+        let run_dir = project_dir.join("1234567890");
+        let tasks_dir = run_dir.join("tasks").join("build");
+
+        fs::create_dir_all(&cache_dir).unwrap();
+        fs::create_dir_all(&tasks_dir).unwrap();
+
+        // Create cached scripts
+        fs::write(cache_dir.join("aabb1122.sh"), "#!/bin/bash\necho hi").unwrap();
+        fs::write(cache_dir.join("ccdd3344.sh"), "#!/bin/bash\necho orphan").unwrap();
+
+        // Create symlink from run to one cache entry
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("../../../.cache/aabb1122.sh", tasks_dir.join("script.sh")).unwrap();
+
+        (project_dir, cache_dir, run_dir)
+    }
+
+    #[test]
+    fn test_prune_orphaned_cache_removes_unreferenced() {
+        let temp_dir = TempDir::new().unwrap();
+        let (_project_dir, cache_dir, _run_dir) = setup_cache_test(&temp_dir);
+
+        prune_orphaned_cache(temp_dir.path()).unwrap();
+
+        // Referenced cache entry should remain
+        assert!(cache_dir.join("aabb1122.sh").exists());
+        // Orphaned cache entry should be removed
+        assert!(!cache_dir.join("ccdd3344.sh").exists());
+    }
+
+    #[test]
+    fn test_prune_orphaned_cache_empty_otto_home() {
+        let temp_dir = TempDir::new().unwrap();
+        // Should not error on empty directory
+        prune_orphaned_cache(temp_dir.path()).unwrap();
+    }
+
+    #[test]
+    fn test_prune_orphaned_cache_no_cache_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_dir = temp_dir.path().join("otto-abc123");
+        fs::create_dir_all(&project_dir).unwrap();
+        // No .cache dir — should be fine
+        prune_orphaned_cache(temp_dir.path()).unwrap();
+    }
+
+    #[test]
+    fn test_prune_orphaned_cache_no_runs_deletes_all() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_dir = temp_dir.path().join("otto-abc123");
+        let cache_dir = project_dir.join(".cache");
+        fs::create_dir_all(&cache_dir).unwrap();
+
+        // Cache entries with no runs to reference them
+        fs::write(cache_dir.join("aabb1122.sh"), "orphan1").unwrap();
+        fs::write(cache_dir.join("ccdd3344.sh"), "orphan2").unwrap();
+
+        prune_orphaned_cache(temp_dir.path()).unwrap();
+
+        // All cache entries should be removed
+        assert!(!cache_dir.join("aabb1122.sh").exists());
+        assert!(!cache_dir.join("ccdd3344.sh").exists());
     }
 }
