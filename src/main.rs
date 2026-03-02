@@ -6,6 +6,28 @@ use otto::cli::Parser;
 use std::env;
 use std::fs::OpenOptions;
 
+/// Default maximum log file size before rotation (10 MB).
+const DEFAULT_MAX_LOG_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Rotate the log file if it exceeds the size threshold.
+///
+/// Renames `otto.log` to `otto.log.1` (one backup maximum).
+/// Threshold can be overridden via `OTTO_MAX_LOG_BYTES` env var.
+fn rotate_log_if_needed(log_file_path: &std::path::Path) {
+    let max_bytes = std::env::var("OTTO_MAX_LOG_BYTES")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_MAX_LOG_BYTES);
+
+    if let Ok(meta) = std::fs::metadata(log_file_path)
+        && meta.len() > max_bytes
+    {
+        let backup = log_file_path.with_extension("log.1");
+        // Overwrite any existing backup
+        let _ = std::fs::rename(log_file_path, backup);
+    }
+}
+
 fn setup_logging() -> Result<(), Report> {
     let log_dir = dirs::data_local_dir()
         .ok_or_else(|| eyre::eyre!("Could not determine local data directory"))?
@@ -14,6 +36,9 @@ fn setup_logging() -> Result<(), Report> {
 
     std::fs::create_dir_all(&log_dir)?;
     let log_file_path = log_dir.join("otto.log");
+
+    // Rotate log file before opening if it's too large
+    rotate_log_if_needed(&log_file_path);
 
     let log_file = OpenOptions::new().create(true).append(true).open(&log_file_path)?;
 
@@ -110,5 +135,69 @@ async fn handle_subcommand(args: &[String]) -> Option<Result<(), Report>> {
         "Stats" => Some(otto::app::execute_stats_command(&args[1..])),
         "Upgrade" => Some(otto::app::execute_upgrade_command(&args[1..]).await),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_rotate_log_no_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_path = temp_dir.path().join("otto.log");
+        // Should not panic when file doesn't exist
+        rotate_log_if_needed(&log_path);
+        assert!(!log_path.exists());
+    }
+
+    #[test]
+    fn test_rotate_log_small_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_path = temp_dir.path().join("otto.log");
+        fs::write(&log_path, "small content").unwrap();
+        rotate_log_if_needed(&log_path);
+        // File should still exist (not rotated)
+        assert!(log_path.exists());
+        assert!(!temp_dir.path().join("otto.log.1").exists());
+    }
+
+    #[test]
+    fn test_rotate_log_oversized_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_path = temp_dir.path().join("otto.log");
+        // Create a file larger than 10MB
+        let content = vec![b'x'; 11 * 1024 * 1024];
+        fs::write(&log_path, &content).unwrap();
+
+        rotate_log_if_needed(&log_path);
+
+        // Original should be gone, backup should exist
+        assert!(!log_path.exists());
+        let backup = temp_dir.path().join("otto.log.1");
+        assert!(backup.exists());
+        assert_eq!(fs::metadata(&backup).unwrap().len(), content.len() as u64);
+    }
+
+    #[test]
+    fn test_rotate_log_overwrites_existing_backup() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_path = temp_dir.path().join("otto.log");
+        let backup_path = temp_dir.path().join("otto.log.1");
+
+        // Create old backup
+        fs::write(&backup_path, "old backup").unwrap();
+        // Create oversized log
+        let content = vec![b'y'; 11 * 1024 * 1024];
+        fs::write(&log_path, &content).unwrap();
+
+        rotate_log_if_needed(&log_path);
+
+        // Backup should be overwritten with new content
+        assert!(!log_path.exists());
+        assert!(backup_path.exists());
+        assert_eq!(fs::metadata(&backup_path).unwrap().len(), content.len() as u64);
     }
 }
