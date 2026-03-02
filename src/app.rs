@@ -250,7 +250,7 @@ pub async fn execute_with_terminal_output(
     hash: String,
     ottofile_path: Option<PathBuf>,
     jobs: usize,
-    _retention: RetentionSpec,
+    retention: RetentionSpec,
 ) -> Result<(), Report> {
     if tasks.is_empty() {
         println!("No tasks to execute");
@@ -322,10 +322,16 @@ pub async fn execute_with_terminal_output(
 
     let scheduler = TaskScheduler::new(executor_tasks, Arc::new(workspace), execution_context, jobs, false).await?;
 
-    // Execute all tasks
-    scheduler.execute_all().await?;
+    // Execute all tasks, capturing result
+    let result = scheduler.execute_all().await;
 
-    Ok(())
+    // Auto-prune runs even if tasks failed — failing CI jobs that never prune
+    // are exactly the scenario that fills disks
+    if let Ok(otto_home) = crate::executor::pruning::resolve_otto_home() {
+        crate::executor::pruning::auto_prune(&otto_home, &retention).await;
+    }
+
+    result
 }
 
 /// Execute tasks with TUI mode.
@@ -334,7 +340,7 @@ pub async fn execute_with_tui(
     hash: String,
     ottofile_path: Option<PathBuf>,
     jobs: usize,
-    _retention: RetentionSpec,
+    retention: RetentionSpec,
 ) -> Result<(), Report> {
     use crate::tui::{TaskPane, TuiApp};
 
@@ -452,12 +458,19 @@ pub async fn execute_with_tui(
     // Handle TUI errors
     tui_result.map_err(|e| eyre::eyre!("TUI error: {}", e))?;
 
-    // Wait for scheduler to complete or propagate errors
-    match scheduler_handle.await {
+    // Wait for scheduler to complete
+    let result = match scheduler_handle.await {
         Ok(Ok(())) => Ok(()),
         Ok(Err(e)) => Err(e),
         Err(e) => Err(eyre::eyre!("Scheduler panicked: {}", e)),
+    };
+
+    // Auto-prune runs even if tasks failed
+    if let Ok(otto_home) = crate::executor::pruning::resolve_otto_home() {
+        crate::executor::pruning::auto_prune(&otto_home, &retention).await;
     }
+
+    result
 }
 
 /// Execute Clean command from a parsed task.
@@ -471,6 +484,7 @@ pub async fn execute_clean_from_task(task: &Task) -> Result<(), Report> {
         dry_run: params.dry_run,
         project_filter: params.project_filter,
         no_db: false,
+        quiet: false,
     };
     clean_cmd.execute().await?;
 

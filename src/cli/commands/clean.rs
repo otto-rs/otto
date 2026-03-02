@@ -35,6 +35,10 @@ pub struct CleanCommand {
     /// Use filesystem scan instead of database (fallback mode)
     #[arg(long)]
     pub no_db: bool,
+
+    /// Suppress output (used by auto-prune)
+    #[arg(skip)]
+    pub quiet: bool,
 }
 
 struct RunInfo {
@@ -47,6 +51,13 @@ struct RunInfo {
 }
 
 impl CleanCommand {
+    /// Print a message unless quiet mode is enabled.
+    fn print(&self, msg: &str) {
+        if !self.quiet {
+            println!("{msg}");
+        }
+    }
+
     pub async fn execute(&self) -> Result<()> {
         self.execute_with_store(None).await
     }
@@ -56,7 +67,7 @@ impl CleanCommand {
         let otto_home = self.get_otto_home()?;
 
         if !otto_home.exists() {
-            println!("No ~/.otto directory found");
+            self.print("No ~/.otto directory found");
             return Ok(());
         }
 
@@ -68,7 +79,7 @@ impl CleanCommand {
             if let Some(store) = store {
                 return self.execute_with_database(store.as_ref()).await;
             }
-            println!("Database not available, falling back to filesystem scan...");
+            self.print("Database not available, falling back to filesystem scan...");
         }
 
         // Fallback to filesystem-based cleanup
@@ -77,7 +88,7 @@ impl CleanCommand {
 
     /// Execute cleanup using database queries
     async fn execute_with_database(&self, store: &dyn StateStore) -> Result<()> {
-        println!("Querying database for old runs...");
+        self.print("Querying database for old runs...");
 
         let runs_to_delete = store.find_old_runs(
             self.keep_days,
@@ -87,20 +98,20 @@ impl CleanCommand {
         )?;
 
         if runs_to_delete.is_empty() {
-            println!("No runs matching deletion criteria found");
+            self.print("No runs matching deletion criteria found");
             return Ok(());
         }
 
         let total_size = runs_to_delete.iter().filter_map(|r| r.size_bytes).sum::<u64>();
 
-        println!(
+        self.print(&format!(
             "\nFound {} runs to delete ({} total)",
             runs_to_delete.len(),
             self.format_size(total_size)
-        );
+        ));
 
         if self.dry_run {
-            println!("\nDry run - showing what would be deleted:\n");
+            self.print("\nDry run - showing what would be deleted:\n");
             for run in &runs_to_delete {
                 let date_time = self.format_timestamp(run.timestamp);
                 let ottofile_display = run
@@ -113,18 +124,18 @@ impl CleanCommand {
                     .as_secs()
                     .saturating_sub(run.timestamp))
                     / (24 * 60 * 60);
-                println!(
+                self.print(&format!(
                     "  {} - {} ({} days old, {}) [{}]",
                     date_time,
                     ottofile_display,
                     age_days,
                     self.format_size(run.size_bytes.unwrap_or(0)),
                     run.status.as_str()
-                );
+                ));
             }
-            println!("\nRun without --dry-run to actually delete these runs");
+            self.print("\nRun without --dry-run to actually delete these runs");
         } else {
-            println!("\nDeleting runs...\n");
+            self.print("\nDeleting runs...\n");
             let mut deleted_size = 0u64;
 
             for run in &runs_to_delete {
@@ -137,12 +148,12 @@ impl CleanCommand {
                             .as_ref()
                             .map(|p| p.display().to_string())
                             .unwrap_or_else(|| "<unknown>".to_string());
-                        println!(
+                        self.print(&format!(
                             "  Deleted {} - {} ({})",
                             date_time,
                             ottofile_display,
                             self.format_size(run.size_bytes.unwrap_or(0))
-                        );
+                        ));
                     }
                     Ok(None) => {
                         eprintln!("  Warning: Run {} not found in database", run.timestamp);
@@ -153,7 +164,7 @@ impl CleanCommand {
                 }
             }
 
-            println!("\nDeleted {} total", self.format_size(deleted_size));
+            self.print(&format!("\nDeleted {} total", self.format_size(deleted_size)));
         }
 
         Ok(())
@@ -161,12 +172,12 @@ impl CleanCommand {
 
     /// Execute cleanup using filesystem scanning (fallback mode)
     async fn execute_with_filesystem(&self, otto_home: &Path) -> Result<()> {
-        println!("Scanning {} for old runs...", otto_home.display());
+        self.print(&format!("Scanning {} for old runs...", otto_home.display()));
 
         let mut runs_to_delete = self.scan_for_old_runs(otto_home)?;
 
         if runs_to_delete.is_empty() {
-            println!("No runs older than {} days found", self.keep_days);
+            self.print(&format!("No runs older than {} days found", self.keep_days));
             return Ok(());
         }
 
@@ -183,21 +194,21 @@ impl CleanCommand {
         }
 
         if runs_to_delete.is_empty() {
-            println!("No runs to delete after applying retention policy");
+            self.print("No runs to delete after applying retention policy");
             return Ok(());
         }
 
         let total_size = runs_to_delete.iter().map(|r| r.size_bytes).sum::<u64>();
 
-        println!(
+        self.print(&format!(
             "\nFound {} runs older than {} days ({} total)",
             runs_to_delete.len(),
             self.keep_days,
             self.format_size(total_size)
-        );
+        ));
 
         if self.dry_run {
-            println!("\nDry run - showing what would be deleted:\n");
+            self.print("\nDry run - showing what would be deleted:\n");
             for run in &runs_to_delete {
                 let date_time = self.format_timestamp(run.timestamp);
                 let ottofile_display = run
@@ -205,18 +216,18 @@ impl CleanCommand {
                     .as_ref()
                     .map(|p| p.display().to_string())
                     .unwrap_or_else(|| "<unknown>".to_string());
-                println!(
+                self.print(&format!(
                     "  [{}] {} - {} ({} days old, {})",
                     run.project_hash,
                     date_time,
                     ottofile_display,
                     run.age_days,
                     self.format_size(run.size_bytes)
-                );
+                ));
             }
-            println!("\nRun without --dry-run to actually delete these runs");
+            self.print("\nRun without --dry-run to actually delete these runs");
         } else {
-            println!("\nDeleting runs...\n");
+            self.print("\nDeleting runs...\n");
             let mut deleted_size = 0u64;
 
             for run in &runs_to_delete {
@@ -229,13 +240,13 @@ impl CleanCommand {
                             .as_ref()
                             .map(|p| p.display().to_string())
                             .unwrap_or_else(|| "<unknown>".to_string());
-                        println!(
+                        self.print(&format!(
                             "  Deleted [{}] {} - {} ({})",
                             run.project_hash,
                             date_time,
                             ottofile_display,
                             self.format_size(run.size_bytes)
-                        );
+                        ));
                     }
                     Err(e) => {
                         eprintln!("  Failed to delete {}: {}", run.path.display(), e);
@@ -243,7 +254,7 @@ impl CleanCommand {
                 }
             }
 
-            println!("\nFreed {} of disk space", self.format_size(deleted_size));
+            self.print(&format!("\nFreed {} of disk space", self.format_size(deleted_size)));
         }
 
         Ok(())
@@ -421,6 +432,7 @@ mod tests {
             dry_run: true,
             project_filter: None,
             no_db: true,
+            quiet: false,
         };
 
         let runs = cmd.scan_for_old_runs(temp_dir.path())?;
@@ -446,6 +458,7 @@ mod tests {
             dry_run: true,
             project_filter: None,
             no_db: true,
+            quiet: false,
         };
         let runs = cmd.scan_for_old_runs(temp_dir.path())?;
 
@@ -485,6 +498,7 @@ mod tests {
             dry_run: true,
             project_filter: Some("abc123".to_string()),
             no_db: true,
+            quiet: false,
         };
         let runs = cmd.scan_for_old_runs(temp_dir.path())?;
 
@@ -515,6 +529,7 @@ mod tests {
             dry_run: true,
             project_filter: None,
             no_db: true,
+            quiet: false,
         };
         let ottofile_path = cmd.read_ottofile_path(&run_dir);
 
@@ -535,6 +550,7 @@ mod tests {
             dry_run: true,
             project_filter: None,
             no_db: true,
+            quiet: false,
         };
         let ottofile_path = cmd.read_ottofile_path(&run_dir);
 
@@ -559,6 +575,7 @@ mod tests {
             dry_run: true,
             project_filter: None,
             no_db: true,
+            quiet: false,
         };
         let ottofile_path = cmd.read_ottofile_path(&run_dir);
 
@@ -581,6 +598,7 @@ mod tests {
             dry_run: true,
             project_filter: None,
             no_db: true,
+            quiet: false,
         };
         let ottofile_path = cmd.read_ottofile_path(&run_dir);
 
@@ -597,6 +615,7 @@ mod tests {
             dry_run: true,
             project_filter: None,
             no_db: true,
+            quiet: false,
         };
 
         // Test a known timestamp
@@ -616,6 +635,7 @@ mod tests {
             dry_run: true,
             project_filter: None,
             no_db: true,
+            quiet: false,
         };
 
         assert_eq!(cmd.format_size(0), "0 B");
@@ -633,6 +653,7 @@ mod tests {
             dry_run: true,
             project_filter: None,
             no_db: true,
+            quiet: false,
         };
 
         assert_eq!(cmd.format_size(1024), "1.0 KB");
@@ -651,6 +672,7 @@ mod tests {
             dry_run: true,
             project_filter: None,
             no_db: true,
+            quiet: false,
         };
 
         assert_eq!(cmd.format_size(1024 * 1024), "1.0 MB");
@@ -669,6 +691,7 @@ mod tests {
             dry_run: true,
             project_filter: None,
             no_db: true,
+            quiet: false,
         };
 
         assert_eq!(cmd.format_size(1024 * 1024 * 1024), "1.0 GB");
@@ -697,6 +720,7 @@ mod tests {
             dry_run: true,
             project_filter: None,
             no_db: true,
+            quiet: false,
         };
         let mut runs = cmd.scan_for_old_runs(temp_dir.path())?;
 
@@ -741,6 +765,7 @@ mod tests {
             dry_run: true,
             project_filter: None,
             no_db: true,
+            quiet: false,
         };
         let runs = cmd.scan_for_old_runs(temp_dir.path())?;
 
@@ -767,6 +792,7 @@ mod tests {
             dry_run: true,
             project_filter: None,
             no_db: true,
+            quiet: false,
         };
         let runs = cmd.scan_for_old_runs(temp_dir.path())?;
 
@@ -848,6 +874,7 @@ mod tests {
             dry_run: true,
             project_filter: None,
             no_db: false,
+            quiet: false,
         };
 
         let result = cmd.execute_with_store(Some(store)).await;
@@ -870,6 +897,7 @@ mod tests {
             dry_run: true,
             project_filter: None,
             no_db: false,
+            quiet: false,
         };
 
         let result = cmd.execute_with_store(Some(store.clone())).await;
@@ -896,6 +924,7 @@ mod tests {
             dry_run: false,
             project_filter: None,
             no_db: false,
+            quiet: false,
         };
 
         let result = cmd.execute_with_store(Some(store.clone())).await;
@@ -918,6 +947,7 @@ mod tests {
             dry_run: false,
             project_filter: Some("abc123".to_string()),
             no_db: false,
+            quiet: false,
         };
 
         let result = cmd.execute_with_store(Some(store.clone())).await;
@@ -941,6 +971,7 @@ mod tests {
             dry_run: false,
             project_filter: None,
             no_db: false,
+            quiet: false,
         };
 
         let result = cmd.execute_with_store(Some(store.clone())).await;
@@ -963,6 +994,7 @@ mod tests {
             dry_run: false,
             project_filter: None,
             no_db: false,
+            quiet: false,
         };
 
         let result = cmd.execute_with_store(Some(store.clone())).await;
