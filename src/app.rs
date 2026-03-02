@@ -1,3 +1,4 @@
+use crate::cfg::otto::RetentionSpec;
 use crate::cfg::param::Value;
 use crate::cli::commands::history::HistoryCommand;
 use crate::cli::commands::stats::StatsCommand;
@@ -188,18 +189,21 @@ pub struct RuntimeConfig {
     pub ottofile_path: Option<PathBuf>,
     pub jobs: usize,
     pub tui_mode: bool,
+    pub retention: RetentionSpec,
 }
 
 impl RuntimeConfig {
     /// Build RuntimeConfig from parsed CLI arguments.
     pub fn from_parser(parser: &mut Parser) -> Result<Self> {
         let (tasks, hash, ottofile_path, jobs, tui_mode) = parser.parse()?;
+        let retention = parser.retention();
         Ok(Self {
             tasks,
             hash,
             ottofile_path,
             jobs,
             tui_mode,
+            retention,
         })
     }
 }
@@ -214,6 +218,7 @@ pub async fn run(config: RuntimeConfig) -> Result<()> {
         config.ottofile_path,
         config.jobs,
         config.tui_mode,
+        config.retention,
     )
     .await
 }
@@ -225,16 +230,17 @@ pub async fn execute_tasks(
     ottofile_path: Option<PathBuf>,
     jobs: usize,
     tui_mode: bool,
+    retention: RetentionSpec,
 ) -> Result<(), Report> {
     if tui_mode {
         if !atty::is(atty::Stream::Stdout) {
             eprintln!("Warning: --tui requires a TTY, falling back to standard output");
-            return execute_with_terminal_output(tasks, hash, ottofile_path, jobs).await;
+            return execute_with_terminal_output(tasks, hash, ottofile_path, jobs, retention).await;
         }
 
-        execute_with_tui(tasks, hash, ottofile_path, jobs).await
+        execute_with_tui(tasks, hash, ottofile_path, jobs, retention).await
     } else {
-        execute_with_terminal_output(tasks, hash, ottofile_path, jobs).await
+        execute_with_terminal_output(tasks, hash, ottofile_path, jobs, retention).await
     }
 }
 
@@ -244,6 +250,7 @@ pub async fn execute_with_terminal_output(
     hash: String,
     ottofile_path: Option<PathBuf>,
     jobs: usize,
+    _retention: RetentionSpec,
 ) -> Result<(), Report> {
     if tasks.is_empty() {
         println!("No tasks to execute");
@@ -327,6 +334,7 @@ pub async fn execute_with_tui(
     hash: String,
     ottofile_path: Option<PathBuf>,
     jobs: usize,
+    _retention: RetentionSpec,
 ) -> Result<(), Report> {
     use crate::tui::{TaskPane, TuiApp};
 
@@ -557,6 +565,7 @@ mod tests {
             ottofile_path: Some(PathBuf::from("/tmp/otto.yml")),
             jobs: 4,
             tui_mode: false,
+            retention: crate::cfg::otto::RetentionSpec::default(),
         };
 
         assert_eq!(config.tasks.len(), 0);
@@ -564,6 +573,7 @@ mod tests {
         assert_eq!(config.ottofile_path, Some(PathBuf::from("/tmp/otto.yml")));
         assert_eq!(config.jobs, 4);
         assert!(!config.tui_mode);
+        assert_eq!(config.retention, crate::cfg::otto::RetentionSpec::default());
     }
 
     // =========================================================================

@@ -259,6 +259,11 @@ impl Parser {
         &self.config_spec.tasks
     }
 
+    /// Returns the retention configuration from the ottofile.
+    pub fn retention(&self) -> crate::cfg::otto::RetentionSpec {
+        self.config_spec.otto.retention.clone()
+    }
+
     #[allow(clippy::type_complexity)]
     pub fn parse(&mut self) -> Result<(Vec<Task>, String, Option<PathBuf>, usize, bool)> {
         let help_requested = self.args.contains(&"--help".to_string()) || self.args.contains(&"-h".to_string());
