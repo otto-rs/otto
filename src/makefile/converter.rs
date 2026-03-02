@@ -2,7 +2,7 @@ use eyre::Result;
 use std::collections::HashMap;
 
 use crate::cfg::config::ConfigSpec;
-use crate::cfg::otto::OttoSpec;
+use crate::cfg::otto::{OttoSpec, RetentionSpec};
 use crate::cfg::task::{TaskSpec, TaskSpecs};
 
 use super::ast::{AssignmentType, MakefileAst, Target};
@@ -36,6 +36,7 @@ impl OttoConverter {
             tasks,
             verbosity: 1,
             envs,
+            retention: RetentionSpec::default(),
         })
     }
 

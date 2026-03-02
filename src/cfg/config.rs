@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use crate::cfg::otto::{OttoSpec, default_otto};
+pub use crate::cfg::otto::{OttoSpec, RetentionSpec, default_otto};
 pub use crate::cfg::param::{ParamSpec, ParamSpecs, Value};
 pub use crate::cfg::task::{TaskSpec, TaskSpecs, deserialize_task_map};
 
