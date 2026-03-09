@@ -87,7 +87,7 @@ fn test_column_format_consistency() {
     let duration = "2.0s";
     let size = "14.1 KB";
     let user = "saidler";
-    let path = "~/repos/scottidler/otto";
+    let path = "~/repos/otto-rs/otto";
 
     // Header format
     let header = format!(

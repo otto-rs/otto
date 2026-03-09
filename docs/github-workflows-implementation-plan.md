@@ -52,7 +52,7 @@ Based on analysis of sister projects under `~/repos/scottidler/`:
 
 #### 1.1 Create Directory Structure
 ```bash
-mkdir -p /home/saidler/repos/scottidler/otto/.github/workflows
+mkdir -p /home/saidler/repos/otto-rs/otto/.github/workflows
 ```
 
 #### 1.2 Create `binary-release.yml`
@@ -270,7 +270,7 @@ git push origin v0.6.0
 ### Installing from Release
 ```bash
 # Download the appropriate tar.gz for your platform
-wget https://github.com/scottidler/otto/releases/download/v0.6.0/otto-v0.6.0-linux.tar.gz
+wget https://github.com/otto-rs/otto/releases/download/v0.6.0/otto-v0.6.0-linux.tar.gz
 
 # Extract
 tar -xzf otto-v0.6.0-linux.tar.gz

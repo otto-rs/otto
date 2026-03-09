@@ -284,7 +284,7 @@ impl UpgradeCommand {
 
     async fn fetch_releases(&self) -> Result<Vec<GitHubRelease>> {
         let client = Client::new();
-        let url = "https://api.github.com/repos/scottidler/otto/releases";
+        let url = "https://api.github.com/repos/otto-rs/otto/releases";
 
         let mut request = client.get(url).header("User-Agent", "otto-upgrade");
 

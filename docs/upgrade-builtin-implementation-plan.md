@@ -94,7 +94,7 @@ pub struct Release {
 
 impl ReleaseFetcher {
     pub async fn fetch_releases(&self) -> Result<Vec<Release>> {
-        // GET https://api.github.com/repos/scottidler/otto/releases
+        // GET https://api.github.com/repos/otto-rs/otto/releases
     }
 
     pub async fn find_asset(&self, release: &Release, platform: &str) -> Result<Asset> {

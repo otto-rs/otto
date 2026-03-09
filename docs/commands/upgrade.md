@@ -10,7 +10,7 @@ Currently, upgrading Otto requires manual steps or a custom shell script (as sho
 
 ```bash
 otto-upgrade() {
-  gh release -R scottidler/otto download --pattern 'otto-*-macos-arm64.tar.gz' && \
+  gh release -R otto-rs/otto download --pattern 'otto-*-macos-arm64.tar.gz' && \
   export OTTO_VERSION=$(ls otto-*-macos-arm64.tar.gz | cut -d- -f2) && \
   tar -zxf otto-$OTTO_VERSION-macos-arm64.tar.gz && \
   mv otto ~/.local/bin/otto-$OTTO_VERSION && \
@@ -73,7 +73,7 @@ otto Upgrade --force
 | `--backup-dir <DIR>` | Directory to store backups | `~/.otto/backups` |
 | `--no-backup` | Skip creating backup of current version | false |
 | `--github-token <TOKEN>` | GitHub token for API access (avoids rate limits) | env: `GITHUB_TOKEN` |
-| `--base-url <URL>` | Base URL for GitHub releases | `https://github.com/scottidler/otto` |
+| `--base-url <URL>` | Base URL for GitHub releases | `https://github.com/otto-rs/otto` |
 
 ## Technical Design
 
@@ -137,7 +137,7 @@ Use GitHub API to fetch releases:
 ```rust
 async fn fetch_releases(token: Option<String>) -> Result<Vec<Release>> {
     let client = reqwest::Client::new();
-    let url = "https://api.github.com/repos/scottidler/otto/releases";
+    let url = "https://api.github.com/repos/otto-rs/otto/releases";
 
     let mut request = client.get(url);
     if let Some(token) = token {
@@ -158,7 +158,7 @@ async fn fetch_releases(token: Option<String>) -> Result<Vec<Release>> {
 async fn download_release(version: &str, platform: &str) -> Result<PathBuf> {
     let filename = format!("otto-{}-{}.tar.gz", version, platform);
     let url = format!(
-        "https://github.com/scottidler/otto/releases/download/v{}/{}",
+        "https://github.com/otto-rs/otto/releases/download/v{}/{}",
         version, filename
     );
 
@@ -479,7 +479,7 @@ The downloaded file may be corrupted or tampered with.
 
 Suggestions:
   - Try downloading again
-  - Report to https://github.com/scottidler/otto/issues
+  - Report to https://github.com/otto-rs/otto/issues
 ```
 
 ## Dependencies

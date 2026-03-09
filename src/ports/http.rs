@@ -236,7 +236,7 @@ mod tests {
         let releases = vec![sample_release("0.5.6"), sample_release("0.5.5")];
         let fetcher = MockReleaseFetcher::new().with_releases(releases);
 
-        let result = fetcher.fetch_releases("scottidler/otto", None).await.unwrap();
+        let result = fetcher.fetch_releases("otto-rs/otto", None).await.unwrap();
 
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].tag_name, "v0.5.6");
