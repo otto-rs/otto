@@ -49,16 +49,10 @@ pub fn xdg_data_dir() -> Option<PathBuf> {
 /// that never fires. A path that can't be expanded (no home directory found)
 /// also passes through unchanged, deferring the failure to whatever tries to
 /// use the path next.
-pub fn expand_tilde(path: impl AsRef<Path>) -> PathBuf {
-    let path = path.as_ref();
-    match path.strip_prefix("~") {
-        Ok(rest) => match std::env::home_dir() {
-            Some(home) => home.join(rest),
-            None => path.to_path_buf(),
-        },
-        Err(_) => path.to_path_buf(),
-    }
-}
+///
+/// otto's implementation was the origin of the `expand-tilde` crate; this
+/// re-export keeps every call site unchanged.
+pub use expand_tilde::expand_tilde;
 
 /// Where otto writes `otto.log`: `<xdg-data>/otto/logs`.
 pub fn log_dir() -> Option<PathBuf> {
