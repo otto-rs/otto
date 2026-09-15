@@ -63,6 +63,10 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
             // Task needs to run
             info!("Starting task {} ({}/{})", task.name, *completed_tasks + 1, total_tasks);
 
+            // The spinner's other half. Paired with the `finished` hook in
+            // report_status_line, which every terminal transition reaches.
+            crate::executor::progress::started(&task.name);
+
             // Broadcast task started to TUI
             self.broadcast_message(TaskMessage::Started {
                 task_name: task.name.clone(),

@@ -89,6 +89,7 @@ fn test_parse_outcome_into_run_returns_the_plan() {
         jobs: 4,
         tui_mode: false,
         no_prefix: true,
+        no_progress: false,
         requested_tasks: vec![],
     })
     .into_run()

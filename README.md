@@ -109,6 +109,7 @@ otto -j 4 build            # cap concurrency at 4 (default: number of CPUs,
                             # or otto.jobs in the ottofile if set)
 otto -t build              # run under the interactive TUI dashboard
 otto --no-prefix build     # drop the "[task]" prefix from task output
+otto --no-progress build   # never draw the activity spinner (also OTTO_NO_PROGRESS)
 ```
 
 **Builtins** (capitalized, run like any other task):

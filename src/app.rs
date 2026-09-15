@@ -308,6 +308,10 @@ pub struct RuntimeConfig {
     /// `--no-prefix`: suppress the `[task]` prefix on terminal output.
     /// See docs/design/2026-08-28-boundary-fixes-and-dynamic-foreach.md Phase 8.
     pub no_prefix: bool,
+    /// `--no-progress`: never draw the activity spinner. Independent of
+    /// `no_prefix` on purpose -- that one is about the shape of stdout, this
+    /// one about whether stderr is a terminal worth animating.
+    pub no_progress: bool,
     pub retention: RetentionSpec,
     /// The task and subtask names literally requested, for the run record.
     /// See `RunPlan::requested_tasks` and `ExecutionContext::record_requested`.
@@ -338,6 +342,7 @@ impl RuntimeConfig {
             jobs: plan.jobs,
             tui_mode: plan.tui_mode,
             no_prefix: plan.no_prefix,
+            no_progress: plan.no_progress,
             retention,
             requested_tasks: plan.requested_tasks,
         })))
@@ -355,6 +360,7 @@ pub async fn run(config: RuntimeConfig) -> Result<()> {
         config.jobs,
         config.tui_mode,
         config.no_prefix,
+        config.no_progress,
         config.retention,
         config.requested_tasks,
     )
@@ -370,6 +376,7 @@ pub async fn execute_tasks(
     jobs: usize,
     tui_mode: bool,
     no_prefix: bool,
+    no_progress: bool,
     retention: RetentionSpec,
     requested_tasks: Vec<String>,
 ) -> Result<(), Report> {
@@ -395,6 +402,11 @@ pub async fn execute_tasks(
                 ottofile_path,
                 jobs,
                 no_prefix,
+                // A --tui run that fell back for want of a TTY has no terminal
+                // worth animating either; the same check would refuse it a
+                // moment later, but saying so here keeps the two decisions
+                // from drifting apart.
+                no_progress,
                 retention,
                 requested_tasks,
             )
@@ -406,7 +418,17 @@ pub async fn execute_tasks(
         // to act on here: no prefix is ever printed to a terminal the TUI owns.
         execute_with_tui(tasks, hash, ottofile_path, jobs, retention, requested_tasks).await
     } else {
-        execute_with_terminal_output(tasks, hash, ottofile_path, jobs, no_prefix, retention, requested_tasks).await
+        execute_with_terminal_output(
+            tasks,
+            hash,
+            ottofile_path,
+            jobs,
+            no_prefix,
+            no_progress,
+            retention,
+            requested_tasks,
+        )
+        .await
     }
 }
 
@@ -418,6 +440,7 @@ pub async fn execute_with_terminal_output(
     ottofile_path: Option<PathBuf>,
     jobs: usize,
     no_prefix: bool,
+    no_progress: bool,
     retention: RetentionSpec,
     requested_tasks: Vec<String>,
 ) -> Result<(), Report> {
@@ -453,16 +476,35 @@ pub async fn execute_with_terminal_output(
     let mut scheduler = TaskScheduler::new(executor_tasks, workspace.clone(), execution_context, jobs, false).await?;
     scheduler.set_no_prefix(no_prefix);
 
+    // The spinner exists only on this path: the TUI owns the alternate screen
+    // and suppresses every terminal write, so `tui_mode` is false by the time
+    // execution reaches here. Everything else that decides it is in
+    // `should_enable`, which is pure so the table of reasons is unit-testable.
+    crate::executor::progress::configure(crate::executor::progress::should_enable(
+        std::io::stderr().is_terminal(),
+        false,
+        no_progress,
+        |k| std::env::var(k).ok(),
+    ));
+
     // Ctrl+C has to reach the scheduler, not just the process. Without this the
     // terminal's SIGINT default-killed otto outright and `abandon_run` never
     // ran, so a buffered foreach group lost every completed-but-unreplayed
     // block. Taken before `execute_all` borrows the scheduler.
     // Nothing extra to do on either signal here: the plain path has no
     // dashboard flag to set and no terminal to hand back.
-    install_stop_handler(scheduler.cancel_signal(), || {}, || {});
+    install_stop_handler(
+        scheduler.cancel_signal(),
+        crate::executor::progress::clear,
+        crate::executor::progress::clear,
+    );
 
     // Execute all tasks, capturing result
     let result = scheduler.execute_all().await;
+
+    // Before anything else prints: a frame left on screen is the only damage
+    // this feature can actually do, and the run is over either way.
+    crate::executor::progress::clear();
 
     // Close the run out in the database before anything else reads it: prune
     // included, since a run left `running` is a run `Clean` cannot age out.
