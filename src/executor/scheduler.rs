@@ -25,8 +25,8 @@ use super::state::SkipKind;
 use super::task::{Task, TaskEdge};
 use super::{
     action::{ActionProcessor, ProcessedAction},
-    colors::{colorize_task_name, colorize_task_prefix, set_global_task_order},
-    heartbeat::{TaskClock, TaskClocks},
+    colors::{set_global_task_order, task_label},
+    heartbeat::{self, TaskClock, TaskClocks},
     output::{OutputType, TaskMessage, TaskStreams, TuiTaskStatus, format_terminal_output, terminal_lock},
     workspace::{ExecutionContext, Workspace},
 };
@@ -1262,9 +1262,8 @@ pub struct TaskScheduler<F: FileSystem = crate::ports::RealFs> {
     no_prefix: bool,
     /// Seconds of task silence before otto reports the task is still
     /// running; `0` disables. Set via `set_progress_interval()`, same
-    /// reasoning as `no_prefix` above. Nothing reads this field until Phase 3
-    /// of docs/design/2026-09-15-idle-task-heartbeat.md builds the ticker;
-    /// Phase 1 only threads the resolved value this far.
+    /// reasoning as `no_prefix` above. Read by `start_heartbeat()`, which is
+    /// the ticker's only arming site.
     progress_interval: u64,
     /// Every non-`tty:` task's idle clock for this run (design doc
     /// docs/design/2026-09-15-idle-task-heartbeat.md). Timing only: what is
@@ -1402,9 +1401,43 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
         self.no_prefix = no_prefix;
     }
 
-    /// Nothing reads `progress_interval` yet: see the field's doc comment.
     pub fn set_progress_interval(&mut self, progress_interval: u64) {
         self.progress_interval = progress_interval;
+    }
+
+    /// Start this run's `still running` ticker.
+    ///
+    /// Called immediately before `execute_all` and stopped immediately after it
+    /// returns, which is the whole of the ticker's lifetime. Armed no earlier
+    /// than that on purpose: an invocation that executes no task (`--tasks`,
+    /// `--help`, `makefile convert`, every other subcommand) never reaches
+    /// here, and Phase 0 of the design doc measured what an earlier arming
+    /// breaks - `makefile_converter_test::test_strict_passes_a_makefile_that_converts_cleanly`
+    /// asserts an empty stderr and `tasks_flag_test::tasks_defaults_to_yaml_on_a_real_tty`
+    /// parses a pty's merged streams as one YAML document.
+    ///
+    /// Nothing is emitted under `--tui`, matching the `tui_mode` guard on
+    /// `report_status_line`: the dashboard owns its own rendering.
+    pub fn start_heartbeat(&self) -> heartbeat::Heartbeat {
+        // Zero is the off switch `spawn` already honors for
+        // `--progress-interval 0`, so TUI mode reuses it rather than adding a
+        // second way to be disabled.
+        let interval = if self.tui_mode { 0 } else { self.progress_interval };
+        let children = self.live_children.clone();
+        heartbeat::spawn(
+            Duration::from_secs(interval),
+            self.no_prefix,
+            self.clocks.clone(),
+            // The tick's liveness read, taken on the ticker thread: a
+            // `blocking_lock` on a tokio mutex is legal there and only there,
+            // since it panics inside a runtime context. Reading the registry
+            // itself is what leaves nothing to drift.
+            move || {
+                let mut names: Vec<String> = children.blocking_lock().keys().cloned().collect();
+                names.sort();
+                names
+            },
+        )
     }
 
     /// The tasks a heartbeat tick would consider right now, each with its
@@ -1437,11 +1470,7 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
     /// The flag used to reach task output only, so a `--no-prefix` run mixed
     /// unprefixed output with prefixed status lines.
     fn status_label(&self, task_name: &str) -> String {
-        if self.no_prefix {
-            colorize_task_name(task_name)
-        } else {
-            colorize_task_prefix(task_name)
-        }
+        task_label(task_name, self.no_prefix)
     }
 
     /// Set pre-created TaskStreams for TUI mode

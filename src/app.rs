@@ -474,9 +474,6 @@ pub async fn execute_with_terminal_output(
     let workspace = Arc::new(workspace);
     let mut scheduler = TaskScheduler::new(executor_tasks, workspace.clone(), execution_context, jobs, false).await?;
     scheduler.set_no_prefix(no_prefix);
-    // Nothing reads this yet (Phase 2 builds the idle clock, Phase 3 the
-    // ticker); Phase 1 only makes sure the resolved value reaches the
-    // scheduler. See docs/design/2026-09-15-idle-task-heartbeat.md.
     scheduler.set_progress_interval(progress_interval);
 
     // Ctrl+C has to reach the scheduler, not just the process. Without this the
@@ -487,8 +484,17 @@ pub async fn execute_with_terminal_output(
     // dashboard flag to set and no terminal to hand back.
     install_stop_handler(scheduler.cancel_signal(), || {}, || {});
 
+    // The `still running` ticker is armed here and nowhere earlier: this is the
+    // last point before the run itself, so an invocation that executes no task
+    // never starts one (docs/design/2026-09-15-idle-task-heartbeat.md, Phase 0).
+    let mut heartbeat = scheduler.start_heartbeat();
+
     // Execute all tasks, capturing result
     let result = scheduler.execute_all().await;
+
+    // Stopped before anything else prints, so no heartbeat can follow the run's
+    // final status line.
+    heartbeat.stop();
 
     // Close the run out in the database before anything else reads it: prune
     // included, since a run left `running` is a run `Clean` cannot age out.

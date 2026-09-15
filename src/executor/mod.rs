@@ -13,7 +13,8 @@ pub mod workspace;
 
 pub use action::{ActionProcessor, BashProcessor, ProcessedAction, PythonProcessor, ScriptProcessor};
 pub use colors::{
-    colorize_task_name, colorize_task_prefix, get_task_color, get_task_color_combination, set_global_task_order,
+    colorize_task_name, colorize_task_prefix, get_task_color, get_task_color_combination, plain_task_label,
+    set_global_task_order, task_label,
 };
 pub use graph::{DagVisualizer, GraphFormat, GraphOptions, NodeStyle};
 pub use output::TaskStreams;

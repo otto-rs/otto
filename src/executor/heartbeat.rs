@@ -13,12 +13,22 @@
 
 use std::{
     collections::HashMap,
+    io::{self, IsTerminal, Write},
     sync::{
-        Arc, Mutex, MutexGuard, PoisonError,
+        Arc, Condvar, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicU64, Ordering},
     },
+    thread,
     time::{Duration, Instant},
 };
+
+use log::{debug, error};
+
+use super::{
+    colors::{plain_task_label, task_label},
+    output::terminal_lock,
+};
+use crate::cli::commands::format::format_duration;
 
 /// The clock map, keyed by task name.
 type ClockMap = HashMap<String, Arc<TaskClock>>;
@@ -174,6 +184,214 @@ impl TaskClocks {
     fn map(&self) -> MutexGuard<'_, ClockMap> {
         self.clocks.lock().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// The longest a tick sleeps, so a 10-minute interval still notices a stop
+/// within a second. The ticker wakes at `min(interval, MAX_WAKE)`, which is
+/// also what bounds how late the first beat of a silent stretch can be.
+const MAX_WAKE: Duration = Duration::from_secs(1);
+
+/// A running ticker: the OS thread, plus what stops it.
+///
+/// An OS thread rather than a tokio task, and `std::thread` rather than
+/// `spawn_blocking`, because the tick reads the live-child registry with
+/// `tokio::sync::Mutex::blocking_lock`, which panics inside a runtime context.
+/// It is also the reason replay does its locked terminal work off the async
+/// path: a `std::sync` mutex must not be held across an `.await`.
+pub struct Heartbeat {
+    shutdown: Arc<Shutdown>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+/// The stop flag and the condvar the ticker sleeps on.
+///
+/// A condvar rather than a flag polled by a short sleep: the thread has to wake
+/// on the interval rather than ten times a second, and stopping has to be
+/// prompt - a plain `sleep(granularity)` loop would hold otto's exit for up to
+/// a second after the run's final status line.
+#[derive(Default)]
+struct Shutdown {
+    stopped: Mutex<bool>,
+    wake: Condvar,
+}
+
+impl Shutdown {
+    /// Sleep up to `granularity`. `true` means stop, and the lock is released
+    /// before returning either way: a tick must not emit while holding it.
+    fn sleep(&self, granularity: Duration) -> bool {
+        let stopped = self.stopped.lock().unwrap_or_else(PoisonError::into_inner);
+        if *stopped {
+            return true;
+        }
+        let (stopped, _) = self
+            .wake
+            .wait_timeout(stopped, granularity)
+            .unwrap_or_else(PoisonError::into_inner);
+        *stopped
+    }
+
+    fn stop(&self) {
+        *self.stopped.lock().unwrap_or_else(PoisonError::into_inner) = true;
+        self.wake.notify_all();
+    }
+}
+
+impl Heartbeat {
+    /// A handle that owns no thread, for the runs that emit nothing:
+    /// `--progress-interval 0`, TUI mode, or a thread otto could not spawn.
+    fn disabled() -> Self {
+        Self {
+            shutdown: Arc::new(Shutdown::default()),
+            thread: None,
+        }
+    }
+
+    /// Stop the ticker and wait for its thread.
+    ///
+    /// Called once `execute_all` has returned, so that no heartbeat can follow
+    /// the run's final status line: joining is what makes that a guarantee
+    /// rather than a race, since a tick already inside `emit` holds the
+    /// terminal lock and finishes its write before the join returns.
+    /// Idempotent, which is what makes the `Drop` backstop free.
+    pub fn stop(&mut self) {
+        self.shutdown.stop();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+impl Drop for Heartbeat {
+    /// Backstop for the paths that never reach an explicit `stop()` - an early
+    /// return or an unwind - so a run can never leave a ticker beating.
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// Start the ticker for one run.
+///
+/// `live` is the tick's liveness read, supplied by the caller because the
+/// registry it reads is a tokio mutex the caller owns; it is called from the
+/// ticker thread, outside any runtime, which is what makes a `blocking_lock`
+/// inside it legal. An interval of zero emits nothing and spawns nothing.
+pub fn spawn<L>(interval: Duration, no_prefix: bool, clocks: Arc<TaskClocks>, live: L) -> Heartbeat
+where
+    L: Fn() -> Vec<String> + Send + 'static,
+{
+    if interval.is_zero() {
+        debug!("heartbeat::spawn: disabled (--progress-interval 0)");
+        return Heartbeat::disabled();
+    }
+
+    // Read once, here, and never re-derived: npm shipped a progress predicate
+    // evaluated twice whose two readings diverged (commit 5b858c6), and nothing
+    // about a run can change whether stderr is a terminal.
+    let stderr_tty = io::stderr().is_terminal();
+    let granularity = wake_granularity(interval);
+    let interval_ms = interval.as_millis() as u64;
+    debug!(
+        "heartbeat::spawn: interval={interval_ms}ms granularity={}ms stderr_tty={stderr_tty}",
+        granularity.as_millis()
+    );
+
+    let shutdown = Arc::new(Shutdown::default());
+    let signal = shutdown.clone();
+    let thread = thread::Builder::new()
+        .name("otto-heartbeat".to_string())
+        .spawn(move || {
+            while !signal.sleep(granularity) {
+                tick(&clocks, &live(), interval_ms, no_prefix, stderr_tty);
+            }
+        });
+
+    match thread {
+        Ok(thread) => Heartbeat {
+            shutdown,
+            thread: Some(thread),
+        },
+        // The run is worth more than the progress notice, so a thread otto
+        // could not start is reported and then done without.
+        Err(e) => {
+            error!("could not start the progress heartbeat thread: {e}");
+            Heartbeat::disabled()
+        }
+    }
+}
+
+/// How long a tick sleeps between wakes: the interval, or [`MAX_WAKE`] if the
+/// interval is longer.
+///
+/// Waking faster than the interval is what keeps the first beat of a silent
+/// stretch close to the interval rather than up to a whole interval late, since
+/// a task can fall silent at any point between two wakes.
+fn wake_granularity(interval: Duration) -> Duration {
+    interval.min(MAX_WAKE)
+}
+
+/// One wake: emit a line for every live task that is due one.
+fn tick(clocks: &TaskClocks, live: &[String], interval_ms: u64, no_prefix: bool, stderr_tty: bool) {
+    let due = due_beats(clocks, live, interval_ms);
+    if due.is_empty() {
+        return;
+    }
+    let lines: Vec<String> = due
+        .iter()
+        .map(|(task, clock)| beat_line(task, clock.elapsed(), no_prefix, stderr_tty))
+        .collect();
+    emit(&lines);
+    // Stamped after the write, not before: a tick can wait an arbitrarily long
+    // replay for the terminal lock, and spacing is meant to be measured from
+    // the line the user saw.
+    for (_, clock) in &due {
+        clock.note_beat();
+    }
+}
+
+/// The live tasks a tick should print a line for: silent for at least the
+/// interval, and not already heartbeated within it.
+///
+/// Both halves matter. Silence alone would print a task that had been quiet for
+/// a minute on every wake; the beat stamp alone would print a chattering task.
+fn due_beats(clocks: &TaskClocks, live: &[String], interval_ms: u64) -> Vec<(String, Arc<TaskClock>)> {
+    clocks
+        .candidates(live)
+        .into_iter()
+        .filter(|(_, clock)| clock.idle_ms() >= interval_ms && clock.since_beat_ms() >= interval_ms)
+        .collect()
+}
+
+/// One heartbeat line, terminated by an ordinary newline.
+///
+/// No carriage return, no cursor control, no erase: the line has to survive
+/// being captured to a log verbatim, which is the constraint that chose a line
+/// over an animated spinner. The label is uncoloured whenever stderr is not a
+/// terminal, rather than inheriting `task_label`'s stdout-derived decision.
+/// Elapsed comes from otto's own `format_duration`, so `45.0s` under a minute
+/// and `2m14s` over one.
+fn beat_line(task: &str, elapsed: Duration, no_prefix: bool, stderr_tty: bool) -> String {
+    let label = if stderr_tty {
+        task_label(task, no_prefix)
+    } else {
+        plain_task_label(task, no_prefix)
+    };
+    format!("{label} still running ({})\n", format_duration(elapsed.as_secs_f64()))
+}
+
+/// Write a tick's lines to stderr under the process-wide terminal lock.
+///
+/// Synchronous on purpose, and deliberately not `report_status_line`
+/// (`scheduler/replay.rs`), which is an `async fn` whose first act is an
+/// `.await`. The lock is taken exactly once for the whole tick, so its lines
+/// stay contiguous, and nothing called under it takes it again: `TERMINAL_LOCK`
+/// is a non-reentrant `std::sync::Mutex`.
+fn emit(lines: &[String]) {
+    let _terminal = terminal_lock();
+    let mut err = io::stderr().lock();
+    for line in lines {
+        let _ = err.write_all(line.as_bytes());
+    }
+    let _ = err.flush();
 }
 
 #[path = "heartbeat_tests.rs"]

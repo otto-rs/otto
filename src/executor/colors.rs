@@ -81,5 +81,30 @@ pub fn colorize_task_prefix(task_name: &str) -> String {
     }
 }
 
+/// What a line otto writes about a task leads with: `[task]`, or a bare `task`
+/// under `--no-prefix`.
+///
+/// One function for both the scheduler's status lines and the heartbeat, so the
+/// two cannot drift into labelling the same task differently.
+pub fn task_label(task_name: &str, no_prefix: bool) -> String {
+    if no_prefix {
+        colorize_task_name(task_name)
+    } else {
+        colorize_task_prefix(task_name)
+    }
+}
+
+/// The same label with no colour, whatever `SHOULD_COLORIZE` says.
+///
+/// For a line going to stderr when stderr is not a terminal. `colored` derives
+/// `SHOULD_COLORIZE` from `stdout().is_terminal()`
+/// (`colored-3.1.1/src/control.rs`), so [`task_label`] applies a decision about
+/// stdout to whatever stream it is printed on - which is how `otto task 2>log`
+/// with stdout on a terminal writes a coloured label into `log` today. A caller
+/// writing to stderr picks between the two by asking about stderr.
+pub fn plain_task_label(task_name: &str, no_prefix: bool) -> String {
+    if no_prefix { task_name.to_string() } else { format!("[{task_name}]") }
+}
+
 #[path = "colors_tests.rs"]
 mod tests;

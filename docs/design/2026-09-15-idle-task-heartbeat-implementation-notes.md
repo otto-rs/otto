@@ -222,3 +222,123 @@ reads that map itself.
 
 ### Open questions
 - None.
+
+## Phase 3: The ticker and the line
+
+The heartbeat prints. `src/executor/heartbeat.rs` gained the ticker (`spawn`,
+`Heartbeat`, `Shutdown`) plus the three pieces a tick is built from
+(`due_beats`, `beat_line`, `emit`); `TaskScheduler::start_heartbeat()`
+(`src/executor/scheduler.rs`) is its only arming site, called from
+`execute_with_terminal_output` (`src/app.rs`) immediately before `execute_all`
+and stopped immediately after it returns. Observed on a 25s silent task at
+`--progress-interval 5`: four lines, the first 5.99s after the task's own line
+and the rest 5.00s / 5.00s / 5.00s apart, `[quiet] still running (6.0s)` and up.
+
+### Design decisions
+- **The emit function lives in `heartbeat.rs`, not `replay.rs`.** See
+  Deviations; it is the one placement this phase moved.
+- **The ticker sleeps on a `Condvar`, not on `thread::sleep`.** The doc only
+  specifies the wake cadence (`min(interval, 1s)`), and a plain sleep loop
+  satisfies it - but `stop()` then has to wait out the remaining granularity,
+  which holds otto's exit for up to a second after the final status line, on
+  every run. The condvar keeps the cadence and makes stopping immediate.
+  `stopping_is_prompt_and_the_ticker_stops_looking` pins it at under 500ms.
+- **`stop()` joins the thread**, which is what turns "no heartbeat follows the
+  final status line" from a race into a guarantee: a tick already inside `emit`
+  holds `TERMINAL_LOCK` and finishes its write before the join returns. `Drop`
+  calls the same idempotent `stop()` as a backstop for an early return or an
+  unwind, so a run cannot leave a ticker beating.
+- **`is_terminal()` on stderr is read once, in `spawn`, and never re-derived** -
+  the npm bug the doc cites (commit `5b858c6`) is a predicate evaluated twice
+  whose readings diverged. Nothing about a run can change the answer.
+- **The tick's liveness read is a closure the scheduler supplies**, rather than
+  `heartbeat.rs` importing `LiveChildren` and taking the lock itself. The
+  registry is a `tokio::sync::Mutex` the scheduler owns, `blocking_lock` is
+  legal only off-runtime, and injecting the read is what lets the whole ticker
+  be unit-tested against a fake live set with no children and no runtime.
+- **One `terminal_lock()` per tick, not per line.** The doc says "exactly once
+  per emit"; taking it for the whole batch also keeps a tick's lines contiguous,
+  which matters the moment two tasks stall at once.
+- **`note_beat()` is stamped after the write, not before.** A tick can wait an
+  arbitrarily long replay for the terminal lock (`write_replay_blocks` holds it
+  for a whole batch), and spacing is meant to be measured from the line the user
+  actually saw.
+- **TUI suppression is expressed as an interval of zero** rather than a second
+  predicate, so `--tui` and `--progress-interval 0` reach the same single
+  "start no thread" path. Note `execute_with_tui` is never handed
+  `progress_interval` at all (Phase 1), so the guard is belt-and-braces.
+- **`--progress-interval 0` starts no thread**, rather than starting one that
+  declines to print. Pinned by `a_zero_interval_starts_no_thread`.
+
+### Deviations
+- **The synchronous emit function is in `src/executor/heartbeat.rs`, not
+  alongside `report_status_line` in `src/executor/scheduler/replay.rs` as the
+  doc's Architecture table says.** Same effect, correct seam: everything the doc
+  asks for about it holds (synchronous, takes `terminal_lock()` itself exactly
+  once, calls nothing that takes it again, never touches `report_status_line`),
+  but `replay.rs` is `include!`d into `scheduler.rs` as one impl block for
+  ordered buffered-foreach replay, and the emit path shares nothing with it
+  except the lock - which is `pub(crate)` in `output.rs` and reachable from
+  anywhere in the crate. `heartbeat.rs` is this feature's module and already had
+  the clock the emit path reads and the test file its tests belong in.
+- **`status_label` was refactored rather than reused.** The doc says "Label from
+  `status_label` when stderr is a terminal, and the plain `[name]` form
+  otherwise", which as written duplicates `status_label`'s `--no-prefix` branch
+  in a second place. Instead `colors.rs` gained `task_label(name, no_prefix)`
+  (what `status_label` now delegates to, so the two cannot drift) and
+  `plain_task_label(name, no_prefix)` (the same shapes with no colour, whatever
+  `SHOULD_COLORIZE` says). `the_label_form_follows_stderr_not_stdout` asserts
+  the heartbeat picks between exactly those two rather than inventing a third.
+- **`wake_granularity()` was extracted** so `min(interval, 1s)` is a named
+  function with its own test rather than an expression inside a spawn.
+- **Criterion 1 and criterion 6's second half are measured on a merged stream**
+  (`sh -c 'otto ... 2>&1'`, one pipe), not on two pipes. "No heartbeat appears
+  after the final status line" is a claim about the relative order of a stderr
+  line and a stdout line, and two pipes read by two threads only give that order
+  to within scheduling jitter; one pipe makes it byte order. Criterion 2 still
+  uses genuine file redirection (`Stdio::from(File)`), and criterion 3 genuine
+  `script` + `2> file`, because those criteria are about the capture route
+  itself.
+- **One pinned figure is loosened, on the lower bound only, by 50ms**
+  (`SKEW`, `tests/progress_heartbeat_test.rs`). otto measures silence from the
+  moment `TeeWriter::write` stamps the clock; the test measures it from the
+  moment that line reaches the far side of a pipe, which is strictly later, so a
+  gap otto computed as exactly 5.000s can read as 4.999s here. That is
+  measurement skew, not a beat arriving early. The upper bounds (7s for the
+  first beat and for each gap), the "at least 3 lines" floor, the zero-line
+  counts and every byte count are exactly as the doc pins them.
+- **No timing was shortened.** All six criterion runs use the doc's 25-second
+  task and 5-second interval. They are six tests in one binary, so the harness
+  runs them concurrently and the suite grows by about one task's duration:
+  measured at 25.30s for the whole `progress_heartbeat_test` binary.
+- **Two tests beyond the six criteria.** `the_fixture_ottofile_declares_the_three_tasks`
+  guards the negative criteria against a fixture the binary cannot parse (a
+  broken ottofile makes "zero `still running` lines" pass for the wrong reason),
+  and `the_ticker_beats_a_silent_live_task` covers the thread path in-process.
+- **No new test for "the ticker is not armed for a non-executing invocation."**
+  The doc's Phase 0 result says the two existing canaries are the test for it;
+  both were re-run and are green
+  (`makefile_converter_test::test_strict_passes_a_makefile_that_converts_cleanly`,
+  `tasks_flag_test::tasks_defaults_to_yaml_on_a_real_tty`).
+
+### Tradeoffs
+- **Arming in `execute_with_terminal_output` vs. inside `execute_all`.** Inside
+  would cover the scheduler's own test call sites and the TUI path for free.
+  Chosen against: `execute_all` has several returns, the doc's lifetime is "a
+  flag set after `execute_all` returns", and the arming site is exactly the
+  constraint Phase 0 measured - one call site, as late as possible, is what
+  makes "never for a non-executing invocation" reviewable by reading.
+- **`the_ticker_beats_a_silent_live_task` writes one heartbeat line into the
+  test binary's own stderr**, which the harness does not capture (`io::stderr()`
+  bypasses the thread-local redirect `print!` uses), so `cargo test` output
+  carries a stray `[quiet] still running (1.0s)`. Accepted: the alternative is
+  to test `due_beats` and `beat_line` only and never exercise the thread, and
+  the beat stamp it asserts on moves only after `emit` has run - so that one
+  line is the proof.
+- **`Vec<String>` from the liveness closure, allocated per wake.** Once a second
+  at most, against a `tokio::sync::Mutex` guard that would otherwise have to be
+  held across the intersection. The registry's critical sections are two lines
+  long everywhere else in otto and this keeps them that way.
+
+### Open questions
+- None.
