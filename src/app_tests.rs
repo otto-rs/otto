@@ -11,6 +11,7 @@ fn test_runtime_config_fields() {
         jobs: 4,
         tui_mode: false,
         no_prefix: false,
+        no_progress: false,
         retention: crate::cfg::otto::RetentionSpec::default(),
         requested_tasks: vec![],
     };

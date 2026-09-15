@@ -440,6 +440,13 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
         to_stderr: bool,
         drain: Vec<DrainIssue>,
     ) {
+        // Every terminal transition -- success, failure, and both skip paths --
+        // arrives here, which makes this the one place the spinner has to learn
+        // that a task stopped running. Before the early returns below, because
+        // a buffered subtask and a TUI run both finish just as much as a live
+        // one does; only the printing differs.
+        crate::executor::progress::finished(task_name);
+
         if !cursor.is_empty()
             && cursor.record(
                 task_name,

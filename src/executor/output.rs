@@ -4,6 +4,7 @@ use std::{
     time::SystemTime,
 };
 
+use crate::executor::progress;
 use eyre::Result;
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -41,8 +42,36 @@ static TERMINAL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// write ordering, so a panic while it was held leaves no invariant broken, and
 /// refusing to print for the rest of the run would be a worse failure than an
 /// interleaved line.
-pub(crate) fn terminal_lock() -> std::sync::MutexGuard<'static, ()> {
+///
+/// The returned guard also owns the activity spinner's visibility: it erases
+/// any frame on acquire and notes the write on release. That lives here rather
+/// than at the call sites because the sites are exactly the ones this lock
+/// already names -- making each of them remember to erase would be the same
+/// list, kept in two places, and a replayed foreach block holds this lock for
+/// its whole length, so the frame stays gone for the whole block rather than
+/// flickering between its lines.
+pub(crate) fn terminal_lock() -> TerminalGuard {
+    let inner = terminal_lock_raw();
+    progress::hide();
+    TerminalGuard { _inner: inner }
+}
+
+/// The lock without the spinner hooks, for the spinner's own ticker -- which
+/// must not reset the idle clock it is waiting on, and must not recurse into
+/// the hide/redraw it is being called to perform.
+pub(crate) fn terminal_lock_raw() -> std::sync::MutexGuard<'static, ()> {
     TERMINAL_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Holds the terminal lock, and tells the spinner when the write is done.
+pub(crate) struct TerminalGuard {
+    _inner: std::sync::MutexGuard<'static, ()>,
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        progress::after_write();
+    }
 }
 
 /// Type of output stream

@@ -62,6 +62,15 @@ impl Parser {
                 .long("no-prefix")
                 .help("Suppress the [task] prefix on task output")
                 .action(clap::ArgAction::SetTrue),
+            // Deliberately NOT implied by --no-prefix. That flag is about the
+            // shape of stdout for a downstream consumer; this one is about
+            // whether stderr is a terminal. `ttv`, otto-dev's wrapper, runs
+            // `otto --no-prefix` interactively, so coupling them would remove
+            // the spinner from the case it exists for.
+            Arg::new("no-progress")
+                .long("no-progress")
+                .help("Never draw the activity spinner (also OTTO_NO_PROGRESS)")
+                .action(clap::ArgAction::SetTrue),
             // Declared here so `--help` lists it; `main` strips it from the
             // args before this command ever parses them, because logging is
             // configured before the parser exists. Same arrangement as -C/--cwd.

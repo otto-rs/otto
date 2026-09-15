@@ -138,6 +138,7 @@ pub struct RunPlan {
     pub tui_mode: bool,
     /// `--no-prefix`: suppress the `[task]` prefix on terminal output.
     pub no_prefix: bool,
+    pub no_progress: bool,
     /// The task and subtask names literally asked for: what the user named on
     /// the command line, or the ottofile's `otto.tasks:` default list when
     /// nothing was named. This is **not** `tasks` above, which is the
@@ -971,6 +972,7 @@ impl Parser {
 
         // Extract no-prefix flag (see docs/design/2026-08-28-boundary-fixes-and-dynamic-foreach.md Phase 8)
         let no_prefix = matches.get_flag("no-prefix");
+        let no_progress = matches.get_flag("no-progress");
 
         let ottofile_path = Self::divine_ottofile(ottofile_value)?;
         let (config_spec, hash, ottofile) = Self::load_config_from_path(ottofile_path)?;
@@ -1087,6 +1089,7 @@ impl Parser {
             jobs: self.jobs,
             tui_mode,
             no_prefix,
+            no_progress,
             requested_tasks: tasks_to_run,
         }))
     }
