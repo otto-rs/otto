@@ -1,6 +1,7 @@
 otto:
   api: 1
   jobs: 16
+  progress-interval: 10   # seconds of task silence before a "still running" line; 0 disables
   tasks:
   - punch
 tasks:

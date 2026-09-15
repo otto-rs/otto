@@ -342,3 +342,44 @@ and the rest 5.00s / 5.00s / 5.00s apart, `[quiet] still running (6.0s)` and up.
 
 ### Open questions
 - None.
+
+## Phase 4: Docs and coverage
+### Design decisions
+- **README gained a global-flags table** (`README.md`, Usage section), not just
+  a `--progress-interval` row spliced into prose. No such table existed before
+  this phase; the flag needed one row and the nearest existing anchor was the
+  inline `bash` usage block above it, which already names `-j/--jobs`, `-t/--tui`,
+  and `--no-prefix`. The table lists exactly those plus `-C/--cwd`, `-o/--ottofile`
+  (both named in the prose one paragraph up) and `--progress-interval`, so the row
+  this phase needs sits among the flags a reader has already seen, rather than
+  alone.
+- **`examples/hello-world/otto.yml` is the annotated example**, not one of the
+  twenty others. It is "the smallest possible ottofile" per `examples/README.md`
+  and already carries an illustrative `jobs: 16` unrelated to its three-task
+  body, so a second illustrative-only key follows an existing precedent in the
+  same file rather than establishing a new one.
+- **Two stale comments were corrected for accuracy**, not left as drift:
+  `docs/commands/ottofile-reference.md`'s `otto.progress-interval` row dropped
+  "nothing reads the resolved value yet", and the doc-comment above the
+  `progress-interval` `Arg` in `src/cli/parser/help.rs` dropped the matching
+  "only in this phase" language, both written during Phase 1 before Phases 2-3
+  wired the ticker. Neither edit changes behaviour; both are comment/prose-only.
+
+### Deviations
+- None from the doc's own Phase 4 bullets. The two stale-comment corrections
+  above are additional to what Phase 4 lists, not a deviation from it: the doc
+  never specified their wording, and leaving a false "nothing reads this yet"
+  statement standing next to newly-shipped behaviour would be a docs regression
+  this phase exists to avoid.
+
+### Tradeoffs
+- **Corrected the stale comments here rather than leaving them** for a
+  hypothetical later pass. Against: strictly, Phase 4's bullets name only a
+  README row and an example-ottofile line. For: both stale spots are read
+  before this file (`ottofile-reference.md`) and describe this feature's own
+  final state, an inaccuracy created by this feature's own earlier phases; a
+  "docs and coverage" phase is the natural place to close it, and the fix is a
+  two-line comment/prose diff with zero behavioural risk.
+
+### Open questions
+- None.

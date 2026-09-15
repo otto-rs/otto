@@ -109,7 +109,17 @@ otto -j 4 build            # cap concurrency at 4 (default: number of CPUs,
                             # or otto.jobs in the ottofile if set)
 otto -t build              # run under the interactive TUI dashboard
 otto --no-prefix build     # drop the "[task]" prefix from task output
+otto --progress-interval 5 build   # report a silent task every 5s instead of 10 (0 disables)
 ```
+
+| Flag | Default | Does |
+|---|---|---|
+| `-C`, `--cwd <DIR>` | current directory | Change to `DIR` before doing anything |
+| `-o`, `--ottofile <PATH>` | search upward for one | Use `PATH` as the ottofile instead of searching |
+| `-j`, `--jobs <N>` | number of CPUs, or `otto.jobs` | Cap concurrent tasks at `N` |
+| `-t`, `--tui` | off | Run under the interactive TUI dashboard |
+| `--no-prefix` | off | Drop the `[task]` prefix from task output |
+| `--progress-interval <SECONDS>` | `10`, or `otto.progress-interval` | Seconds of task silence before otto reports the task is still running; `0` disables |
 
 **Builtins** (capitalized, run like any other task):
 
