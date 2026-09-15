@@ -308,6 +308,10 @@ pub struct RuntimeConfig {
     /// `--no-prefix`: suppress the `[task]` prefix on terminal output.
     /// See docs/design/2026-08-28-boundary-fixes-and-dynamic-foreach.md Phase 8.
     pub no_prefix: bool,
+    /// Seconds of task silence before otto reports the task is still
+    /// running. See `RunPlan::progress_interval`; nothing reads this until
+    /// Phase 3 of docs/design/2026-09-15-idle-task-heartbeat.md.
+    pub progress_interval: u64,
     pub retention: RetentionSpec,
     /// The task and subtask names literally requested, for the run record.
     /// See `RunPlan::requested_tasks` and `ExecutionContext::record_requested`.
@@ -338,6 +342,7 @@ impl RuntimeConfig {
             jobs: plan.jobs,
             tui_mode: plan.tui_mode,
             no_prefix: plan.no_prefix,
+            progress_interval: plan.progress_interval,
             retention,
             requested_tasks: plan.requested_tasks,
         })))
@@ -355,6 +360,7 @@ pub async fn run(config: RuntimeConfig) -> Result<()> {
         config.jobs,
         config.tui_mode,
         config.no_prefix,
+        config.progress_interval,
         config.retention,
         config.requested_tasks,
     )
@@ -370,6 +376,7 @@ pub async fn execute_tasks(
     jobs: usize,
     tui_mode: bool,
     no_prefix: bool,
+    progress_interval: u64,
     retention: RetentionSpec,
     requested_tasks: Vec<String>,
 ) -> Result<(), Report> {
@@ -395,6 +402,7 @@ pub async fn execute_tasks(
                 ottofile_path,
                 jobs,
                 no_prefix,
+                progress_interval,
                 retention,
                 requested_tasks,
             )
@@ -404,9 +412,22 @@ pub async fn execute_tasks(
         // TUI mode already suppresses all terminal output (suppress_terminal
         // is derived from tui_mode in the scheduler), so no_prefix has nothing
         // to act on here: no prefix is ever printed to a terminal the TUI owns.
+        // The heartbeat is TUI's non-goal too (Non-Goals,
+        // docs/design/2026-09-15-idle-task-heartbeat.md), so `progress_interval`
+        // is not threaded into `execute_with_tui`.
         execute_with_tui(tasks, hash, ottofile_path, jobs, retention, requested_tasks).await
     } else {
-        execute_with_terminal_output(tasks, hash, ottofile_path, jobs, no_prefix, retention, requested_tasks).await
+        execute_with_terminal_output(
+            tasks,
+            hash,
+            ottofile_path,
+            jobs,
+            no_prefix,
+            progress_interval,
+            retention,
+            requested_tasks,
+        )
+        .await
     }
 }
 
@@ -418,6 +439,7 @@ pub async fn execute_with_terminal_output(
     ottofile_path: Option<PathBuf>,
     jobs: usize,
     no_prefix: bool,
+    progress_interval: u64,
     retention: RetentionSpec,
     requested_tasks: Vec<String>,
 ) -> Result<(), Report> {
@@ -452,6 +474,10 @@ pub async fn execute_with_terminal_output(
     let workspace = Arc::new(workspace);
     let mut scheduler = TaskScheduler::new(executor_tasks, workspace.clone(), execution_context, jobs, false).await?;
     scheduler.set_no_prefix(no_prefix);
+    // Nothing reads this yet (Phase 2 builds the idle clock, Phase 3 the
+    // ticker); Phase 1 only makes sure the resolved value reaches the
+    // scheduler. See docs/design/2026-09-15-idle-task-heartbeat.md.
+    scheduler.set_progress_interval(progress_interval);
 
     // Ctrl+C has to reach the scheduler, not just the process. Without this the
     // terminal's SIGINT default-killed otto outright and `abandon_run` never

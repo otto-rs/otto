@@ -293,6 +293,16 @@ pub struct OttoSpec {
     )]
     pub jobs: Option<usize>,
 
+    /// Seconds of task silence before otto reports the task is still running;
+    /// `0` disables. Used only when `--progress-interval` was not given
+    /// explicitly (see `Parser::parse`'s `value_source` check, the same
+    /// pattern `jobs` uses above). Kebab on disk, matching `envs-command`.
+    /// Nothing reads this yet: Phase 1 of
+    /// docs/design/2026-09-15-idle-task-heartbeat.md only threads the value
+    /// through to the scheduler. Phase 3 is the ticker that reads it.
+    #[serde(default, rename = "progress-interval", skip_serializing_if = "Option::is_none")]
+    pub progress_interval: Option<u64>,
+
     #[serde(default = "default_tasks", skip_serializing_if = "is_default_tasks")]
     pub tasks: Vec<String>,
 
@@ -317,6 +327,7 @@ impl Default for OttoSpec {
             about: default_about(),
             api: default_api(),
             jobs: None,
+            progress_interval: None,
             tasks: default_tasks(),
             envs: HashMap::new(),
             envs_command: None,

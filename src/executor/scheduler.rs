@@ -1246,6 +1246,12 @@ pub struct TaskScheduler<F: FileSystem = crate::ports::RealFs> {
     /// `TaskScheduler::new()` call sites (tests included) don't have to
     /// thread a flag that almost none of them exercise.
     no_prefix: bool,
+    /// Seconds of task silence before otto reports the task is still
+    /// running; `0` disables. Set via `set_progress_interval()`, same
+    /// reasoning as `no_prefix` above. Nothing reads this field until Phase 3
+    /// of docs/design/2026-09-15-idle-task-heartbeat.md builds the ticker;
+    /// Phase 1 only threads the resolved value this far.
+    progress_interval: u64,
     /// Optional broadcast channel for TUI status updates
     message_tx: Option<tokio::sync::broadcast::Sender<TaskMessage>>,
     /// Pre-created TaskStreams for TUI mode (task_name -> TaskStreams)
@@ -1288,6 +1294,11 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
             tasks,
             tui_mode,
             no_prefix: false,
+            // Matches otto's own CLI default (`cli::parser::DEFAULT_PROGRESS_INTERVAL`)
+            // so a caller that never calls `set_progress_interval` (most of
+            // today's test call sites) still carries otto's real default
+            // rather than an arbitrary placeholder.
+            progress_interval: 10,
             message_tx: None,
             task_streams: None,
             cancel: Arc::new(CancelSignal::default()),
@@ -1359,6 +1370,11 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
     /// mode (terminal output is already fully suppressed there).
     pub fn set_no_prefix(&mut self, no_prefix: bool) {
         self.no_prefix = no_prefix;
+    }
+
+    /// Nothing reads `progress_interval` yet: see the field's doc comment.
+    pub fn set_progress_interval(&mut self, progress_interval: u64) {
+        self.progress_interval = progress_interval;
     }
 
     /// What a scheduler status line leads with: `[task]`, or a bare `task`

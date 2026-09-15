@@ -62,6 +62,18 @@ impl Parser {
                 .long("no-prefix")
                 .help("Suppress the [task] prefix on task output")
                 .action(clap::ArgAction::SetTrue),
+            // Flag, env var, and ottofile key only in this phase; nothing
+            // reads the resolved value yet
+            // (docs/design/2026-09-15-idle-task-heartbeat.md, Phase 1). `0`
+            // disables rather than being rejected, unlike `jobs`, since a
+            // silenced heartbeat is a valid choice and not a hot-spin hazard.
+            Arg::new("progress-interval")
+                .long("progress-interval")
+                .value_name("SECONDS")
+                .help("Seconds of task silence before otto reports the task is still running; 0 disables")
+                .env("OTTO_PROGRESS_INTERVAL")
+                .default_value(DEFAULT_PROGRESS_INTERVAL.to_string())
+                .value_parser(value_parser!(u64)),
             // Declared here so `--help` lists it; `main` strips it from the
             // args before this command ever parses them, because logging is
             // configured before the parser exists. Same arrangement as -C/--cwd.

@@ -30,7 +30,7 @@ structs has a default, except `EdgeSpec.task`, which is genuinely required).
 environment variables live at `otto.envs`, one level down. See the migration
 note for the two work repos this broke.
 
-## `otto:` (`OttoSpec`) — 8 keys
+## `otto:` (`OttoSpec`) - 9 keys
 
 **Five more keys used to parse here and do nothing**: `home`, `verbosity`,
 and (before 2026-08-30) `jobs` were accepted-and-ignored — `deny_unknown_fields`
@@ -53,6 +53,7 @@ command line (the flag still always wins).
 | `otto.about` | string | `"A task runner"` | The one-line description shown by the same `otto --help` path as `name`. `otto Convert` sets this to `"Converted from Makefile"` in its output. |
 | `otto.api` | string | `"1"` | **Schema version gate**, checked before the strict parse. Must be one of the versions this otto's `SUPPORTED_API_VERSIONS` const supports (currently just `"1"`); an unsupported value is rejected with a message naming the declared version, the supported set, and "upgrade otto" — before any unknown-key error, so a newer ottofile on an older otto gets a truthful message instead of a confusing one about whichever key is new. |
 | `otto.jobs` | integer | number of CPUs | Default concurrent-task limit, used only when `-j/--jobs` is not passed on the command line. |
+| `otto.progress-interval` | integer | `10` | **Kebab key.** Seconds of task silence before otto reports the task is still running on stderr; `0` disables. Used only when `--progress-interval` is not passed on the command line (same `-j/--jobs`-style precedence: flag, then `$OTTO_PROGRESS_INTERVAL`, then this key, then the default). As of this schema version nothing reads the resolved value yet - see `docs/design/2026-09-15-idle-task-heartbeat.md`. |
 | `otto.tasks` | list of strings | `["*"]` | Default-task-selection filter (which tasks run when none are named on the command line). **Not** the task map — that is root `tasks:`, a different key at a different level. Naming collision between the two is real; do not confuse them. |
 | `otto.envs` | map: string -> string | `{}` | **Global environment variables**, available to every task. Free-form key site: the map keys are env-var names, not a fixed field list. This is the key two work repos invented at the wrong level (root `envs:`) before this page existed — see the migration note. |
 | `otto.envs-command` | string | none | **Kebab key.** Shell command whose `KEY=VALUE` stdout becomes global environment variables, layered UNDER `otto.envs` (a literal `otto.envs` entry for the same key still wins). Runs with the ottofile's directory as cwd, at most once per invocation, lazily: never for `--help`, otherwise whenever something needs the env map. Values are taken literally - no unquoting, no `$(...)` re-evaluation, no `${VAR}` expansion - so a value cannot contain a newline; multi-line values stay in `otto.envs`. Blank lines and `#` comment lines are skipped; a line with no `=` or an invalid key is a load error naming the line number. Empty output is legal and means "no variables". |
@@ -412,10 +413,10 @@ than global, so it does not appear in `otto --help`'s option table (see
 |---|---|
 | `--Serial` | Run this task's foreach subtasks one at a time instead of in parallel - the command-line equivalent of `foreach.parallel: false`. Rejected at load together with `foreach.jobs` on the same task: an ordering constraint and a concurrency cap are the same incoherence. |
 
-## Total: 46 fixed keys across the seven structs
+## Total: 47 fixed keys across the seven structs
 
-`ConfigSpec` 2 + `OttoSpec` 8 + `RetentionSpec` 5 + `ForeachSpec` 9 +
-`TaskSpecHelper` 13 + `ParamSpec` 7 + `EdgeSpec` 2 = **46**. This count, and
+`ConfigSpec` 2 + `OttoSpec` 9 + `RetentionSpec` 5 + `ForeachSpec` 9 +
+`TaskSpecHelper` 13 + `ParamSpec` 7 + `EdgeSpec` 2 = **47**. This count, and
 every key name above, is pinned by an automated drift test
 (`ottofile_reference_key_inventory_is_exhaustive`, in
 `src/cfg/task.rs`'s `#[cfg(test)]` module): it destructures a live instance of
@@ -424,7 +425,7 @@ gains or loses a field, before any test even runs) and separately recovers
 each struct's real on-disk key list from its "unknown field" error message
 (fed a deliberately bogus key — `deny_unknown_fields`'s derive-generated
 error for the six Architecture-table structs, `EdgeSpec`'s hand-written
-`visit_map` error for the seventh), then asserts every one of those 46
+`visit_map` error for the seventh), then asserts every one of those 47
 recovered keys is mentioned, verbatim, on this page. The stated total and the
 per-struct arithmetic in this section are pinned by the same test, so a wrong
 count here is a red build rather than a footnote nobody re-adds up. If this

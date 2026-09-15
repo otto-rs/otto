@@ -967,6 +967,7 @@ fn ottofile_reference_key_inventory_is_exhaustive() {
         about: _,
         api: _,
         jobs: _,
+        progress_interval: _,
         tasks: _,
         envs: _,
         envs_command: _,
@@ -1044,7 +1045,7 @@ fn ottofile_reference_key_inventory_is_exhaustive() {
         ),
         (
             "OttoSpec",
-            8,
+            9,
             expected_keys_from_deny_unknown_fields::<OttoSpec>,
             otto_path,
         ),
@@ -1101,7 +1102,7 @@ fn ottofile_reference_key_inventory_is_exhaustive() {
         total += keys.len();
     }
     assert_eq!(
-        total, 46,
+        total, 47,
         "total on-disk key count drifted from the design doc's count of 46"
     );
 

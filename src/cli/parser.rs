@@ -123,6 +123,12 @@ fn default_jobs() -> usize {
 
 static DEFAULT_JOBS: LazyLock<String> = LazyLock::new(|| default_jobs().to_string());
 
+/// Seconds of task silence before otto reports the task is still running.
+/// Fixed, unlike `DEFAULT_JOBS`, which depends on the host's CPU count: there
+/// is no equivalent "how long is too long" to probe for at runtime.
+/// See docs/design/2026-09-15-idle-task-heartbeat.md.
+const DEFAULT_PROGRESS_INTERVAL: u64 = 10;
+
 /// Largest edit distance at which an unknown task name is worth suggesting a
 /// replacement for. Beyond this the "did you mean" is noise, not help.
 const MAX_SUGGESTION_DISTANCE: usize = 3;
@@ -138,6 +144,12 @@ pub struct RunPlan {
     pub tui_mode: bool,
     /// `--no-prefix`: suppress the `[task]` prefix on terminal output.
     pub no_prefix: bool,
+    /// Seconds of task silence before otto reports the task is still
+    /// running; `0` disables. Threaded through to `RuntimeConfig` and the
+    /// scheduler starting Phase 1 of
+    /// docs/design/2026-09-15-idle-task-heartbeat.md; nothing reads it until
+    /// Phase 3.
+    pub progress_interval: u64,
     /// The task and subtask names literally asked for: what the user named on
     /// the command line, or the ottofile's `otto.tasks:` default list when
     /// nothing was named. This is **not** `tasks` above, which is the
@@ -720,6 +732,8 @@ pub struct Parser {
     pargs: Vec<Vec<String>>,
     ottofile: Option<PathBuf>,
     jobs: usize,
+    /// See `RunPlan::progress_interval`.
+    progress_interval: u64,
     /// Per-invocation cache for dynamic (command-sourced) config values, plus
     /// the memoized global `envs:` those commands run with. Interior-mutable so
     /// the `&self` call sites (partitioning, `--list-subtasks`, `--tasks`,
@@ -739,6 +753,7 @@ impl Parser {
             pargs: Vec::new(),
             ottofile: None,
             jobs: default_jobs(),
+            progress_interval: DEFAULT_PROGRESS_INTERVAL,
             resolver: DynamicResolver::new(),
         })
     }
@@ -902,6 +917,7 @@ impl Parser {
                                                 // a subdirectory.
                                                 ottofile: Some(path.clone()),
                                                 jobs: default_jobs(),
+                                                progress_interval: DEFAULT_PROGRESS_INTERVAL,
                                                 resolver: DynamicResolver::new(),
                                             };
                                             temp_parser.inject_builtin_commands();
@@ -966,6 +982,20 @@ impl Parser {
             Some(clap::parser::ValueSource::DefaultValue)
         );
 
+        // Extract progress-interval, same `value_source` pattern as `jobs`
+        // above: the flag always has a value (clap's default is 10), so
+        // `value_source` is the only way to tell "the user actually typed
+        // --progress-interval" from "clap filled it in". Nothing reads
+        // `self.progress_interval` yet (docs/design/2026-09-15-idle-task-heartbeat.md
+        // Phase 1); Phase 3 is the ticker that does.
+        self.progress_interval = *matches
+            .get_one::<u64>("progress-interval")
+            .expect("progress-interval should have default value");
+        let progress_interval_explicit = !matches!(
+            matches.value_source("progress-interval"),
+            Some(clap::parser::ValueSource::DefaultValue)
+        );
+
         // Extract tui flag
         let mut tui_mode = matches.get_flag("tui");
 
@@ -983,6 +1013,13 @@ impl Parser {
         // clap already filled in, present overrides it.
         if !jobs_explicit && let Some(jobs) = self.config_spec.otto.jobs {
             self.jobs = jobs;
+        }
+
+        // `otto.progress-interval` is an `Option`, same shape as `otto.jobs`:
+        // absent leaves clap's default in place, present overrides it, and
+        // either way the flag on the command line always wins.
+        if !progress_interval_explicit && let Some(progress_interval) = self.config_spec.otto.progress_interval {
+            self.progress_interval = progress_interval;
         }
 
         // Inject built-in commands
@@ -1087,6 +1124,7 @@ impl Parser {
             jobs: self.jobs,
             tui_mode,
             no_prefix,
+            progress_interval: self.progress_interval,
             requested_tasks: tasks_to_run,
         }))
     }

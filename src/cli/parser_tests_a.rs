@@ -89,6 +89,7 @@ fn test_parse_outcome_into_run_returns_the_plan() {
         jobs: 4,
         tui_mode: false,
         no_prefix: true,
+        progress_interval: 10,
         requested_tasks: vec![],
     })
     .into_run()
@@ -1347,4 +1348,142 @@ fn foreach_jobs_is_stamped_on_every_item_and_never_on_the_virtual_parent() {
     assert_eq!(jobs_for("capped:one"), Some(1));
     assert_eq!(jobs_for("capped:two"), Some(1));
     assert_eq!(jobs_for("capped"), None);
+}
+
+// =========================================================================
+// progress-interval precedence (docs/design/2026-09-15-idle-task-heartbeat.md
+// Phase 1). Mirrors the `jobs` precedence tests above exactly: flag > env >
+// ottofile > default. Nothing reads the resolved value yet, so these tests
+// only pin the resolution, the same thing Phase 1 is scoped to.
+// =========================================================================
+
+#[test]
+fn test_progress_interval_parameter_default() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let ottofile_path = temp_dir.path().join("otto.yml");
+    fs::write(&ottofile_path, "tasks:\n  test:\n    action: echo test\n").unwrap();
+
+    let args = vec![
+        "otto".to_string(),
+        "--ottofile".to_string(),
+        ottofile_path.to_string_lossy().to_string(),
+        "test".to_string(),
+    ];
+
+    let mut parser = Parser::new(args).unwrap();
+    let plan = parser.parse().unwrap().into_run().unwrap();
+    assert_eq!(plan.progress_interval, DEFAULT_PROGRESS_INTERVAL);
+}
+
+#[test]
+fn test_progress_interval_parameter_parsing() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let ottofile_path = temp_dir.path().join("otto.yml");
+    fs::write(&ottofile_path, "tasks:\n  test:\n    action: echo test\n").unwrap();
+
+    let args = vec![
+        "otto".to_string(),
+        "--progress-interval".to_string(),
+        "5".to_string(),
+        "--ottofile".to_string(),
+        ottofile_path.to_string_lossy().to_string(),
+        "test".to_string(),
+    ];
+
+    let mut parser = Parser::new(args).unwrap();
+    let result = parser.parse();
+    assert!(
+        result.is_ok(),
+        "otto --progress-interval 5 <task> must parse: {result:?}"
+    );
+    let plan = result.unwrap().into_run().unwrap();
+    assert_eq!(plan.progress_interval, 5);
+}
+
+/// `otto.progress-interval` sets the default only when `--progress-interval`
+/// was not given explicitly, the same shape as `otto.jobs`.
+#[test]
+fn test_otto_progress_interval_config_sets_default_when_flag_omitted() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let ottofile_path = temp_dir.path().join("otto.yml");
+    fs::write(
+        &ottofile_path,
+        "otto:\n  progress-interval: 30\ntasks:\n  test:\n    action: echo test\n",
+    )
+    .unwrap();
+
+    let args = vec![
+        "otto".to_string(),
+        "--ottofile".to_string(),
+        ottofile_path.to_string_lossy().to_string(),
+        "test".to_string(),
+    ];
+
+    let mut parser = Parser::new(args).unwrap();
+    let plan = parser.parse().unwrap().into_run().unwrap();
+    assert_eq!(plan.progress_interval, 30);
+}
+
+/// An explicit `--progress-interval` wins over `otto.progress-interval` even
+/// when the two disagree.
+#[test]
+fn test_explicit_progress_interval_flag_overrides_otto_config() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let ottofile_path = temp_dir.path().join("otto.yml");
+    fs::write(
+        &ottofile_path,
+        "otto:\n  progress-interval: 30\ntasks:\n  test:\n    action: echo test\n",
+    )
+    .unwrap();
+
+    let args = vec![
+        "otto".to_string(),
+        "--progress-interval".to_string(),
+        "7".to_string(),
+        "--ottofile".to_string(),
+        ottofile_path.to_string_lossy().to_string(),
+        "test".to_string(),
+    ];
+
+    let mut parser = Parser::new(args).unwrap();
+    let plan = parser.parse().unwrap().into_run().unwrap();
+    assert_eq!(plan.progress_interval, 7);
+}
+
+/// `0` disables and must parse cleanly, unlike `-j 0` which is a hot-spin
+/// hazard and is rejected. There is no equivalent hazard here: a `0` heartbeat
+/// interval is simply an operator who never wants the line.
+#[test]
+fn test_progress_interval_zero_is_accepted() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let ottofile_path = temp_dir.path().join("otto.yml");
+    fs::write(&ottofile_path, "tasks:\n  test:\n    action: echo test\n").unwrap();
+
+    let args = vec![
+        "otto".to_string(),
+        "--progress-interval".to_string(),
+        "0".to_string(),
+        "--ottofile".to_string(),
+        ottofile_path.to_string_lossy().to_string(),
+        "test".to_string(),
+    ];
+
+    let mut parser = Parser::new(args).unwrap();
+    let plan = parser.parse().unwrap().into_run().unwrap();
+    assert_eq!(plan.progress_interval, 0);
 }

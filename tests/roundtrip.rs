@@ -442,3 +442,46 @@ fn a_minimal_config_round_trips_without_gaining_keys() {
         );
     }
 }
+
+/// `otto.progress-interval` round-trips byte-identically, same shape as the
+/// `jobs` tests above (design doc 2026-09-15-idle-task-heartbeat.md, Phase 1).
+#[test]
+fn progress_interval_round_trips_byte_identical() {
+    let yaml = "otto:\n  progress-interval: 30\n";
+    assert_roundtrips(yaml);
+
+    let config: ConfigSpec = yaml_serde::from_str(yaml).expect("parse");
+    let emitted = yaml_serde::to_string(&config).expect("serialize");
+
+    // Not a full-string equality: `otto:` also re-emits `api:`, which has no
+    // skip predicate by design (`otto.rs`'s comment on `is_default_name` and
+    // friends), and `ConfigSpec.tasks` always emits even when empty. The
+    // property this test guards is narrower: the key survives, unreworded.
+    assert!(
+        emitted.contains("progress-interval: 30"),
+        "an explicit progress-interval key must not be dropped or reworded;\ngot:\n{emitted}"
+    );
+}
+
+/// A config that never wrote `progress-interval:` must not gain one, same
+/// reasoning as `an_absent_jobs_key_stays_absent_on_re_emit`.
+#[test]
+fn an_absent_progress_interval_key_stays_absent_on_re_emit() {
+    let yaml = "tasks:\n  build:\n    bash: echo hi\n";
+
+    let config: ConfigSpec = yaml_serde::from_str(yaml).expect("parse");
+    let emitted = yaml_serde::to_string(&config).expect("serialize");
+
+    assert_eq!(emitted, yaml, "an absent progress-interval key must not be invented");
+}
+
+/// `OttoSpec` is `#[serde(deny_unknown_fields)]`, so a misspelled sibling of
+/// `progress-interval` fails loudly at load rather than being silently
+/// dropped.
+#[test]
+fn a_misspelled_progress_interval_key_fails_loudly() {
+    let yaml = "otto:\n  progress-intervals: 30\ntasks:\n  build:\n    bash: echo hi\n";
+    let err = yaml_serde::from_str::<ConfigSpec>(yaml).unwrap_err().to_string();
+    assert!(err.contains("progress-intervals"), "must name the field: {err}");
+    assert!(err.contains("otto"), "must name the path: {err}");
+}
