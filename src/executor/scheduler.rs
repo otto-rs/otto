@@ -26,6 +26,7 @@ use super::task::{Task, TaskEdge};
 use super::{
     action::{ActionProcessor, ProcessedAction},
     colors::{colorize_task_name, colorize_task_prefix, set_global_task_order},
+    heartbeat::{TaskClock, TaskClocks},
     output::{OutputType, TaskMessage, TaskStreams, TuiTaskStatus, format_terminal_output, terminal_lock},
     workspace::{ExecutionContext, Workspace},
 };
@@ -389,6 +390,19 @@ struct ActiveTasks {
 }
 
 impl ActiveTasks {
+    /// Build over a live-child registry the caller already owns.
+    ///
+    /// `execute_all` hands in the scheduler's registry so a heartbeat tick can
+    /// read the same map the task bodies write, rather than a mirror of it.
+    /// `abort_all` still clears it from here, which is the site a mirror would
+    /// have had to know about.
+    fn with_children(children: LiveChildren) -> Self {
+        Self {
+            children,
+            ..Self::default()
+        }
+    }
+
     /// Every task in flight, whatever its class. This is what a cancelled run
     /// reports as killed, and what `is_empty` is the zero case of.
     fn in_flight_len(&self) -> usize {
@@ -1252,6 +1266,20 @@ pub struct TaskScheduler<F: FileSystem = crate::ports::RealFs> {
     /// of docs/design/2026-09-15-idle-task-heartbeat.md builds the ticker;
     /// Phase 1 only threads the resolved value this far.
     progress_interval: u64,
+    /// Every non-`tty:` task's idle clock for this run (design doc
+    /// docs/design/2026-09-15-idle-task-heartbeat.md). Timing only: what is
+    /// alive is `live_children` below, and this map only says how long each of
+    /// those has been silent.
+    clocks: Arc<TaskClocks>,
+    /// Every task child alive right now, by task name.
+    ///
+    /// Owned here rather than inside `execute_all`'s `ActiveTasks` local so a
+    /// heartbeat tick reads the same map the task bodies write. The registry is
+    /// the only thing in otto that means "a process exists right now", and
+    /// every attempt to keep a second copy of it has to know about
+    /// `ActiveTasks::abort_all`, which clears it on cancellation with no body
+    /// running.
+    live_children: LiveChildren,
     /// Optional broadcast channel for TUI status updates
     message_tx: Option<tokio::sync::broadcast::Sender<TaskMessage>>,
     /// Pre-created TaskStreams for TUI mode (task_name -> TaskStreams)
@@ -1299,6 +1327,8 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
             // today's test call sites) still carries otto's real default
             // rather than an arbitrary placeholder.
             progress_interval: 10,
+            clocks: Arc::new(TaskClocks::default()),
+            live_children: LiveChildren::default(),
             message_tx: None,
             task_streams: None,
             cancel: Arc::new(CancelSignal::default()),
@@ -1375,6 +1405,30 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
     /// Nothing reads `progress_interval` yet: see the field's doc comment.
     pub fn set_progress_interval(&mut self, progress_interval: u64) {
         self.progress_interval = progress_interval;
+    }
+
+    /// The tasks a heartbeat tick would consider right now, each with its
+    /// clock: every task with a live child that has one.
+    ///
+    /// Liveness is read straight from the registry the task bodies write, so
+    /// there is nothing to drift. Async because that registry is a tokio mutex;
+    /// Phase 3's ticker thread takes the same two reads with `blocking_lock`
+    /// from outside the runtime.
+    pub async fn tick_candidates(&self) -> Vec<(String, Arc<TaskClock>)> {
+        self.clocks.candidates(&self.live_child_names().await)
+    }
+
+    /// Who has a live child right now, exactly as a tick reads liveness.
+    pub async fn live_child_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.live_children.lock().await.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    /// This run's clock map, for asking whether a task ever had a clock
+    /// regardless of whether it is live now.
+    pub fn task_clocks(&self) -> Arc<TaskClocks> {
+        self.clocks.clone()
     }
 
     /// What a scheduler status line leads with: `[task]`, or a bare `task`
@@ -1462,7 +1516,7 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
 
         let mut completed_tasks = 0;
         let total_tasks = self.tasks.len();
-        let mut active_tasks = ActiveTasks::default();
+        let mut active_tasks = ActiveTasks::with_children(self.live_children.clone());
         let max_concurrent = self.max_parallel;
         // Whether this run contains any task the launch cap does not apply to.
         // Computed once: when it is false the launch pass below stops at the
@@ -1851,3 +1905,5 @@ mod replay_tests;
 mod tests_a;
 #[path = "scheduler_tests_b.rs"]
 mod tests_b;
+#[path = "scheduler_tests_c.rs"]
+mod tests_c;

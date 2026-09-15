@@ -123,3 +123,102 @@ Phase 3 (the ticker).
 
 ### Open questions
 - None.
+
+## Phase 2: The ledger and the idle clock
+
+The per-task idle clock exists and is stamped; nothing is printed. A new
+`src/executor/heartbeat.rs` holds `TaskClock` (the doc's Data Model struct) and
+`TaskClocks` (the per-run map plus the single run-start `Instant` its offsets
+are measured from). `TeeWriter::write` stamps the clock at its top, above the
+`suppress_terminal` branch. Liveness is not duplicated: the live-child registry
+moved from `execute_all`'s `ActiveTasks` local onto `TaskScheduler`, and a tick
+reads that map itself.
+
+### Design decisions
+- **`last_line_ms` is stamped at the top of `TeeWriter::write`
+  (`src/executor/output.rs`), above the `suppress_terminal` branch.** Verified
+  by breaking it: moving the stamp inside the branch, beside `terminal_lock()`,
+  turns `a_suppressed_subtasks_line_advances_its_own_clock_and_no_siblings` red
+  with `a suppressed subtask's line must still reset its clock: 0 vs 0`, which
+  is the buffered-foreach case the doc's placement argument is about.
+- **`TaskClock` and `TaskClocks` live in a new module rather than in `output.rs`
+  or `scheduler.rs`.** Both read it - the drains stamp it, the scheduler
+  intersects it with the registry - so it belongs to neither, and Phase 3's
+  ticker is a third reader.
+- **The live-child registry is now owned by `TaskScheduler`
+  (`live_children`), handed to `ActiveTasks::with_children`.** It was a private
+  field of a local in `execute_all`, unreachable from `&self`, so neither a
+  tick nor a test could read it without a mirror - which is the one thing the
+  design forbids. Nothing about the registry's own lifecycle changed:
+  `register_child`, `deregister_child` and `abort_all` still write the same map.
+- **A `tty: true` task is excluded by absence, not by a predicate.** It returns
+  before any `TaskStreams` exist (`task_execution.rs`), so `clocks.start()` is
+  never reached for it, so the intersection in `TaskClocks::candidates` cannot
+  name it. Pinned by `a_live_task_with_no_clock_is_not_a_candidate`. No tick-time
+  code reads `task.tty`.
+- **`TaskClocks::candidates` returns names in sorted order**, so a tick with
+  several lines to emit emits them in a stable order rather than a hash order
+  that changes between beats.
+- **The clock map recovers from lock poisoning** the same way `terminal_lock`
+  does, with the same reasoning: it guards no invariant, and refusing to time
+  anything for the rest of the run is the worse failure.
+- **Everything new is `pub` in a `pub` module**, so the three accessors Phase 3
+  is the first production reader of (`note_beat`, `since_beat_ms`, `elapsed`)
+  need no `#[allow(dead_code)]`. Each has a test here; `-D warnings` is clean
+  with no lint allowances added anywhere.
+
+### Deviations
+- **`TaskClock` carries a fourth field the doc's struct does not show:
+  `origin: Instant`, a copy of `TaskClocks::origin`.** Same model as the doc
+  specifies (both ms fields are offsets from one run-start `Instant`); the copy
+  is what lets `note_line` stamp without taking the map's lock, on a path that
+  runs once per line of task output. Same effect, one field wider.
+- **Both ms fields start at the clock's own creation offset, not at 0.** A task
+  is silent from the moment its clock starts; zeroing them would report a task
+  that began late in a long run as having been silent since the run started.
+- **The clock is created in the task body immediately after its `TaskStreams`
+  are obtained, not inside `TaskStreams::new`.** The doc says "created when a
+  task's `TaskStreams` are created", and on the run path this is that instant -
+  but `TaskStreams::new` is also called from the TUI pre-creation path
+  (`app.rs`), which has no run-scoped map to insert into and runs for tasks that
+  may never spawn a child. Same seam for the intent, correct seam for the
+  lifecycle: a clock now exists exactly when a non-`tty:` child does.
+- **The SIGINT half of the second success criterion is driven through
+  `CancelSignal` in-process, not by delivering a real SIGINT.** The candidate
+  set is only observable from inside the process, and a real signal would need
+  a subprocess that cannot be asked. The code path under test is identical:
+  `install_stop_handler` (`app.rs`) does nothing but trip this signal, and the
+  assertion covers `abandon_run` -> `abort_all` exactly as the doc names it.
+- **New sibling test file `src/executor/scheduler_tests_c.rs`.** Appending the
+  run-level tests to `scheduler_tests_b.rs` put it at 1568 lines, past the
+  1500-line Rust cap the existing `tests_a`/`tests_b` split exists to respect.
+- **Phase 1's `progress_interval` is still unread.** Phase 2 adds no reader for
+  it, exactly as the doc's phase split has it; the field's comment still points
+  at Phase 3.
+
+### Tradeoffs
+- **`tick_candidates()` is async here; Phase 3's ticker needs a blocking read.**
+  The registry is a `tokio::sync::Mutex`, and this phase's only callers are
+  async (the tests and, later, nothing). The intersection itself lives in
+  `TaskClocks::candidates`, which is lock-agnostic, so the ticker thread takes
+  `blocking_lock` on the registry and calls the same function rather than
+  carrying a second copy of the logic.
+- **A clock is never removed, only stopped being read.** The alternative is
+  deregistering it beside `deregister_child`, which would add a sixth update
+  site to a design whose whole argument is about not having a set of update
+  sites to get wrong. A stale entry is unreachable without a live child, and
+  `a_cancelled_run_leaves_no_candidates` asserts the entry survives a
+  cancellation while the candidate set is empty - so the empty read is provably
+  coming from the liveness source of truth.
+- **`TeeWriter` holds an `Arc<TaskClock>` rather than looking its clock up by
+  name.** One pointer per drain and no lock per line, against a map lock taken
+  once per line of every task's output.
+- **The run-level tests observe through a sampler rather than a hook.** The two
+  criteria about counts are about what a tick would see at an arbitrary moment,
+  so a sampler is the honest instrument - but every state it samples is held by
+  a fifo until the test releases it, so a regression that started a third child
+  would hold that reading rather than flash past. `assert_eq!(max, 2)` carries
+  both halves of the criterion (reaches 2, never exceeds 2) as one claim.
+
+### Open questions
+- None.

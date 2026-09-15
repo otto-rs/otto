@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use super::*;
+use crate::executor::heartbeat::TaskClocks;
 
 #[tokio::test]
 async fn test_output_processing() {
@@ -15,7 +16,14 @@ async fn test_output_processing() {
     // Process the output
     let mut cursor = std::io::Cursor::new(test_output);
     streams
-        .process_output("test_task".to_string(), OutputType::Stdout, &mut cursor, false, false)
+        .process_output(
+            "test_task".to_string(),
+            OutputType::Stdout,
+            &mut cursor,
+            false,
+            false,
+            TaskClocks::default().start("test_task"),
+        )
         .await
         .unwrap();
 
@@ -45,7 +53,14 @@ async fn a_non_utf8_byte_does_not_truncate_the_log() {
 
     let mut cursor = std::io::Cursor::new(test_output);
     streams
-        .process_output("test_task".to_string(), OutputType::Stdout, &mut cursor, true, false)
+        .process_output(
+            "test_task".to_string(),
+            OutputType::Stdout,
+            &mut cursor,
+            true,
+            false,
+            TaskClocks::default().start("test_task"),
+        )
         .await
         .unwrap();
 
@@ -77,6 +92,7 @@ async fn test_multiple_streams() {
             &mut stdout_cursor,
             false,
             false,
+            TaskClocks::default().start("test_task"),
         )
         .await
         .unwrap();
@@ -88,6 +104,7 @@ async fn test_multiple_streams() {
             &mut stderr_cursor,
             false,
             false,
+            TaskClocks::default().start("test_task"),
         )
         .await
         .unwrap();
@@ -119,4 +136,55 @@ fn test_prefix_present_by_default() {
         "expected task name in prefixed output: {out:?}"
     );
     assert!(out.contains("hello\n"), "expected data to still be present: {out:?}");
+}
+
+/// **Phase 2 success criterion** (design doc
+/// `docs/design/2026-09-15-idle-task-heartbeat.md`): a buffered foreach
+/// subtask's bytes never reach the terminal (`suppress_terminal`), and its
+/// idle clock must advance anyway. The clock answers "did this task produce a
+/// line", not "did bytes reach the terminal", which is why the stamp sits
+/// above the `suppress_terminal` branch: keyed on terminal writes, a
+/// chattering buffered subtask would look idle and be heartbeated
+/// continuously. A sibling's output must leave it alone - a sibling finishing
+/// says nothing about whether this task is stuck.
+#[tokio::test]
+async fn a_suppressed_subtasks_line_advances_its_own_clock_and_no_siblings() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let output_dir = PathBuf::from(temp_dir.path());
+
+    let clocks = TaskClocks::default();
+    let subtask = clocks.start("say:alpha");
+    let sibling = clocks.start("build");
+    let (subtask_before, sibling_before) = (subtask.last_line_ms(), sibling.last_line_ms());
+
+    // A lower bound on elapsed time, which is the only kind a sleep
+    // guarantees: it may overshoot, never undershoot. So the stamp taken
+    // below is strictly later than the one `start` took, whatever the host's
+    // clock resolution.
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    let streams = TaskStreams::new("say:alpha", &output_dir).await.unwrap();
+    let mut cursor = std::io::Cursor::new("chatter\n");
+    streams
+        .process_output(
+            "say:alpha".to_string(),
+            OutputType::Stdout,
+            &mut cursor,
+            true,
+            false,
+            subtask.clone(),
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        subtask.last_line_ms() >= subtask_before + 20,
+        "a suppressed subtask's line must still reset its clock: {} vs {subtask_before}",
+        subtask.last_line_ms()
+    );
+    assert_eq!(
+        sibling.last_line_ms(),
+        sibling_before,
+        "another task's output must not reset this task's clock"
+    );
 }

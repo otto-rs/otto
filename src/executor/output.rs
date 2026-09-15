@@ -1,6 +1,7 @@
 use std::{
     io::{self, Write},
     path::{Path, PathBuf},
+    sync::Arc,
     time::SystemTime,
 };
 
@@ -12,7 +13,7 @@ use tokio::{
     sync::broadcast,
 };
 
-use super::colors::colorize_task_prefix;
+use super::{colors::colorize_task_prefix, heartbeat::TaskClock};
 
 /// Capacity of a task's output broadcast channel. Large because a chatty task can
 /// emit thousands of lines before a slow subscriber (the TUI) drains them, and a
@@ -119,6 +120,9 @@ pub struct TeeWriter {
     /// File output is never prefixed either way, so this only changes what
     /// reaches the terminal.
     no_prefix: bool,
+    /// This task's idle clock, shared with its other stream: a line on either
+    /// one means the task is not silent.
+    clock: Arc<TaskClock>,
 }
 
 /// Build the bytes that go to the terminal for one chunk of task output:
@@ -135,17 +139,36 @@ pub(crate) fn format_terminal_output(task_name: &str, data: &[u8], no_prefix: bo
 }
 
 impl TeeWriter {
-    pub async fn new(file: File, is_stderr: bool, task_name: String, suppress_terminal: bool, no_prefix: bool) -> Self {
+    pub async fn new(
+        file: File,
+        is_stderr: bool,
+        task_name: String,
+        suppress_terminal: bool,
+        no_prefix: bool,
+        clock: Arc<TaskClock>,
+    ) -> Self {
         Self {
             file,
             is_stderr,
             task_name,
             suppress_terminal,
             no_prefix,
+            clock,
         }
     }
 
     pub async fn write(&mut self, data: &[u8]) -> Result<()> {
+        // The task produced a LINE, which is the question the heartbeat asks -
+        // not whether bytes reached the terminal. Above the `suppress_terminal`
+        // branch below and beside the unconditional file write for that reason:
+        // a buffered foreach subtask reaches the terminal only through ordered
+        // replay, and a clock keyed on terminal writes would call a chattering
+        // subtask idle and heartbeat it continuously. The drain reads
+        // `read_until(b'\n')`, so this runs once per newline-terminated line -
+        // which is also why a `\r`-redrawn progress bar never gets here, never
+        // resets the clock, and is correctly reported as still running.
+        self.clock.note_line();
+
         // Always write to file (no colors)
         self.file.write_all(data).await?;
 
@@ -222,6 +245,7 @@ impl TaskStreams {
         mut reader: impl AsyncBufReadExt + Unpin,
         suppress_terminal: bool,
         no_prefix: bool,
+        clock: Arc<TaskClock>,
     ) -> Result<()> {
         let output_file = match output_type {
             OutputType::Stdout => &self.stdout_file,
@@ -235,6 +259,7 @@ impl TaskStreams {
             task_name.clone(),
             suppress_terminal,
             no_prefix,
+            clock,
         )
         .await;
 

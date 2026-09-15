@@ -1,6 +1,7 @@
 pub mod action;
 pub mod colors;
 pub mod graph;
+pub mod heartbeat;
 pub mod layout;
 pub mod output;
 pub mod pruning;

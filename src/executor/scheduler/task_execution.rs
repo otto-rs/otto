@@ -39,6 +39,7 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
         let execution_context = self.execution_context.clone();
         let no_prefix = self.no_prefix;
         let task_streams = self.task_streams.clone();
+        let clocks = self.clocks.clone();
         let is_virtual_parent = task.is_virtual_parent;
         let action_is_empty = task.action.is_empty();
         let tty = task.tty;
@@ -345,14 +346,29 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
                         TaskStreams::new(&task_name, &tasks_dir).await?
                     };
 
+                    // The idle clock starts with the streams, and only on this
+                    // path: a `tty: true` task returned above without ever
+                    // creating streams, so it has no clock and a tick can
+                    // never name it. Both drains share this one handle - a
+                    // line on either stream means the task is not silent.
+                    let clock = clocks.start(&task_name);
+
                     // Start output handling
                     let stdout_handle = {
                         let streams = streams.clone();
                         let task_name = task_name.clone();
+                        let clock = clock.clone();
                         tokio::spawn(async move {
                             let reader = BufReader::new(stdout);
                             streams
-                                .process_output(task_name, OutputType::Stdout, reader, suppress_terminal, no_prefix)
+                                .process_output(
+                                    task_name,
+                                    OutputType::Stdout,
+                                    reader,
+                                    suppress_terminal,
+                                    no_prefix,
+                                    clock,
+                                )
                                 .await
                         })
                     };
@@ -363,7 +379,14 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
                         tokio::spawn(async move {
                             let reader = BufReader::new(stderr);
                             streams
-                                .process_output(task_name, OutputType::Stderr, reader, suppress_terminal, no_prefix)
+                                .process_output(
+                                    task_name,
+                                    OutputType::Stderr,
+                                    reader,
+                                    suppress_terminal,
+                                    no_prefix,
+                                    clock,
+                                )
                                 .await
                         })
                     };
