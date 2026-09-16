@@ -50,7 +50,11 @@ indicatif = "0.18"
 async-trait = "0.1.92"
 indexmap = { version = "2.14.1", features = ["serde"] }
 libc = "0.2.189"
-expand-tilde = { git = "ssh://git@github.com/scottidler/expand-tilde", tag = "v0.1.0", version = "0.1.0" }
+# https, not ssh: GitHub runners have no SSH key, and cargo dies in dependency
+# resolution before compiling anything (`no authentication methods succeeded`),
+# which left main red from b51b509 until this line changed. The repo is public,
+# so ssh bought no privacy and cost CI entirely.
+expand-tilde = { git = "https://github.com/scottidler/expand-tilde", tag = "v0.1.0", version = "0.1.0" }
 
 [dev-dependencies]
 assert_fs = "1.1"
