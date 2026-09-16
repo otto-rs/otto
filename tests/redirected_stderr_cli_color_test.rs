@@ -327,9 +327,19 @@ fn the_help_epilogue_on_stdout_is_still_coloured() {
         text.contains("ERROR: No ottofile found in this directory or any parent directory!"),
         "the epilogue must be on stdout: {text:?}"
     );
+    // Sliced to the epilogue, not counted over the whole stream: clap's own
+    // help supplies 44 escapes by itself, so `count_esc(&stdout) > 0` held even
+    // with the epilogue stripped to zero. Round 4 proved that by mutation
+    // (`ottofile_not_found_message(true)` -> `(false)`): stdout fell 58 -> 44
+    // and all 16 tests still passed. The epilogue's own share is 13.
+    let epilogue_start = text
+        .find("ERROR: No ottofile found")
+        .expect("the epilogue must be on stdout");
+    let epilogue_escapes = text[epilogue_start..].matches('\u{1b}').count();
     assert!(
-        count_esc(&stdout) > 0,
-        "the help epilogue on a terminal stdout must keep its colour: {text:?}"
+        epilogue_escapes >= 13,
+        "the help epilogue on a terminal stdout must keep its own colour, \
+         found {epilogue_escapes} escape bytes in it: {text:?}"
     );
     assert_eq!(
         count_esc(&err),

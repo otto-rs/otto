@@ -468,8 +468,9 @@ ready; the fifth says why it was not. The probe ottofile is three tasks: `quiet`
     originally wrote the two suffixes as `[default: 10] [env: ...]`. clap emits
     them in the opposite order, so the doc's rendering was never achievable and
     the golden snapshot reflects clap's order.
-- [x] A 30-second silent task with both streams redirected to files yields zero
-      `\x1b` bytes and zero `\r` bytes in both files.
+- [x] A 30-second silent task with both streams redirected to files yields,
+      **absent `CLICOLOR_FORCE`**, zero `\x1b` bytes and zero `\r` bytes in both
+      files.
   - **Observed on main:** `stdout: esc=0 cr=0`, `stderr: esc=0 cr=0`. Already
     true, so this is a regression guard, not a new property. The same task under
     `script` emits 18 escape bytes of colour, which is correct and unchanged.
@@ -478,7 +479,16 @@ ready; the fifth says why it was not. The probe ottofile is three tasks: `quiet`
     `still running` lines in stderr. Criterion met, and now non-vacuous: the
     stderr it reports clean is stderr that actually carries heartbeat lines.
 - [x] With stdout on a pty and stderr redirected to a file, no heartbeat line in
-      that file carries an escape byte.
+      that file carries an escape byte, **absent `CLICOLOR_FORCE`**.
+  - **Qualified after the round-4 audit, and this correction is the one that
+    matters:** round 3 qualified only the Phase-3 copy of these two criteria
+    (in the Implementation Plan) and left THESE copies unqualified, which are
+    the ticked boxes the `Status:` line counts toward "6 of 6 verified". Both
+    were false as written from `6179946` onward. Measured: a 3-beat run under
+    `CLICOLOR_FORCE=1` puts 18 escape bytes into the redirected stderr, and a
+    5-beat run 30, identical in v2.5.2 and at `47b4605`. Not a regression, a
+    criterion that stopped describing the code. The `\r` clauses are
+    unconditional and stand.
   - **Observed at `02d7e76` (Phase 3):** `script -qec "otto
     --progress-interval 5 quiet 2> pty-err.txt" /dev/null` put **0** escape
     bytes into `pty-err.txt` across 5 heartbeat lines (`bytes=149 esc=0 cr=0`),
