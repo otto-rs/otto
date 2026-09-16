@@ -3,11 +3,17 @@
 **Author:** Scott Idler
 **Date:** 2026-09-15
 **Status:** Implemented and shipped in v2.5.1 (6 of 6 acceptance criteria
-verified on the runner). The two follow-up stderr-colour fixes are NOT in
-v2.5.1: `fix(output): stop writing colour escapes into a redirected stderr`
-and `fix(output): honour CLICOLOR_FORCE on a redirected stderr` land in the
-next release.
-**Review Passes Completed:** 5/5, plus review-panel round 1 folded in
+verified on the runner). Three follow-up stderr-colour fixes came after it,
+and they did not all ship together:
+
+- `fix(output): stop writing colour escapes into a redirected stderr` and
+  `fix(output): honour CLICOLOR_FORCE on a redirected stderr` shipped in
+  **v2.5.2** (runner green, `Lines: 91.7% (15079/16436)`).
+- `fix(cli): stop colouring CLI messages on a redirected stderr`, which closes
+  the last four CLI-level sites, is committed and **not yet released**.
+
+**Review Passes Completed:** 5/5, plus three review-panel implementation-audit
+rounds folded in
 
 ## Summary
 
