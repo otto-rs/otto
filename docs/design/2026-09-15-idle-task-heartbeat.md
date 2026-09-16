@@ -2,9 +2,7 @@
 
 **Author:** Scott Idler
 **Date:** 2026-09-15
-**Status:** Implemented (5 of 6 acceptance criteria verified; the sixth,
-`otto ci` green *on the runner*, is UNVERIFIED pending a push and is the
-only thing between this and Verified. See Acceptance Criteria.)
+**Status:** Implemented and shipped in v2.5.1 (6 of 6 acceptance criteria verified on the runner)
 **Review Passes Completed:** 5/5, plus review-panel round 1 folded in
 
 ## Summary
@@ -482,8 +480,30 @@ ready; the fifth says why it was not. The probe ottofile is three tasks: `quiet`
   - **Also verified, `--progress-interval 0`:** `0` lines, stderr `0 bytes`. And
     on a merged-stream run the tail is `still running (26.0s)` -> `quiet: done`
     -> `finished successfully`, so no beat follows the final status line.
-- [ ] `otto ci` is green on the runner.
-  - **UNVERIFIED pending a push.** The branch has never left this machine
+- [x] `otto ci` is green on the runner.
+  - **Observed ON THE RUNNER at `e1a1905`, 2026-09-16.** Run
+    https://github.com/otto-rs/otto/actions/runs/35053082042, conclusion
+    `success`, all five jobs green: `Build (ubuntu-latest)`, `Build (macos-14)`,
+    `checks / Checks`, `checks / Coverage`, `checks / Suite under macOS /bin/bash
+    3.2`. Runner coverage, from the `Coverage` job's own `otto cov`:
+    `Lines: 91.7% (15045/16402)`, `Functions: 90.2%`, `Regions: 90.0%`,
+    `✓ Coverage 91.7% meets 87% threshold`. **Criterion met on the evidence it
+    actually asks for.**
+  - **The runner figure is 91.7%, not a confirmation of the local 94.6%.** The
+    denominators differ by 11363 lines (16402 vs 27765) because the local
+    cargo-llvm-cov counts the 51 `*_tests.rs` files in the denominator and the
+    runner's pinned version excludes them, exactly as `.otto.yml`'s `cov-report`
+    comment documents. Trust the runner's number; never ratchet the floor off a
+    local pass.
+  - **Getting here required fixing a red main that predated this feature.** The
+    first push (`4b630b9`) failed all four jobs in 33s: `Cargo.toml` pinned
+    `expand-tilde` over `ssh://`, runners have no SSH key, and cargo died in
+    dependency resolution before compiling. main had been red that way since
+    `b51b509` (2026-09-08), so CI had gated nothing for eight days. Fixed in
+    `e1a1905` by moving the dep to `https` (public repo, identical pinned rev
+    `cb0f9958`). The release driver held the tag until this was green, so one
+    intended release still cost exactly one version number.
+  - **Superseded, kept for the record — UNVERIFIED pending a push.** The branch had never left this machine
     (`git log origin/main..HEAD` is every commit of this feature), so no runner
     has ever run it and there is no runner figure to claim this on. Every
     reading below is LOCAL. **Caught by the round-1 implementation audit:** this
