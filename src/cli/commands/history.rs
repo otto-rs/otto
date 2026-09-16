@@ -4,7 +4,7 @@ use console::measure_text_width;
 use eyre::Result;
 use std::sync::Arc;
 
-use crate::executor::{RunStatus, StateManager};
+use crate::executor::{RunStatus, StateManager, stderr_takes_color, stream_styled};
 use crate::ports::StateStore;
 
 fn display_width(s: &str) -> usize {
@@ -113,7 +113,14 @@ impl HistoryCommand {
             None => match StateManager::try_new() {
                 Some(m) => Arc::new(m),
                 None => {
-                    eprintln!("{}", "No history database found. Run otto to create it.".yellow());
+                    eprintln!(
+                        "{}",
+                        stream_styled(
+                            "No history database found. Run otto to create it.",
+                            stderr_takes_color(),
+                            |s| s.yellow()
+                        )
+                    );
                     return Ok(());
                 }
             },

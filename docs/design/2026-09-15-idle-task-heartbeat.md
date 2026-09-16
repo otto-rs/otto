@@ -492,16 +492,23 @@ ready; the fifth says why it was not. The probe ottofile is three tasks: `quiet`
     `fix(output): honour CLICOLOR_FORCE on a redirected stderr`: with
     `CLICOLOR_FORCE=1` the same run puts those 6 escape bytes back into
     `err.txt`, deliberately, because that variable outranks the tty check in
-    `colored` and otto must not disagree with it. Three CLI-level sites
-    still colour their own message text on a redirected stderr:
+    `colored` and otto must not disagree with it. Four CLI-level sites also
+    coloured their own message text on a redirected stderr -
     `ottofile_not_found_message` (`src/cli/parser.rs:457`, 14 escape bytes),
     `ottofile_parse_error_message` (`:479`, printed at `:940`, 4 escape bytes,
     reached by a malformed ottofile plus `otto --help`), and the yellow
     no-database notices in `history.rs:116` and `stats.rs:40` (2 each). FOUR
     sites, not the three the round-2 audit found: round 3 established the
     parse-error one is reachable. They are message text rather than task
-    labels, so they are outside the predicate this fix introduced, and
-    `CLICOLOR_FORCE` changes nothing for them in either direction.
+    labels, so `stream_task_label` could not reach them. Closed afterwards by
+    `fix(cli): stop colouring CLI messages on a redirected stderr`, which
+    routes them through a sibling helper, `colors::stream_styled`, reading the
+    same `stderr_takes_color()` predicate: with stdout on a pty and stderr
+    redirected, all four now put 0 escape bytes in the redirect (was
+    14/4/2/2), under `CLICOLOR_FORCE=1` they put 14/4/2/2 back, and on a pty
+    stderr they are coloured as before. The not-found message is also clap's
+    help epilogue on stdout, which is unchanged at 58 escape bytes, so that
+    call site passes `true` and leaves the decision to `colored`.
 - [x] A task printing once per second for 30 seconds yields exactly zero lines
       matching `still running`.
   - **Observed on main:** `0` (31 stdout lines, none matching). Guards the
@@ -753,7 +760,7 @@ in their ottofile or passes `--progress-interval 0`.
 |---|---|---|---|
 | Heartbeat lines break existing `contains` assertions in the pty suites | Med | Med | Phase 0 measures it before any production code exists |
 | A stale clock entry is read for a dead task | Low | Low | Liveness is read from `LiveChildren` itself, so a clock entry with no live child is never a candidate. No mirror exists to drift |
-| otto colours a redirected stderr because `colored` reads stdout | High | Low | Was pre-existing and measured (see Acceptance Criteria). The heartbeat gated its own label; nothing else was corrected here. **Fixed separately, after this feature, by `fix(output): stop writing colour escapes into a redirected stderr`**, which found the bug broader than the status lines named here: a task's own stderr (`TeeWriter`) and a buffered subtask's replayed `stderr.log` leaked too, all three from the one root cause |
+| otto colours a redirected stderr because `colored` reads stdout | High | Low | Was pre-existing and measured (see Acceptance Criteria). The heartbeat gated its own label; nothing else was corrected here. **Fixed separately, after this feature, by `fix(output): stop writing colour escapes into a redirected stderr`**, which found the bug broader than the status lines named here: a task's own stderr (`TeeWriter`) and a buffered subtask's replayed `stderr.log` leaked too, all three from the one root cause. Broader still than that: four CLI-level sites coloured their own message text rather than a task label, so the label helper never reached them. Closed by `fix(cli): stop colouring CLI messages on a redirected stderr` through `colors::stream_styled`, on the same `stderr_takes_color()` predicate |
 | A heartbeat lands between a buffered block's lines | Low | Med | Emission takes `terminal_lock()`, which `write_replay_blocks` holds for a whole block (`replay.rs:375`) |
 | CI logs grow | Low | Low | One short line per stalled task per interval. A task that prints stays silent here |
 | A `tty:` task looks unmonitored | Low | Low | Stated as a non-goal with its reason. otto cannot see those bytes at all |

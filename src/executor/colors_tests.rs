@@ -131,3 +131,35 @@ fn a_terminal_stderr_is_not_suppressed_by_a_zero_force() {
     assert!(stderr_takes_color_from(true, Some("0")));
     assert!(stderr_takes_color_from(true, None));
 }
+
+/// The plain half of [`stream_styled`]: a stream that takes no colour gets the
+/// text back untouched, with the closure never run.
+#[test]
+fn stream_styled_leaves_text_bare_for_a_stream_that_takes_no_colour() {
+    let styled = stream_styled("No history database found.", false, |s| s.yellow());
+    assert_eq!(styled, "No history database found.");
+    assert!(!styled.contains('\u{1b}'));
+}
+
+/// `takes_color: true` hands the text to the closure rather than deciding
+/// colour itself: whatever `colored` then does with `SHOULD_COLORIZE` is the
+/// same thing the bare `.yellow()` call did before the fix, which is the point
+/// of the veto-only shape.
+#[test]
+fn stream_styled_defers_to_colored_when_the_stream_takes_colour() {
+    assert_eq!(
+        stream_styled("No history database found.", true, |s| s.yellow()),
+        "No history database found.".yellow().to_string()
+    );
+}
+
+/// The two halves must differ only in the escapes: a message that lost or
+/// gained words on the plain path would be a second message, not the same one
+/// uncoloured.
+#[test]
+fn stream_styled_says_the_same_words_either_way() {
+    let coloured = stream_styled("ERROR: failed to parse ottofile:", true, |s| s.red().bold());
+    let plain = stream_styled("ERROR: failed to parse ottofile:", false, |s| s.red().bold());
+    assert!(coloured.contains(&plain));
+    assert_eq!(plain, "ERROR: failed to parse ottofile:");
+}

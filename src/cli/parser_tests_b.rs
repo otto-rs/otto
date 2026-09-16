@@ -1356,3 +1356,79 @@ fn num_args_to_nargs_inverts_every_variant() {
         assert_eq!(num_args_to_nargs(nargs_to_num_args(&nargs)), nargs, "{nargs:?}");
     }
 }
+
+// =========================================================================
+// The two config-failure messages colour themselves per stream
+// =========================================================================
+
+/// `ottofile_not_found_message` is the one string otto prints on both streams
+/// (clap's help epilogue on stdout, `main`'s `eyre` report on stderr), so it
+/// cannot ask `colored` alone: the escapes it got from a stdout on a terminal
+/// used to ride into a redirected stderr.
+#[test]
+fn the_not_found_message_carries_no_escapes_for_a_stream_that_takes_no_colour() {
+    let plain = ottofile_not_found_message(false);
+    assert!(!plain.contains('\u{1b}'), "got escapes in the plain form: {plain:?}");
+    assert!(plain.contains("ERROR: No ottofile found in this directory or any parent directory!"));
+    for ottofile in OTTOFILES {
+        assert!(
+            plain.contains(ottofile),
+            "the plain form must still list {ottofile}: {plain:?}"
+        );
+    }
+}
+
+/// Same for the found-but-unparseable message, which names the file and the
+/// serde diagnostic and has only ever gone to stderr.
+#[test]
+fn the_parse_error_message_carries_no_escapes_for_a_stream_that_takes_no_colour() {
+    let err = eyre!("did not find expected key at line 4 column 3");
+    let plain = ottofile_parse_error_message(Path::new("/tmp/project/otto.yml"), &err, false);
+
+    assert!(!plain.contains('\u{1b}'), "got escapes in the plain form: {plain:?}");
+    assert!(plain.contains("ERROR: failed to parse ottofile:"));
+    assert!(plain.contains("/tmp/project/otto.yml"));
+    assert!(plain.contains("did not find expected key at line 4 column 3"));
+}
+
+/// The colour decision changes only the escapes: strip them from the coloured
+/// form and the two messages are the same message. A `takes_color` that also
+/// dropped the file list, say, would pass the assertions above and still be a
+/// second message.
+///
+/// The suite runs with a captured stdout, so `colored` produces no escapes
+/// here and this is an equality, not a strip. The coloured direction is pinned
+/// under a real pty by `tests/redirected_stderr_cli_color_test.rs`.
+#[test]
+fn the_config_failure_messages_say_the_same_words_either_way() {
+    assert_eq!(
+        strip_escapes(&ottofile_not_found_message(true)),
+        ottofile_not_found_message(false)
+    );
+
+    let err = eyre!("did not find expected key at line 4 column 3");
+    let path = Path::new("/tmp/project/otto.yml");
+    assert_eq!(
+        strip_escapes(&ottofile_parse_error_message(path, &err, true)),
+        ottofile_parse_error_message(path, &err, false)
+    );
+}
+
+/// Drop every `ESC [ ... m` SGR sequence, so two renderings can be compared on
+/// their words alone.
+fn strip_escapes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            for escaped in chars.by_ref() {
+                if escaped == 'm' {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}

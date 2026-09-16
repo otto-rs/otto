@@ -233,7 +233,8 @@ impl Parser {
         // renders help with the builtins, rather than claiming no ottofile was
         // found or printing "No tasks to execute".
         if !self.has_user_tasks() && self.ottofile.is_none() {
-            cmd = cmd.after_help(ottofile_not_found_message());
+            // clap prints help on stdout, so `colored` alone decides this one.
+            cmd = cmd.after_help(ottofile_not_found_message(true));
         }
 
         cmd
@@ -254,7 +255,7 @@ impl Parser {
 
     /// The fallback for the "no ottofile anywhere up the tree" state only.
     fn build_help_command_with_error() -> Command {
-        Self::build_bare_help_command().after_help(ottofile_not_found_message())
+        Self::build_bare_help_command().after_help(ottofile_not_found_message(true))
     }
 
 }

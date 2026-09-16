@@ -86,7 +86,8 @@ impl Parser {
 
             Ok((config_spec, hash, Some(ottofile)))
         } else {
-            Err(eyre!("{}", ottofile_not_found_message()))
+            // This report is printed on stderr by `main`, so it asks about stderr.
+            Err(eyre!("{}", ottofile_not_found_message(stderr_takes_color())))
         }
     }
 

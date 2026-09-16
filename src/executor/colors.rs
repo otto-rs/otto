@@ -1,4 +1,4 @@
-use colored::{Color, Colorize};
+use colored::{Color, ColoredString, Colorize};
 use std::collections::hash_map::DefaultHasher;
 use std::env;
 use std::hash::{Hash, Hasher};
@@ -164,6 +164,25 @@ pub fn stream_task_label(task_name: &str, no_prefix: bool, takes_color: bool) ->
     } else {
         plain_task_label(task_name, no_prefix)
     }
+}
+
+/// `text` with `style` applied when the stream it is bound for takes colour
+/// (`takes_color`), and bare `text` when it does not.
+///
+/// The message-text counterpart to [`stream_task_label`], for the CLI messages
+/// that colour their own words rather than a `[task]` label: `"...".yellow()`
+/// asks `colored`, which answered from stdout, and the answer then rode onto
+/// whatever stream the message was printed on.
+///
+/// `takes_color` is only the veto. A `true` still goes through `colored`'s
+/// `SHOULD_COLORIZE`, so `NO_COLOR` and a redirected stdout keep deciding the
+/// stdout sites exactly as before.
+///
+/// `style` is a closure so the plain path builds no `ColoredString` at all,
+/// and so each call site keeps naming its own colour instead of this function
+/// growing a parameter per attribute.
+pub fn stream_styled(text: &str, takes_color: bool, style: impl FnOnce(&str) -> ColoredString) -> String {
+    if takes_color { style(text).to_string() } else { text.to_string() }
 }
 
 #[path = "colors_tests.rs"]

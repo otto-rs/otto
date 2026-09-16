@@ -542,3 +542,80 @@ introduced.
   redirected stderr. They are message text, not task labels, so they never
   reached this predicate, and `CLICOLOR_FORCE` changes nothing for them either
   way; whether they should is a separate decision.
+  - **CLOSED** by `fix(cli): stop colouring CLI messages on a redirected
+    stderr`; see [Follow-up: the four CLI-level colour
+    sites](#follow-up-the-four-cli-level-colour-sites) below. The answer was
+    yes on both counts: they honour the predicate, and `CLICOLOR_FORCE` now
+    colours them in a redirect exactly as it does a status line.
+
+## Follow-up: the four CLI-level colour sites
+
+Commit: `fix(cli): stop colouring CLI messages on a redirected stderr`.
+
+A full sweep of `src/` first, because the count had been wrong twice: **41
+`eprintln!`/`eprint!` invocations**, in 13 files. (`grep` reports 47 hits;
+6 are the word inside a doc comment or a code comment - `app.rs:719,720,724`,
+`main.rs:242,243`, `tui/mod.rs:89` - explaining why a site uses
+`writeln!(io::stderr(), ...)` instead.) Cross-checked against every `stderr()`
+write in `src/` and against every `colored` call anywhere in `src/`. **No fifth
+colour-carrying stderr site exists.** Every other coloured string in `src/` goes
+to stdout through `println!` (the `history`/`stats` tables and status glyphs),
+or is a ratatui `Color` for the TUI's own buffer (`tui/pane.rs:340`), which
+never becomes an escape byte on otto's stderr. The remaining stderr writes that
+carry escapes at all - `executor/output.rs:200`, `cfg/resolver.rs:230`,
+`executor/scheduler/replay.rs:481` - are relaying a child process's own bytes,
+which are the child's to colour.
+
+### Design decisions
+- **A sibling helper, not an extension of `stream_task_label`**
+  (`colors.rs:stream_styled`). These four colour message words, not a `[task]`
+  label, so the label helper was the wrong seam. `stream_styled(text,
+  takes_color, style)` takes the style as a closure: the plain path builds no
+  `ColoredString`, and each call site keeps naming its own colour instead of
+  the helper growing a parameter per attribute.
+- **`takes_color` is a veto, not the whole decision** (`colors.rs:stream_styled`
+  doc comment). A `true` still goes through `colored`'s `SHOULD_COLORIZE`, so
+  `NO_COLOR` and a redirected stdout keep deciding the stdout sites exactly as
+  before. Same division of labour `stream_task_label` documents.
+- **The decision is a parameter on both message builders, not a read inside
+  them** (`parser.rs:ottofile_not_found_message`,
+  `parser.rs:ottofile_parse_error_message`). `ottofile_not_found_message` is
+  the one string otto prints on BOTH streams: clap renders it as a help
+  epilogue on stdout (`parser/command.rs:237`, `:258`) and `load_config` wraps
+  it in the `eyre` report `main` prints on stderr (`parser/config.rs:90`). A
+  builder that read `stderr_takes_color()` itself would have stripped the help
+  epilogue on a terminal, which is a visible regression, not a fix. The help
+  callers pass `true`; the error caller passes `stderr_takes_color()`.
+- **No second `OnceLock`.** All four sites reach the existing
+  `colors::stderr_takes_color()`, so otto still has one answer about its own
+  stderr.
+
+### Deviations
+- **The task named `src/cli/parser.rs:457` and `:479` as the sites to change;
+  the `not_found` fix also touched `parser/command.rs` and
+  `parser/config.rs`.** Same effect, correct seam: the builder cannot know its
+  stream, so the three call sites had to say. Recorded here because the task's
+  table listed two files and the change touches four.
+
+### Tradeoffs
+- **A closure-taking `stream_styled`** vs **a `stream_colored(text, color,
+  bold, takes_color)`.** Chose the closure: the four sites use three different
+  stylings (`red().bold()`, `bright_yellow()`, `yellow()`), and an attribute
+  parameter per style is a second, worse spelling of `colored`'s own API.
+- **A new test file** (`tests/redirected_stderr_cli_color_test.rs`) vs
+  **extending `tests/redirected_stderr_color_test.rs`.** Chose a new file: the
+  existing one's module doc is specifically about the three executor label
+  sites and its fixture is an ottofile with four failing tasks, where three of
+  these four sites need a tree with a broken ottofile or none at all.
+- **Blocking the state database with an `OTTO_HOME` whose parent is a regular
+  file** vs **injecting a failing `StateStore`.** Chose the unwritable home:
+  these two messages only exist on the `StateManager::try_new() -> None` path
+  that the injection seam bypasses, and the escape bytes have to be measured
+  out of a real child process anyway.
+  `the_blocked_home_really_denies_the_state_database` pins the fixture so the
+  four assertions about those messages cannot go vacuous.
+
+### Open questions
+- The doc's **Status:** line names the two v2.5.1 follow-up colour fixes as
+  landing in the next release. There are now three. Scott owns that line, so it
+  is untouched here.

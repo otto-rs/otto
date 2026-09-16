@@ -26,6 +26,7 @@ use crate::cfg::param::{Nargs, ParamType};
 use crate::cfg::resolver::{self, DynamicResolver};
 use crate::cfg::task::{ForeachItem, ForeachSpec, TaskSpecs};
 use crate::cli::builtins::{BUILTIN_COMMANDS, is_builtin};
+use crate::executor::colors::{stderr_takes_color, stream_styled};
 
 pub type DAG<T> = Dag<T, (), u32>;
 
@@ -454,20 +455,30 @@ fn short_hash(content: &str) -> String {
     hex::encode(result)[..8].to_string()
 }
 
-fn ottofile_not_found_message() -> String {
+/// The "no ottofile anywhere up the tree" message, rendered for a stream that
+/// takes colour (`takes_color`) or one that does not.
+///
+/// This one string reaches both of otto's streams: clap prints it on stdout as
+/// a help epilogue, and `load_config` wraps it in the `eyre` report that `main`
+/// prints on stderr. So the stream cannot be inferred here and comes in as a
+/// parameter - the help callers pass `true` and leave the decision to
+/// `colored`, the error caller passes `stderr_takes_color()`.
+fn ottofile_not_found_message(takes_color: bool) -> String {
     use colored::Colorize;
 
     let file_list = OTTOFILES
         .iter()
-        .map(|f| format!("  {}", f.bright_yellow()))
+        .map(|f| format!("  {}", stream_styled(f, takes_color, |s| s.bright_yellow())))
         .collect::<Vec<_>>()
         .join("\n");
 
     format!(
         "{}\n\nOtto looks for one of the following files:\n{}",
-        "ERROR: No ottofile found in this directory or any parent directory!"
-            .red()
-            .bold(),
+        stream_styled(
+            "ERROR: No ottofile found in this directory or any parent directory!",
+            takes_color,
+            |s| s.red().bold()
+        ),
         file_list
     )
 }
@@ -476,13 +487,16 @@ fn ottofile_not_found_message() -> String {
 /// found and could not be parsed. Naming the file and the serde diagnostic
 /// (field path, line, column) is the whole point - the not-found message would
 /// be a lie here.
-fn ottofile_parse_error_message(ottofile: &std::path::Path, err: &eyre::Report) -> String {
+///
+/// `takes_color` as in [`ottofile_not_found_message`], though this message has
+/// only ever gone to stderr.
+fn ottofile_parse_error_message(ottofile: &std::path::Path, err: &eyre::Report, takes_color: bool) -> String {
     use colored::Colorize;
 
     format!(
         "{} {}\n{}",
-        "ERROR: failed to parse ottofile:".red().bold(),
-        ottofile.display().to_string().bright_yellow(),
+        stream_styled("ERROR: failed to parse ottofile:", takes_color, |s| s.red().bold()),
+        stream_styled(&ottofile.display().to_string(), takes_color, |s| s.bright_yellow()),
         err
     )
 }
@@ -937,7 +951,10 @@ impl Parser {
                                             // stream `--tasks` reports on.
                                             let mut help_cmd = Self::build_bare_help_command();
                                             help_cmd.print_help().expect("Failed to print help");
-                                            eprintln!("{}", ottofile_parse_error_message(&path, &e));
+                                            eprintln!(
+                                                "{}",
+                                                ottofile_parse_error_message(&path, &e, stderr_takes_color())
+                                            );
                                             return Ok(ParseOutcome::Exit(2));
                                         }
                                     }

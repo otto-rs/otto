@@ -4,7 +4,7 @@ use comfy_table::{Cell, CellAlignment, Table, presets::UTF8_FULL};
 use eyre::Result;
 use std::sync::Arc;
 
-use crate::executor::{OverallStats, StateManager, TaskStats};
+use crate::executor::{OverallStats, StateManager, TaskStats, stderr_takes_color, stream_styled};
 use crate::ports::StateStore;
 
 /// Show execution statistics
@@ -37,7 +37,14 @@ impl StatsCommand {
             None => match StateManager::try_new() {
                 Some(m) => Arc::new(m),
                 None => {
-                    eprintln!("{}", "No statistics database found. Run otto to create it.".yellow());
+                    eprintln!(
+                        "{}",
+                        stream_styled(
+                            "No statistics database found. Run otto to create it.",
+                            stderr_takes_color(),
+                            |s| s.yellow()
+                        )
+                    );
                     return Ok(());
                 }
             },
