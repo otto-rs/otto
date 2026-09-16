@@ -365,7 +365,8 @@ The finding that changes Phase 3 is therefore a constraint, not a test-fix list:
   `colorize_task_prefix` (`colors.rs:70`), gated on `SHOULD_COLORIZE`, which
   `colored` derives from `stdout().is_terminal()`. Applying a stdout decision to
   stderr was, at the time of this phase, how colour reached a redirected stderr;
-  the heartbeat does not inherit it. (Corrected binary-wide by the follow-up fix
+  the heartbeat does not inherit it. (Corrected for the three EXECUTOR label
+  sites by the follow-up fix
   named in Goals and in Risks.)
 - Elapsed from the existing
   `format_duration` (`src/cli/commands/format.rs:26`), not a new formatter. It
@@ -394,7 +395,7 @@ The finding that changes Phase 3 is therefore a constraint, not a test-fix list:
     bytes in either file, and **zero** `0x1b` bytes on stderr.
   - The same run with stdout on a pty and stderr redirected to a file produces
     **zero** `0x1b` bytes in that file, which is the split-redirection case
-    otto's existing status lines fail today.
+    otto's existing status lines failed when this criterion was written.
   - A task echoing once per second for 25 seconds under `--progress-interval 5`
     emits **zero** lines matching `still running`. This only guards anything
     alongside the positive criterion above: zero lines from a run that could
@@ -450,14 +451,22 @@ ready; the fifth says why it was not. The probe ottofile is three tasks: `quiet`
     bytes into `pty-err.txt` across 5 heartbeat lines (`bytes=149 esc=0 cr=0`),
     while the pty stdout carried 18 escape bytes of colour as it should.
     Criterion met: this is the split-redirection case otto's existing status
-    lines still fail, and the heartbeat's own label gating is what avoids it.
-  - **Observed on main:** the analogous existing line DOES carry them. `script
+    lines failed at the time, and the heartbeat's own label gating is what
+    avoided it before the general fix landed.
+  - **Observed on main, since FIXED:** the analogous existing line DID carry
+    them. `script
     -qec "otto boom 2> err.txt" /dev/null` put 6 escape bytes into `err.txt`:
     `^[[91m[^[[0m^[[92mboom^[[0m^[[91m]^[[0m failed`. This is otto's existing
-    behaviour, not something this feature introduces, and it is why the
-    heartbeat gates its own label on stderr rather than reusing `status_label`
-    unconditionally. Fixing it for otto's status lines generally is out of scope
-    here and named in Risks.
+    behaviour, not something this feature introduced, and it is why the
+    heartbeat gated its own label on stderr rather than reusing `status_label`
+    unconditionally. It was out of scope here, named in Risks, and fixed
+    afterwards by `fix(output): stop writing colour escapes into a redirected
+    stderr`, which closed all three EXECUTOR label sites. Three CLI-level sites
+    still colour their own message text on a redirected stderr:
+    `ottofile_not_found_message` (`src/cli/parser.rs:457`, 14 escape bytes),
+    and the yellow no-database notices in `history.rs:116` and `stats.rs:40`
+    (2 each). Found by the round-2 audit; they are message text rather than
+    task labels, so they are outside the predicate this fix introduced.
 - [x] A task printing once per second for 30 seconds yields exactly zero lines
       matching `still running`.
   - **Observed on main:** `0` (31 stdout lines, none matching). Guards the
@@ -658,7 +667,11 @@ path.
 - One relaxed atomic store per line of task output, on a path that already does
   a file write plus a terminal write plus a flush syscall per line
   (`output.rs:168-172`). Not measurable.
-- The ticker takes `terminal_lock()` only when it has a line to emit.
+- The ticker takes `terminal_lock()` only when it had a line to emit AT THE
+  PRE-CHECK. The under-lock recheck can then drop it, so a lock acquisition
+  that writes nothing is possible and correct. Noted by the round-2 audit,
+  which also showed the test named for this property does not bind it: the
+  binding test is `a_task_that_dies_between_the_pre_check_and_the_write_is_not_beaten`.
 
 ### Security
 
