@@ -383,3 +383,110 @@ and the rest 5.00s / 5.00s / 5.00s apart, `[quiet] still running (6.0s)` and up.
 
 ### Open questions
 - None.
+
+## Remediation: round 1 implementation audit
+
+Two must-fixes and five cheap wins from the round-1 implementation audit of
+this design doc, folded in as one phase. Source: the panel synthesis at
+`/tmp/review-panel/vNrrlM6O/synthesis.md`, probes at `probes.md` in the same
+directory.
+
+### Design decisions
+- **The heartbeat's write re-decides under the terminal lock** -
+  `src/executor/heartbeat.rs:tick` / `emit_due` - because the old `tick`
+  selected its lines, built the strings, and only then blocked on
+  `terminal_lock()`, writing with no recheck. A task can exit, deregister and
+  have its `finished successfully` printed while a tick waits there, and the
+  already-selected line then lands after it. `tick` now keeps a cheap pre-check
+  outside the lock and `emit_due` re-reads the shutdown flag, re-runs
+  `due_beats` against a freshly read liveness list, and recomputes `elapsed`
+  under the lock, writing nothing if nothing survives. The doc claimed this as
+  a guarantee; it is one now.
+- **The pre-check stayed**, rather than collapsing into one locked read, so the
+  property the doc states - "the ticker takes `terminal_lock()` only when it has
+  a line to emit" - stays true for the common no-op wake. Pinned by
+  `a_wake_with_nothing_due_reads_liveness_once_and_takes_no_lock`.
+- **No cached or mirrored liveness flag** was introduced to avoid the second
+  registry read. The module comment forbids a mirror of `LiveChildren` at
+  length, and the audit confirmed exactly one alias with no mirror on any path.
+  The second read is the same `live` closure, `blocking_lock` and all, taken
+  from the same non-runtime thread as the first.
+- **Lock order is terminal -> registry, in that direction only.** Verified
+  before writing it: the other `terminal_lock()` sites (`output.rs:184`,
+  `scheduler/replay.rs:375`, `:460`) touch no registry, and the registry-lock
+  sites (`scheduler.rs:279`, `:531`, `:1436`, `:1456`) take no terminal lock.
+  No cycle, and the comment on `emit_due` says so.
+- **`Shutdown::is_stopped`** - `heartbeat.rs` - is the read half of the flag
+  `stop()` writes, existing solely for the under-lock recheck.
+- **`saturating_ms`** - `heartbeat.rs` - replaces `interval.as_millis() as u64`.
+  `as_millis` is a `u128` and the cast kept its low 64 bits, so
+  `--progress-interval 2305843009213693952` landed on exactly `0` ms and made
+  every live task due on every wake: the largest value a user can reach for was
+  the loudest setting otto had. Verified end to end after the fix - that exact
+  invocation now emits zero beats over a 30-second silent task, against beats
+  at 997ms/2.0s/3.0s/4.0s/5.0s before it.
+- **The `otto ci` acceptance criterion is unticked and marked UNVERIFIED
+  pending a push** rather than re-evidenced. The bullet asks for the coverage
+  floor "measured on the runner rather than locally"; nothing has been pushed,
+  so no runner has run this branch. The local readings stay in the doc as what
+  they are.
+
+### Deviations
+- **`tick` and `emit_due` are generic over the liveness closure** rather than
+  taking a `&[String]` snapshot. The doc's Phase 3 text describes the tick
+  reading liveness (singular); taking the closure is what makes reading it
+  twice possible at all. Same seam, same single source of truth, one more read.
+- **`emit` became `emit_due` and grew the decision it used to be handed.** The
+  doc's Phase 3 bullet describes the emit path as the write; it is now the
+  write plus the decision, which is the whole point of the fix - the two cannot
+  be separated without reopening the window.
+- **`beat_line` is now called under the terminal lock**, where it used to be
+  computed before `emit`. That is what makes the printed elapsed the figure at
+  write time rather than at selection time. `task_label` reaches
+  `colorize_task_prefix` and `colored`'s `SHOULD_COLORIZE`, which is a
+  `LazyLock` over atomics and takes no lock of otto's, so nothing under
+  `TERMINAL_LOCK` can reach it again.
+- **`NO_COLOR` / `CLICOLOR` are pinned in the pty colour test only**, not in
+  the shared `tests/common/mod.rs::isolate()`. `isolate` is used by every
+  integration suite and its job is home isolation; the colour environment is
+  load-bearing for exactly one test, the one that asserts colour EXISTS on pty
+  stdout so its absence on stderr means something. Changing the shared helper
+  would have changed the environment of suites that never asked about colour.
+- **The default-interval criterion's evidence was re-measured rather than
+  re-worded.** The criterion says "at the default interval" and was backed by
+  `--progress-interval 5` figures; the interval-5 figures stay on the criteria
+  they legitimately back.
+
+### Tradeoffs
+- **Re-reading the registry under the terminal lock** vs **demoting the doc's
+  claim to an observed property.** Chose the code fix: the audit proved the
+  window from source and could not reproduce it in 67 runs, so this is a narrow
+  race, but "no heartbeat follows the final status line" is the property the
+  whole line-not-spinner design rests on, and a guarantee the code does not
+  provide is the kind of claim that gets quoted later. Cost is one extra
+  registry read per tick that has something to say, which is at most once per
+  interval per live task.
+- **A deterministic in-process test** (`a_task_that_dies_between_the_pre_check_
+  and_the_write_is_not_beaten`) vs **a timing test that tries to hit the race.**
+  Chose deterministic: the panel could not reproduce the window in 67 runs, so a
+  timing test would be a test that never fails for the right reason. The test
+  drives `tick` with a liveness closure that reports the task live on the first
+  read and gone on the second - the interleaving itself, with no sleeping.
+- **Proving the two weak negatives by aging the clock** vs **lowering the
+  threshold alone.** Both tests now sleep past a 50ms interval and assert the
+  task IS due a beat before the stamp under test, so the stamp is the only thing
+  that can decide the second assertion. Cost is ~70ms of real sleep per test;
+  a paused tokio clock would not do, since the code reads `Instant::now`.
+- **A 4-second task for the precedence tests** vs **reusing the 25-second
+  fixture.** Three more subprocess runs at 4 seconds each, run in parallel with
+  the rest of the binary, rather than three more at 25.
+
+### Open questions
+- **The doc's `Status: Implemented` now sits above an unticked acceptance
+  criterion.** Left as-is: unticking was the instruction and flipping `Status`
+  was not. Push the branch, let the runner report, and the box closes; if the
+  branch is not going to be pushed soon, `Status` is the next thing to reconcile.
+- **Colour inconsistency on one stream, unchanged and still deferred:** under a
+  pty with `otto task 2>log`, `[task] failed` writes escape bytes into `log`
+  while `[task] still running` writes none. The audit calls this worth a
+  follow-up on the STATUS lines, not on this feature. Nothing here touched it.

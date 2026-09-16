@@ -234,6 +234,13 @@ impl Shutdown {
         *self.stopped.lock().unwrap_or_else(PoisonError::into_inner) = true;
         self.wake.notify_all();
     }
+
+    /// Whether the run has asked the ticker to stop. Read under the terminal
+    /// lock by a tick that has already decided to write, so a stop that landed
+    /// while the tick waited for that lock still suppresses the line.
+    fn is_stopped(&self) -> bool {
+        *self.stopped.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 }
 
 impl Heartbeat {
@@ -248,10 +255,11 @@ impl Heartbeat {
 
     /// Stop the ticker and wait for its thread.
     ///
-    /// Called once `execute_all` has returned, so that no heartbeat can follow
-    /// the run's final status line: joining is what makes that a guarantee
-    /// rather than a race, since a tick already inside `emit` holds the
-    /// terminal lock and finishes its write before the join returns.
+    /// Called once `execute_all` has returned. The join bounds the ticker's
+    /// lifetime; what makes "no heartbeat follows the final status line" a
+    /// guarantee rather than an inference is `emit_due` re-deciding under the
+    /// terminal lock, since a tick that selected its lines before the stop can
+    /// still be waiting for that lock when this is called.
     /// Idempotent, which is what makes the `Drop` backstop free.
     pub fn stop(&mut self) {
         self.shutdown.stop();
@@ -289,7 +297,7 @@ where
     // about a run can change whether stderr is a terminal.
     let stderr_tty = io::stderr().is_terminal();
     let granularity = wake_granularity(interval);
-    let interval_ms = interval.as_millis() as u64;
+    let interval_ms = saturating_ms(interval);
     debug!(
         "heartbeat::spawn: interval={interval_ms}ms granularity={}ms stderr_tty={stderr_tty}",
         granularity.as_millis()
@@ -297,11 +305,12 @@ where
 
     let shutdown = Arc::new(Shutdown::default());
     let signal = shutdown.clone();
+    let stop = shutdown.clone();
     let thread = thread::Builder::new()
         .name("otto-heartbeat".to_string())
         .spawn(move || {
             while !signal.sleep(granularity) {
-                tick(&clocks, &live(), interval_ms, no_prefix, stderr_tty);
+                tick(&clocks, &live, interval_ms, no_prefix, stderr_tty, &stop);
             }
         });
 
@@ -329,23 +338,34 @@ fn wake_granularity(interval: Duration) -> Duration {
     interval.min(MAX_WAKE)
 }
 
+/// The interval in whole milliseconds, saturating rather than truncating.
+///
+/// `Duration::as_millis` is a `u128` and `as u64` keeps only its low 64 bits,
+/// which lands `--progress-interval 2305843009213693952` on exactly zero. Zero
+/// makes every live task due on every wake, so truncating turned the largest
+/// value a user can reach for - "effectively never" - into the loudest setting
+/// otto has.
+fn saturating_ms(interval: Duration) -> u64 {
+    u64::try_from(interval.as_millis()).unwrap_or(u64::MAX)
+}
+
 /// One wake: emit a line for every live task that is due one.
-fn tick(clocks: &TaskClocks, live: &[String], interval_ms: u64, no_prefix: bool, stderr_tty: bool) {
-    let due = due_beats(clocks, live, interval_ms);
-    if due.is_empty() {
+///
+/// This reads liveness twice, and the second read is the point. The first is a
+/// cheap filter outside the terminal lock, so a wake with nothing to say never
+/// contends for it. The write itself then re-decides under the lock, because a
+/// tick can wait an arbitrarily long replay there, and in that window the task
+/// it selected can exit, deregister and have its own `finished successfully`
+/// printed - leaving the beat to land after the line that says the task is
+/// done. Deciding and writing have to be one critical section.
+fn tick<L>(clocks: &TaskClocks, live: &L, interval_ms: u64, no_prefix: bool, stderr_tty: bool, shutdown: &Shutdown)
+where
+    L: Fn() -> Vec<String>,
+{
+    if due_beats(clocks, &live(), interval_ms).is_empty() {
         return;
     }
-    let lines: Vec<String> = due
-        .iter()
-        .map(|(task, clock)| beat_line(task, clock.elapsed(), no_prefix, stderr_tty))
-        .collect();
-    emit(&lines);
-    // Stamped after the write, not before: a tick can wait an arbitrarily long
-    // replay for the terminal lock, and spacing is meant to be measured from
-    // the line the user saw.
-    for (_, clock) in &due {
-        clock.note_beat();
-    }
+    emit_due(clocks, live, interval_ms, no_prefix, stderr_tty, shutdown);
 }
 
 /// The live tasks a tick should print a line for: silent for at least the
@@ -378,20 +398,44 @@ fn beat_line(task: &str, elapsed: Duration, no_prefix: bool, stderr_tty: bool) -
     format!("{label} still running ({})\n", format_duration(elapsed.as_secs_f64()))
 }
 
-/// Write a tick's lines to stderr under the process-wide terminal lock.
+/// Re-decide and write a tick's lines to stderr under the process-wide
+/// terminal lock.
 ///
 /// Synchronous on purpose, and deliberately not `report_status_line`
 /// (`scheduler/replay.rs`), which is an `async fn` whose first act is an
 /// `.await`. The lock is taken exactly once for the whole tick, so its lines
 /// stay contiguous, and nothing called under it takes it again: `TERMINAL_LOCK`
-/// is a non-reentrant `std::sync::Mutex`.
-fn emit(lines: &[String]) {
+/// is a non-reentrant `std::sync::Mutex`. Taking the registry's tokio mutex
+/// under it is safe in this one direction only, and it holds: no
+/// `terminal_lock` caller takes the registry, and no registry holder takes
+/// `TERMINAL_LOCK`.
+///
+/// Nothing is carried in from the pre-check - not the shutdown state, not the
+/// candidate list, not the elapsed figure - because all three can go stale
+/// while this waits for the lock.
+fn emit_due<L>(clocks: &TaskClocks, live: &L, interval_ms: u64, no_prefix: bool, stderr_tty: bool, shutdown: &Shutdown)
+where
+    L: Fn() -> Vec<String>,
+{
     let _terminal = terminal_lock();
+    if shutdown.is_stopped() {
+        return;
+    }
+    let due = due_beats(clocks, &live(), interval_ms);
+    if due.is_empty() {
+        return;
+    }
     let mut err = io::stderr().lock();
-    for line in lines {
+    for (task, clock) in &due {
+        let line = beat_line(task, clock.elapsed(), no_prefix, stderr_tty);
         let _ = err.write_all(line.as_bytes());
     }
     let _ = err.flush();
+    // Stamped after the write, not before: spacing is meant to be measured from
+    // the line the user saw.
+    for (_, clock) in &due {
+        clock.note_beat();
+    }
 }
 
 #[path = "heartbeat_tests.rs"]

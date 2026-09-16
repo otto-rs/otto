@@ -492,8 +492,9 @@ pub async fn execute_with_terminal_output(
     // Execute all tasks, capturing result
     let result = scheduler.execute_all().await;
 
-    // Stopped before anything else prints, so no heartbeat can follow the run's
-    // final status line.
+    // Stopped before anything else prints. The stop is half of "no heartbeat
+    // follows the final status line"; the other half is the ticker re-deciding
+    // under the terminal lock, since a tick can be waiting for that lock here.
     heartbeat.stop();
 
     // Close the run out in the database before anything else reads it: prune

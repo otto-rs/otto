@@ -365,8 +365,14 @@ The finding that changes Phase 3 is therefore a constraint, not a test-fix list:
   under 60s is a consequence of reuse, and reuse beats a second duration
   formatter that can drift.
 - The thread runs for the whole run and is stopped by an explicit shutdown flag
-  set after `execute_all` returns, so no heartbeat can follow the final status
-  line. It does NOT stop when no child is live: that state is reached before the
+  set after `execute_all` returns. The stop is only half of "no heartbeat can
+  follow the final status line": a tick that has already chosen its lines can be
+  waiting an arbitrarily long replay for the terminal lock while the task exits,
+  deregisters and prints its own status line. So the write re-decides *under*
+  that lock - shutdown flag, liveness and elapsed all re-read there - and emits
+  nothing that is no longer true. **Corrected by the round-1 implementation
+  audit,** which proved from source that the join alone made this an inference
+  rather than a guarantee. It does NOT stop when no child is live: that state is reached before the
   first child spawns, between dependent tasks, and while a drain outlives its
   child (`scheduler.rs:271-276`). Stopping on first-empty would disable
   monitoring across exactly the silent dependency gap this is for.
@@ -454,8 +460,16 @@ ready; the fifth says why it was not. The probe ottofile is three tasks: `quiet`
     that could not emit.
 - [x] A 30-second silent task at the default interval yields at least 2 lines
       matching `still running` that name the task.
+  - **Observed at the round-1 audit remediation, AT THE DEFAULT INTERVAL (no
+    flag, no `OTTO_PROGRESS_INTERVAL`, no `otto:` block):** `2` lines, both
+    naming `[quiet]`, at **11.0s** and **21.0s** of a 30-second run whose own
+    `START` landed at 0.03s; stderr `bytes=60 esc=0 cr=0`. Criterion met on the
+    interval it names. **Corrected by the round-1 implementation audit:** every
+    figure previously recorded against this line was measured at
+    `--progress-interval 5`, which is not the default the criterion claims.
   - **Observed on main:** `0`. Cannot pass before Phase 3, by construction.
-  - **Observed at `02d7e76` (Phase 3), at `--progress-interval 5`:** `5` lines,
+  - **Observed at `02d7e76` (Phase 3), at `--progress-interval 5`** - kept as
+    evidence for the spacing and `\r`-bar properties, not for the default: `5` lines,
     all naming `[quiet]`. First beat **5.99s** after the task's own first line,
     inside the 5-7s window; consecutive gaps **5.00s, 5.00s, 5.00s, 5.00s**.
     Elapsed renders through `format_duration` as `(6.0s)` ... `(26.0s)`.
@@ -466,11 +480,23 @@ ready; the fifth says why it was not. The probe ottofile is three tasks: `quiet`
   - **Also verified, `--progress-interval 0`:** `0` lines, stderr `0 bytes`. And
     on a merged-stream run the tail is `still running (26.0s)` -> `quiet: done`
     -> `finished successfully`, so no beat follows the final status line.
-- [x] `otto ci` is green on the runner.
-  - **Observed at `efdddcb` (Phase 4, final), 2026-09-15:** `exit 0`, `[ci] ✅
-    All CI checks passed!`. Coverage `Lines: 94.6% (26173/27679)`, over the 87%
-    floor, and up from the baseline's 94.5% rather than down. Local read; the
-    runner's figure is the one this criterion is claimed on. Re-run
+- [ ] `otto ci` is green on the runner.
+  - **UNVERIFIED pending a push.** The branch has never left this machine
+    (`git log origin/main..HEAD` is every commit of this feature), so no runner
+    has ever run it and there is no runner figure to claim this on. Every
+    reading below is LOCAL. **Caught by the round-1 implementation audit:** this
+    box was previously ticked on a local read annotated "the runner's figure is
+    the one this criterion is claimed on", which was a criterion bent to fit
+    rather than a doc defect corrected. It stays unticked until the branch is
+    pushed and the runner reports; the local readings are real evidence that the
+    suite is green, just not the evidence this bullet asks for.
+  - **Observed LOCALLY at the round-1 audit remediation, 2026-09-15:** `[ci] ✅
+    All CI checks passed!`. Coverage `Lines: 94.6% (26260/27765)`, over the 87%
+    floor. A local read, which `.otto.yml` documents as running about 4.5 points
+    high against the runner's pinned cargo-llvm-cov.
+  - **Observed LOCALLY at `efdddcb` (Phase 4, final), 2026-09-15:** `exit 0`,
+    `[ci] ✅ All CI checks passed!`. Coverage `Lines: 94.6% (26173/27679)`, over
+    the 87% floor, and up from the baseline's 94.5% rather than down. Re-run
     independently of the phase agents' own runs.
   - **Observed locally on main at `b51b509`, 2026-09-15:** `exit 0`, `[ci] ✅
     All CI checks passed!`. Coverage read `Lines: 94.5% (25375/26850)`, over the

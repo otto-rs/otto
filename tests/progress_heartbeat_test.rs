@@ -280,6 +280,13 @@ fn a_heartbeat_carries_no_colour_into_a_redirected_stderr_under_a_pty() {
     let output = cmd
         .current_dir(dir.path())
         .env_remove("OTTOFILE")
+        // The colour environment is pinned, not inherited: `colored` reads
+        // `NO_COLOR` and `CLICOLOR` (`colored-3/src/control.rs`), and either one
+        // exported in the developer's shell makes otto's stdout plain too - at
+        // which point the zero-escape assertion below holds against a binary
+        // with the stderr gate deleted, and this test proves nothing.
+        .env_remove("NO_COLOR")
+        .env_remove("CLICOLOR")
         .output()
         .expect("run otto under script");
 
@@ -289,6 +296,13 @@ fn a_heartbeat_carries_no_colour_into_a_redirected_stderr_under_a_pty() {
     assert!(
         output.stdout.contains(&b'\r'),
         "script must have allocated a pty; got {:?}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    // Its colour twin: stdout colour is the thing stderr is being asserted NOT
+    // to inherit, so if stdout has none, the split under test is not happening.
+    assert!(
+        output.stdout.contains(&0x1b),
+        "the pty stdout must carry colour for its absence on stderr to mean anything; got {:?}",
         String::from_utf8_lossy(&output.stdout)
     );
 
@@ -391,5 +405,111 @@ fn the_fixture_ottofile_declares_the_three_tasks() {
     assert!(
         Path::new(&dir.path().join("otto.yml")).exists(),
         "the fixture ottofile must be on disk"
+    );
+}
+
+/// A one-task project for the precedence tests, with the interval pinned in the
+/// ottofile's `otto:` block. Four seconds of silence is enough to be reported
+/// several times at a one-second interval and short enough not to slow the
+/// suite the way the 25-second criterion tasks do.
+fn precedence_project(ottofile_interval: u64) -> (TempDir, PathBuf) {
+    let dir = TempDir::new().expect("tempdir");
+    let ottofile = format!(
+        "otto:\n  progress-interval: {ottofile_interval}\ntasks:\n  brief:\n    bash: |\n      echo START\n      sleep 4\n"
+    );
+    fs::write(dir.path().join("otto.yml"), ottofile).expect("write ottofile");
+    let home = dir.path().join("otto-home");
+    fs::create_dir_all(&home).expect("create otto home");
+    (dir, home)
+}
+
+/// Run `brief` with the three sources of the interval set independently:
+/// the ottofile always, `OTTO_PROGRESS_INTERVAL` and the explicit flag only
+/// when the caller asks for them.
+///
+/// A subprocess rather than a unit test on the parser, and that is the whole
+/// reason this can exist: `std::env::set_var` would race the other tests in a
+/// unit binary, while `Command::env` sets the variable on this child only.
+fn run_brief(ottofile_interval: u64, env: Option<&str>, flag: Option<&str>) -> Vec<Line> {
+    let (dir, home) = precedence_project(ottofile_interval);
+    let argv = match flag {
+        Some(flag) => format!("{} --progress-interval {flag} brief 2>&1", quote(OTTO_BIN)),
+        None => format!("{} brief 2>&1", quote(OTTO_BIN)),
+    };
+
+    let mut cmd = std::process::Command::new("sh");
+    cmd.arg("-c").arg(argv);
+    isolate(&mut cmd, &home);
+    match env {
+        Some(value) => cmd.env("OTTO_PROGRESS_INTERVAL", value),
+        None => cmd.env_remove("OTTO_PROGRESS_INTERVAL"),
+    };
+
+    let mut child = cmd
+        .current_dir(dir.path())
+        .env_remove("OTTOFILE")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn otto");
+
+    let start = Instant::now();
+    let reader = read_lines(child.stdout.take().expect("stdout pipe"), start);
+    let status = child.wait().expect("wait for otto");
+    let (_, lines) = reader.join().expect("reader thread");
+
+    assert!(status.success(), "the run must succeed; captured:\n{}", render(&lines));
+    assert!(
+        lines.iter().any(|line| line.text.contains("START")),
+        "the task must have run at all:\n{}",
+        render(&lines)
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.text.contains("finished successfully") && line.at >= Duration::from_secs(3)),
+        "the run must have been silent long enough to be reported at a 1s interval:\n{}",
+        render(&lines)
+    );
+    lines
+}
+
+/// `OTTO_PROGRESS_INTERVAL` beats `otto.progress-interval`: the ottofile says
+/// off, the environment says one second, and the heartbeat runs. This is the
+/// positive half the two negatives below are read against.
+#[test]
+fn the_environment_beats_the_ottofile() {
+    let lines = run_brief(0, Some("1"), None);
+
+    assert!(
+        !beats(&lines, "[brief]").is_empty(),
+        "the environment's interval must be the one in force\n{}",
+        render(&lines)
+    );
+}
+
+/// An explicit flag beats the environment, in the direction that is visible:
+/// the environment asks for a heartbeat and the flag turns it off.
+#[test]
+fn an_explicit_flag_beats_the_environment() {
+    let lines = run_brief(0, Some("1"), Some("0"));
+
+    assert!(
+        beats(&lines, "[brief]").is_empty(),
+        "--progress-interval 0 must win over OTTO_PROGRESS_INTERVAL=1\n{}",
+        render(&lines)
+    );
+}
+
+/// `0` is a value like any other in the environment, not an absent one: it
+/// turns the heartbeat off over an ottofile that asked for it.
+#[test]
+fn a_zero_in_the_environment_beats_a_nonzero_ottofile() {
+    let lines = run_brief(1, Some("0"), None);
+
+    assert!(
+        beats(&lines, "[brief]").is_empty(),
+        "OTTO_PROGRESS_INTERVAL=0 must win over otto.progress-interval: 1\n{}",
+        render(&lines)
     );
 }

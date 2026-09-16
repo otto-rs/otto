@@ -11,6 +11,20 @@ async fn separate() {
     tokio::time::sleep(Duration::from_millis(SEPARATION_MS)).await;
 }
 
+/// The interval the two "not due" negatives below run at.
+///
+/// They need a threshold a fresh clock does NOT already sit under, or they pass
+/// against no code at all: `TaskClock::new` stamps both fields at creation, so
+/// with the 60s threshold they used to use, deleting the very `note_line` /
+/// `note_beat` call each one exists to protect left them green.
+const AGE_MS: u64 = 50;
+
+/// Age a clock past [`AGE_MS`], so what the stamp under test does is the only
+/// thing that can decide the assertion.
+async fn age() {
+    tokio::time::sleep(Duration::from_millis(AGE_MS + SEPARATION_MS)).await;
+}
+
 /// A line resets the clock, which is what makes a chatty task silent to the
 /// heartbeat.
 #[tokio::test]
@@ -212,28 +226,46 @@ fn a_silent_live_task_is_due_a_beat() {
 
 /// The negative case the whole idle clock exists for: a task that just produced
 /// a line is not silent, so it is not due a beat however long it has run.
-#[test]
-fn a_task_that_just_produced_a_line_is_not_due_a_beat() {
+///
+/// The clock is aged past the interval and asserted due FIRST, so the only
+/// thing standing between the two assertions is `note_line` itself.
+#[tokio::test]
+async fn a_task_that_just_produced_a_line_is_not_due_a_beat() {
     let clocks = TaskClocks::default();
     let clock = clocks.start("chatty");
+
+    age().await;
+    assert!(
+        !due_beats(&clocks, &["chatty".to_string()], AGE_MS).is_empty(),
+        "the clock must be due a beat before the line, or this proves nothing"
+    );
     clock.note_line();
 
     assert!(
-        due_beats(&clocks, &["chatty".to_string()], 60_000).is_empty(),
+        due_beats(&clocks, &["chatty".to_string()], AGE_MS).is_empty(),
         "a line inside the interval means the task is not silent"
     );
 }
 
 /// Spacing is measured from the previous beat, so a task silent for an hour is
 /// printed once per interval rather than on every wake.
-#[test]
-fn a_task_beaten_inside_the_interval_is_not_due_another() {
+///
+/// Same shape as the line negative above and for the same reason: due first,
+/// then stamped, so deleting `note_beat` turns this red.
+#[tokio::test]
+async fn a_task_beaten_inside_the_interval_is_not_due_another() {
     let clocks = TaskClocks::default();
     let clock = clocks.start("quiet");
+
+    age().await;
+    assert!(
+        !due_beats(&clocks, &["quiet".to_string()], AGE_MS).is_empty(),
+        "the clock must be due a beat before the stamp, or this proves nothing"
+    );
     clock.note_beat();
 
     assert!(
-        due_beats(&clocks, &["quiet".to_string()], 60_000).is_empty(),
+        due_beats(&clocks, &["quiet".to_string()], AGE_MS).is_empty(),
         "a beat inside the interval means the next one is not due yet"
     );
 }
@@ -307,5 +339,109 @@ fn stopping_is_prompt_and_the_ticker_stops_looking() {
         wakes.load(Ordering::Relaxed),
         after_stop,
         "a stopped ticker reads liveness no further"
+    );
+}
+
+/// A huge interval must mean "effectively never", not "every wake".
+///
+/// `Duration::as_millis` is a `u128`; the `as u64` this replaced kept only the
+/// low 64 bits, and 2^61 seconds in milliseconds is exactly zero there - the
+/// off-by-everything that made the largest reachable value the loudest.
+#[test]
+fn a_huge_interval_saturates_rather_than_wrapping_to_zero() {
+    assert_eq!(saturating_ms(Duration::from_secs(10)), 10_000);
+    assert_eq!(saturating_ms(Duration::from_millis(u64::MAX)), u64::MAX, "the boundary");
+    assert_eq!(
+        saturating_ms(Duration::from_millis(u64::MAX) + Duration::from_millis(1)),
+        u64::MAX,
+        "one millisecond past the boundary"
+    );
+    assert_eq!(
+        saturating_ms(Duration::from_secs(2_305_843_009_213_693_952)),
+        u64::MAX,
+        "the value that truncated to zero"
+    );
+}
+
+/// The window the design doc calls closed: a task can exit, deregister and have
+/// its own final status line printed while a tick waits for the terminal lock,
+/// so the write re-asks who is live instead of trusting the selection it
+/// arrived with. Live for the pre-check, gone by the write.
+///
+/// Proven through the beat stamp, which only moves when a line is written.
+#[test]
+fn a_task_that_dies_between_the_pre_check_and_the_write_is_not_beaten() {
+    let clocks = TaskClocks::default();
+    let clock = clocks.start("quiet");
+    thread::sleep(Duration::from_millis(SEPARATION_MS));
+    let before = clock.last_beat_ms();
+
+    let reads = AtomicU64::new(0);
+    let live = || {
+        if reads.fetch_add(1, Ordering::Relaxed) == 0 {
+            vec!["quiet".to_string()]
+        } else {
+            Vec::new()
+        }
+    };
+
+    tick(&clocks, &live, 0, false, false, &Shutdown::default());
+
+    assert_eq!(
+        reads.load(Ordering::Relaxed),
+        2,
+        "the write must re-read liveness, not reuse the pre-check's"
+    );
+    assert_eq!(
+        clock.last_beat_ms(),
+        before,
+        "a task that is gone by the write gets no line: {} vs {before}",
+        clock.last_beat_ms()
+    );
+}
+
+/// The same window for the stop: `stop()` can land while a tick sits on the
+/// terminal lock, and the join cannot retract a line already selected. The
+/// shutdown flag is therefore rechecked under the lock too, which is the other
+/// half of "no heartbeat follows the final status line".
+#[test]
+fn a_tick_that_reaches_the_lock_after_the_stop_writes_nothing() {
+    let clocks = TaskClocks::default();
+    let clock = clocks.start("quiet");
+    thread::sleep(Duration::from_millis(SEPARATION_MS));
+    let before = clock.last_beat_ms();
+
+    let shutdown = Shutdown::default();
+    shutdown.stop();
+    tick(&clocks, &|| vec!["quiet".to_string()], 0, false, false, &shutdown);
+
+    assert_eq!(
+        clock.last_beat_ms(),
+        before,
+        "a stopped run gets no line however the tick was selected: {} vs {before}",
+        clock.last_beat_ms()
+    );
+}
+
+/// The pre-check still exists, and it is what keeps the ticker off the terminal
+/// lock on the common wake: a tick with nothing to say reads liveness once and
+/// never reaches the locked section.
+#[test]
+fn a_wake_with_nothing_due_reads_liveness_once_and_takes_no_lock() {
+    let clocks = TaskClocks::default();
+    clocks.start("chatty");
+
+    let reads = AtomicU64::new(0);
+    let live = || {
+        reads.fetch_add(1, Ordering::Relaxed);
+        vec!["chatty".to_string()]
+    };
+
+    tick(&clocks, &live, 60_000, false, false, &Shutdown::default());
+
+    assert_eq!(
+        reads.load(Ordering::Relaxed),
+        1,
+        "a no-op wake must not pay for the second read or the lock"
     );
 }
