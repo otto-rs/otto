@@ -533,8 +533,12 @@ introduced.
   would also pass for a single stray escape from somewhere else.
 
 ### Open questions
-- **The three CLI-level colour sites are still untouched.**
-  `ottofile_not_found_message` (`src/cli/parser.rs:457`) and the no-database
-  notices in `history.rs:116` and `stats.rs:40` colour their own message text on
-  a redirected stderr. They are message text, not task labels, so they never
-  reached this predicate; whether they should is a separate decision.
+- **The FOUR CLI-level colour sites are still untouched.** Recorded as three
+  until the round-3 audit showed the parse-error one is reachable.
+  `ottofile_not_found_message` (`src/cli/parser.rs:457`, 14 escape bytes),
+  `ottofile_parse_error_message` (`:479`, printed at `:940`, 4 bytes, reached by
+  a malformed ottofile plus `otto --help`), and the no-database notices in
+  `history.rs:116` and `stats.rs:40` (2 each) colour their own message text on a
+  redirected stderr. They are message text, not task labels, so they never
+  reached this predicate, and `CLICOLOR_FORCE` changes nothing for them either
+  way; whether they should is a separate decision.

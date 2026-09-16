@@ -388,8 +388,12 @@ fn due_beats(clocks: &TaskClocks, live: &[String], interval_ms: u64) -> Vec<(Str
 ///
 /// No carriage return, no cursor control, no erase: the line has to survive
 /// being captured to a log verbatim, which is the constraint that chose a line
-/// over an animated spinner. The label is uncoloured whenever stderr is not a
-/// terminal, rather than inheriting `task_label`'s stdout-derived decision.
+/// over an animated spinner. The label is uncoloured unless `stderr_color` says
+/// stderr takes colour, rather than inheriting `task_label`'s stdout-derived
+/// decision. That predicate is `colors::stderr_takes_color`, so a redirected
+/// stderr IS coloured under `CLICOLOR_FORCE`: an explicit override outranks the
+/// log-safety default, and this is the one case where a beat carries escapes
+/// into a captured log.
 /// Elapsed comes from otto's own `format_duration`, so `45.0s` under a minute
 /// and `2m14s` over one.
 fn beat_line(task: &str, elapsed: Duration, no_prefix: bool, stderr_color: bool) -> String {

@@ -194,7 +194,8 @@ fn no_prefix_drops_the_brackets() {
 /// Whether to colour is decided by asking about STDERR, the stream the line is
 /// written to. `task_label` answers for stdout - `colored` derives
 /// `SHOULD_COLORIZE` from `stdout().is_terminal()` - and applying that decision
-/// to stderr is how colour reaches a redirected stderr in otto today. The
+/// to stderr is how colour used to reach a redirected stderr, until
+/// `fix(output): stop writing colour escapes into a redirected stderr`. The
 /// heartbeat picks between the two rather than inheriting one.
 #[test]
 fn the_label_form_follows_stderr_not_stdout() {

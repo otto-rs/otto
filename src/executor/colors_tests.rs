@@ -90,8 +90,17 @@ fn stream_task_label_keeps_no_prefix_independent_of_colour() {
 /// status line reads it per line, and the two must never disagree (npm's
 /// commit `5b858c6` shipped a progress predicate whose two readings diverged).
 #[test]
-fn stderr_takes_color_answers_the_same_every_time() {
-    assert_eq!(stderr_takes_color(), stderr_takes_color());
+fn stderr_takes_color_caches_the_answer_the_pure_form_gives() {
+    // `f() == f()` would hold whether or not the OnceLock cached anything, so it
+    // proved nothing. Pin the cached answer against a fresh evaluation of the
+    // pure form on the same inputs instead: that fails if the cache ever
+    // disagrees with the rule, which is the only way this predicate can lie.
+    let expected = stderr_takes_color_from(
+        std::io::stderr().is_terminal(),
+        std::env::var("CLICOLOR_FORCE").ok().as_deref(),
+    );
+    assert_eq!(stderr_takes_color(), expected);
+    assert_eq!(stderr_takes_color(), expected, "the cached answer must not drift");
 }
 
 /// `CLICOLOR_FORCE` forces colour onto a stderr that is not a terminal, which

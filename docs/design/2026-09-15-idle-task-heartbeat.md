@@ -2,7 +2,11 @@
 
 **Author:** Scott Idler
 **Date:** 2026-09-15
-**Status:** Implemented and shipped in v2.5.1 (6 of 6 acceptance criteria verified on the runner)
+**Status:** Implemented and shipped in v2.5.1 (6 of 6 acceptance criteria
+verified on the runner). The two follow-up stderr-colour fixes are NOT in
+v2.5.1: `fix(output): stop writing colour escapes into a redirected stderr`
+and `fix(output): honour CLICOLOR_FORCE on a redirected stderr` land in the
+next release.
 **Review Passes Completed:** 5/5, plus review-panel round 1 folded in
 
 ## Summary
@@ -73,9 +77,15 @@ And the constraint that decides the shape, raised by Scott and accepted by Ian:
   file; `fix(output): honour CLICOLOR_FORCE on a redirected stderr` restored it,
   so a redirected stderr now takes colour when it is a terminal OR
   `CLICOLOR_FORCE` is set to anything but `0`, matching `colored`'s own
-  `normalize_env` rule and its precedence over `NO_COLOR`. The heartbeat's own
-  behaviour is unchanged by either fix; it reads the shared predicate instead of
-  its own.
+  `normalize_env` rule and its precedence over `NO_COLOR`. **That second fix
+  DID change the heartbeat**, and this bullet previously claimed it did not.
+  v2.5.1 hard-coded `if stderr_tty` in `beat_line`, so a heartbeat line was
+  never coloured on a redirected stderr under any environment. Now it reads the
+  shared predicate, so `CLICOLOR_FORCE=1` colours it: measured, a 30-second
+  silent task at `--progress-interval 5` with stderr redirected went from 0
+  escape bytes on v2.5.1 to 30 (5 beats x 6). That is intended, it is the same
+  knob decision recorded above, and it is the one place where the log-safety
+  goal yields to an explicit user override. Caught by the round-3 audit.
 - A task that produces output regularly emits nothing extra. (Ian: "if a process
   is running and there hasn't been a line logged in the last 5 (3?) seconds")
 - The interval is configurable through the ottofile, per otto's `jobs`
@@ -114,7 +124,8 @@ Three parts, each landing on an existing otto seam:
    terminal lock.
 
 Output shape, honouring `--no-prefix` exactly as otto's status lines do, and
-coloured only when stderr is itself a terminal:
+coloured only when stderr is itself a terminal or `CLICOLOR_FORCE` is set to
+anything but `0`:
 
 ```
 [philo] still running (2m14s)
@@ -399,10 +410,19 @@ The finding that changes Phase 3 is therefore a constraint, not a test-fix list:
     than 5s and no later than 7s after the task's last line, and consecutive
     lines are 5s to 7s apart.
   - The same run with both streams redirected to files produces **zero** `\r`
-    bytes in either file, and **zero** `0x1b` bytes on stderr.
-  - The same run with stdout on a pty and stderr redirected to a file produces
-    **zero** `0x1b` bytes in that file, which is the split-redirection case
-    otto's existing status lines failed when this criterion was written.
+    bytes in either file, and, **absent `CLICOLOR_FORCE`**, **zero** `0x1b`
+    bytes on stderr.
+  - The same run with stdout on a pty and stderr redirected to a file produces,
+    **absent `CLICOLOR_FORCE`**, **zero** `0x1b` bytes in that file, which is
+    the split-redirection case otto's existing status lines failed when this
+    criterion was written.
+  - Both `0x1b` clauses were written unconditionally and are false under
+    `CLICOLOR_FORCE=1`, where a redirected stderr correctly carries colour
+    (30 escape bytes on a 5-beat run). The `\r` clause is unconditional and
+    stands: no fix introduced a carriage return. Qualified after the round-3
+    audit measured it; `CLICOLOR_FORCE` is unset in every recorded observation
+    below, and otto's CI sets only `CARGO_TERM_COLOR`, which `colored` never
+    reads.
   - A task echoing once per second for 25 seconds under `--progress-interval 5`
     emits **zero** lines matching `still running`. This only guards anything
     alongside the positive criterion above: zero lines from a run that could
@@ -475,9 +495,13 @@ ready; the fifth says why it was not. The probe ottofile is three tasks: `quiet`
     `colored` and otto must not disagree with it. Three CLI-level sites
     still colour their own message text on a redirected stderr:
     `ottofile_not_found_message` (`src/cli/parser.rs:457`, 14 escape bytes),
-    and the yellow no-database notices in `history.rs:116` and `stats.rs:40`
-    (2 each). Found by the round-2 audit; they are message text rather than
-    task labels, so they are outside the predicate this fix introduced.
+    `ottofile_parse_error_message` (`:479`, printed at `:940`, 4 escape bytes,
+    reached by a malformed ottofile plus `otto --help`), and the yellow
+    no-database notices in `history.rs:116` and `stats.rs:40` (2 each). FOUR
+    sites, not the three the round-2 audit found: round 3 established the
+    parse-error one is reachable. They are message text rather than task
+    labels, so they are outside the predicate this fix introduced, and
+    `CLICOLOR_FORCE` changes nothing for them in either direction.
 - [x] A task printing once per second for 30 seconds yields exactly zero lines
       matching `still running`.
   - **Observed on main:** `0` (31 stdout lines, none matching). Guards the
