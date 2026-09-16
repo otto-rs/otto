@@ -20,7 +20,7 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
     ) {
         let SkipRecord { kind, detail } = &record;
         info!("Skipping task {} ({detail})", task.name);
-        let msg = format!("{} skipped ({detail})\n", self.status_label(&task.name));
+        let msg = format!("{} skipped ({detail})\n", self.status_label(&task.name, false));
         self.report_status_line(cursor, &task.name, msg, false, Vec::new()).await;
         skipped_set.insert(task.name.clone(), *kind);
         {
@@ -83,7 +83,7 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
             // Terminal transition 4 of four. Like `mark_skipped`, this path
             // mutates the terminal-state sets inline and sends no report, so
             // the cursor has to be advanced from here too.
-            let skipped_msg = format!("{} skipped (up to date)\n", self.status_label(&task.name));
+            let skipped_msg = format!("{} skipped (up to date)\n", self.status_label(&task.name, false));
             self.report_status_line(cursor, &task.name, skipped_msg, false, Vec::new())
                 .await;
 

@@ -25,7 +25,7 @@ use super::state::SkipKind;
 use super::task::{Task, TaskEdge};
 use super::{
     action::{ActionProcessor, ProcessedAction},
-    colors::{set_global_task_order, task_label},
+    colors::{set_global_task_order, stderr_is_terminal, stream_task_label},
     heartbeat::{self, TaskClock, TaskClocks},
     output::{OutputType, TaskMessage, TaskStreams, TuiTaskStatus, format_terminal_output, terminal_lock},
     workspace::{ExecutionContext, Workspace},
@@ -1469,8 +1469,13 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
     ///
     /// The flag used to reach task output only, so a `--no-prefix` run mixed
     /// unprefixed output with prefixed status lines.
-    fn status_label(&self, task_name: &str) -> String {
-        task_label(task_name, self.no_prefix)
+    ///
+    /// `to_stderr` is the same bool `report_status_line` routes the line by
+    /// (failure lines go to stderr, the rest to stdout). It has to be asked
+    /// here too: `colored` answers about stdout, so a status line on a
+    /// redirected stderr took its colour from the wrong stream.
+    fn status_label(&self, task_name: &str, to_stderr: bool) -> String {
+        stream_task_label(task_name, self.no_prefix, !to_stderr || stderr_is_terminal())
     }
 
     /// Set pre-created TaskStreams for TUI mode
@@ -1776,7 +1781,7 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
                     // this line travels with its block instead of printing now.
                     let msg = format!(
                         "{} {}\n",
-                        self.status_label(&completed_task),
+                        self.status_label(&completed_task, false),
                         task_outcome_word(&final_status)
                     );
                     self.report_status_line(&mut cursor, &completed_task, msg, false, report_drain)
@@ -1847,7 +1852,7 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
 
                     // Print user-visible failure message (only in terminal mode).
                     // For a buffered subtask it travels with its block instead.
-                    let failure_msg = format!("{} failed\n", self.status_label(&task_name));
+                    let failure_msg = format!("{} failed\n", self.status_label(&task_name, true));
                     self.report_status_line(&mut cursor, &task_name, failure_msg, true, report_drain)
                         .await;
 

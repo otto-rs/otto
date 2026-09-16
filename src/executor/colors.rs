@@ -1,6 +1,7 @@
 use colored::{Color, Colorize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::io::{self, IsTerminal};
 use std::sync::{Mutex, OnceLock};
 
 /// All 15 possible color combinations (bracket_color, text_color) where bracket ≠ text
@@ -100,10 +101,41 @@ pub fn task_label(task_name: &str, no_prefix: bool) -> String {
 /// `SHOULD_COLORIZE` from `stdout().is_terminal()`
 /// (`colored-3.1.1/src/control.rs`), so [`task_label`] applies a decision about
 /// stdout to whatever stream it is printed on - which is how `otto task 2>log`
-/// with stdout on a terminal writes a coloured label into `log` today. A caller
-/// writing to stderr picks between the two by asking about stderr.
+/// with stdout on a terminal used to write a coloured label into `log`. A
+/// caller writing to stderr picks between the two through
+/// [`stream_task_label`].
 pub fn plain_task_label(task_name: &str, no_prefix: bool) -> String {
     if no_prefix { task_name.to_string() } else { format!("[{task_name}]") }
+}
+
+/// Whether otto's own stderr is a terminal. The one answer in the binary.
+///
+/// Read once and cached on purpose: nothing about a run can change whether
+/// stderr is a terminal, and npm shipped a progress predicate evaluated twice
+/// whose two readings diverged (commit `5b858c6`).
+///
+/// Not by itself a decision to colour: it answers only the half `colored` gets
+/// wrong, which stream the bytes land on. `NO_COLOR`, `CLICOLOR` and the
+/// stdout tty read stay with `colored`, reached through [`task_label`].
+pub fn stderr_is_terminal() -> bool {
+    static STDERR_IS_TERMINAL: OnceLock<bool> = OnceLock::new();
+    *STDERR_IS_TERMINAL.get_or_init(|| io::stderr().is_terminal())
+}
+
+/// The label for a line about to be written to a stream that takes colour
+/// (`takes_color`) or does not: [`task_label`] or [`plain_task_label`].
+///
+/// The decision comes in as a parameter because the caller is the one that
+/// knows which of otto's two streams it is writing on, and because that keeps
+/// every label site pure and unit-testable without a real terminal. stderr
+/// sites pass [`stderr_is_terminal`]; stdout sites pass `true` and let
+/// `colored` have the last word.
+pub fn stream_task_label(task_name: &str, no_prefix: bool, takes_color: bool) -> String {
+    if takes_color {
+        task_label(task_name, no_prefix)
+    } else {
+        plain_task_label(task_name, no_prefix)
+    }
 }
 
 #[path = "colors_tests.rs"]

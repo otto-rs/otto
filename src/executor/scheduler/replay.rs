@@ -310,7 +310,17 @@ fn read_bounded_chunk(reader: &mut impl BufRead, chunk: &mut Vec<u8>) -> io::Res
 ///
 /// A missing log is not an error: a subtask that was skipped, or that never
 /// wrote anything, contributes nothing but its status line.
-fn stream_log(out: &mut impl Write, path: &Path, task_name: &str, no_prefix: bool) -> io::Result<()> {
+///
+/// `takes_color` comes from the caller because this function is called once
+/// per stream per block: the stdout log and the stderr log of the same subtask
+/// get different answers when only one of the two is a terminal.
+fn stream_log(
+    out: &mut impl Write,
+    path: &Path,
+    task_name: &str,
+    no_prefix: bool,
+    takes_color: bool,
+) -> io::Result<()> {
     let file = match fs::File::open(path) {
         Ok(file) => file,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -330,7 +340,7 @@ fn stream_log(out: &mut impl Write, path: &Path, task_name: &str, no_prefix: boo
         if mid_line {
             out.write_all(&chunk)?;
         } else {
-            out.write_all(format_terminal_output(task_name, &chunk, no_prefix).as_bytes())?;
+            out.write_all(format_terminal_output(task_name, &chunk, no_prefix, takes_color).as_bytes())?;
         }
         mid_line = !complete;
     }
@@ -372,6 +382,9 @@ fn truncation_marker(block: &ReplayBlock, issue: &DrainIssue) -> String {
 /// loop would stall a tokio worker and starve every concurrent task, and the
 /// block cannot be assembled with `.await` points inside the lock.
 fn write_replay_blocks(notice: Option<String>, blocks: Vec<ReplayBlock>, no_prefix: bool) {
+    // A replayed stderr log is still stderr: prefixing it with the decision
+    // `colored` made about stdout is the same leak the live leg had.
+    let err_takes_color = stderr_is_terminal();
     let _terminal = terminal_lock();
     let stdout = io::stdout();
     let stderr = io::stderr();
@@ -388,9 +401,15 @@ fn write_replay_blocks(notice: Option<String>, blocks: Vec<ReplayBlock>, no_pref
     for block in blocks {
         match block.kind {
             BlockKind::Logs => {
-                let _ = stream_log(&mut out, &block.stdout_log, &block.task_name, no_prefix);
+                let _ = stream_log(&mut out, &block.stdout_log, &block.task_name, no_prefix, true);
                 let _ = out.flush();
-                let _ = stream_log(&mut err, &block.stderr_log, &block.task_name, no_prefix);
+                let _ = stream_log(
+                    &mut err,
+                    &block.stderr_log,
+                    &block.task_name,
+                    no_prefix,
+                    err_takes_color,
+                );
                 for issue in &block.drain {
                     let _ = err.write_all(truncation_marker(&block, issue).as_bytes());
                 }
@@ -539,7 +558,7 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
         cursor.record(
             &report.name,
             PendingBlock {
-                status_line: format!("{} {word}\n", self.status_label(&report.name)),
+                status_line: format!("{} {word}\n", self.status_label(&report.name, to_stderr)),
                 status_to_stderr: to_stderr,
                 drain: report.drain.clone(),
             },

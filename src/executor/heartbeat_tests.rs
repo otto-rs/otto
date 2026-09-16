@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use super::*;
+use crate::executor::colors::{plain_task_label, task_label};
 
 /// How long a stamp is separated from the reading that must see it. Every
 /// assertion below is a LOWER bound on elapsed time, which is the only kind a

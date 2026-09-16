@@ -121,7 +121,7 @@ async fn test_multiple_streams() {
 /// just the color, leaving exactly the task's own bytes.
 #[test]
 fn test_no_prefix_omits_task_prefix() {
-    let out = format_terminal_output("loud-task", b"hello\n", true);
+    let out = format_terminal_output("loud-task", b"hello\n", true, true);
     assert_eq!(out, "hello\n");
 }
 
@@ -130,7 +130,7 @@ fn test_no_prefix_omits_task_prefix() {
 /// would fail this test.
 #[test]
 fn test_prefix_present_by_default() {
-    let out = format_terminal_output("loud-task", b"hello\n", false);
+    let out = format_terminal_output("loud-task", b"hello\n", false, true);
     assert!(
         out.contains("loud-task"),
         "expected task name in prefixed output: {out:?}"
@@ -186,5 +186,28 @@ async fn a_suppressed_subtasks_line_advances_its_own_clock_and_no_siblings() {
         sibling.last_line_ms(),
         sibling_before,
         "another task's output must not reset this task's clock"
+    );
+}
+
+/// The stderr half of the leak this function used to carry: a chunk headed for
+/// a stream that takes no colour gets the plain `[task]` prefix, escape-free.
+/// Pinned here rather than only end-to-end because the function is pure for
+/// exactly this reason - no terminal needed to test it.
+#[test]
+fn test_prefix_is_plain_for_a_stream_that_takes_no_colour() {
+    let out = format_terminal_output("loud-task", b"hello\n", false, false);
+    assert_eq!(out, "[loud-task] hello\n");
+}
+
+/// Its twin: with `takes_color` set the prefix is whatever `colored` decides,
+/// which is the stdout behaviour the fix must leave alone. Compared against
+/// `colorize_task_prefix` rather than against literal escapes, so it holds
+/// under `cargo test` (no terminal) and under a pty alike.
+#[test]
+fn test_prefix_defers_to_colored_for_a_stream_that_takes_colour() {
+    let out = format_terminal_output("loud-task", b"hello\n", false, true);
+    assert_eq!(
+        out,
+        format!("{} hello\n", crate::executor::colors::colorize_task_prefix("loud-task"))
     );
 }

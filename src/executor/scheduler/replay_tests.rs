@@ -299,24 +299,27 @@ fn read_bounded_chunk_caps_an_endless_line() {
 // Block rendering
 // =========================================================================
 
-fn read_back(dir: &std::path::Path, name: &str, contents: &str, no_prefix: bool) -> String {
+/// `takes_color` is the caller's answer about the stream it is writing to:
+/// replay calls `stream_log` once for the subtask's stdout log and once for its
+/// stderr log, and the two get different answers when only one is a terminal.
+fn read_back(dir: &std::path::Path, name: &str, contents: &str, no_prefix: bool, takes_color: bool) -> String {
     let path = dir.join(name);
     std::fs::write(&path, contents).unwrap();
     let mut out: Vec<u8> = Vec::new();
-    stream_log(&mut out, &path, "say:alpha", no_prefix).unwrap();
+    stream_log(&mut out, &path, "say:alpha", no_prefix, takes_color).unwrap();
     String::from_utf8(out).unwrap()
 }
 
 #[test]
 fn stream_log_prefixes_every_line_and_honors_no_prefix() {
     let dir = tempfile::TempDir::new().unwrap();
-    let prefixed = read_back(dir.path(), "stdout.log", "one\ntwo\n", false);
+    let prefixed = read_back(dir.path(), "stdout.log", "one\ntwo\n", false, true);
     assert_eq!(prefixed.lines().count(), 2);
     assert!(
         prefixed.lines().all(|line| line.contains("say:alpha")),
         "every replayed line keeps its attribution: {prefixed}"
     );
-    assert_eq!(read_back(dir.path(), "raw.log", "one\ntwo\n", true), "one\ntwo\n");
+    assert_eq!(read_back(dir.path(), "raw.log", "one\ntwo\n", true, true), "one\ntwo\n");
 }
 
 /// A log whose last line has no newline must not leave the status line that
@@ -324,7 +327,7 @@ fn stream_log_prefixes_every_line_and_honors_no_prefix() {
 #[test]
 fn stream_log_closes_an_unterminated_last_line() {
     let dir = tempfile::TempDir::new().unwrap();
-    let out = read_back(dir.path(), "stdout.log", "tail", true);
+    let out = read_back(dir.path(), "stdout.log", "tail", true, true);
     assert_eq!(out, "tail\n");
 }
 
@@ -333,10 +336,20 @@ fn stream_log_closes_an_unterminated_last_line() {
 #[test]
 fn stream_log_is_a_no_op_for_an_empty_or_missing_log() {
     let dir = tempfile::TempDir::new().unwrap();
-    assert_eq!(read_back(dir.path(), "empty.log", "", false), "");
+    assert_eq!(read_back(dir.path(), "empty.log", "", false, true), "");
     let mut out: Vec<u8> = Vec::new();
-    stream_log(&mut out, &dir.path().join("absent.log"), "say:alpha", false).unwrap();
+    stream_log(&mut out, &dir.path().join("absent.log"), "say:alpha", false, true).unwrap();
     assert!(out.is_empty(), "a missing log is not an error");
+}
+
+/// A replayed stderr log going to a redirected stderr gets the plain prefix:
+/// replay had the same stdout-derived colour leak the live leg had, on the one
+/// path that only a buffered foreach reaches.
+#[test]
+fn stream_log_prefixes_plainly_for_a_stream_that_takes_no_colour() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let out = read_back(dir.path(), "stderr.log", "one\ntwo\n", false, false);
+    assert_eq!(out, "[say:alpha] one\n[say:alpha] two\n");
 }
 
 /// The marker names the stream, the condition, and the log path: a bool could

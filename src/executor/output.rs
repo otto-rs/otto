@@ -13,7 +13,10 @@ use tokio::{
     sync::broadcast,
 };
 
-use super::{colors::colorize_task_prefix, heartbeat::TaskClock};
+use super::{
+    colors::{stderr_is_terminal, stream_task_label},
+    heartbeat::TaskClock,
+};
 
 /// Capacity of a task's output broadcast channel. Large because a chatty task can
 /// emit thousands of lines before a slow subscriber (the TUI) drains them, and a
@@ -126,15 +129,21 @@ pub struct TeeWriter {
 }
 
 /// Build the bytes that go to the terminal for one chunk of task output:
-/// the colored `[task]` prefix ahead of the data, or the data alone when
-/// `no_prefix` (`--no-prefix`) is set. Pure so the prefix-suppression logic
-/// is unit-testable without capturing real process stdout/stderr.
-pub(crate) fn format_terminal_output(task_name: &str, data: &[u8], no_prefix: bool) -> String {
+/// the `[task]` prefix ahead of the data, or the data alone when `no_prefix`
+/// (`--no-prefix`) is set. Pure so the prefix-suppression logic is
+/// unit-testable without capturing real process stdout/stderr - which is why
+/// `takes_color` comes in as a parameter instead of being read here: this
+/// chunk may be headed for stdout or for stderr, and only the caller knows
+/// which.
+pub(crate) fn format_terminal_output(task_name: &str, data: &[u8], no_prefix: bool, takes_color: bool) -> String {
     if no_prefix {
         String::from_utf8_lossy(data).to_string()
     } else {
-        let colored_prefix = colorize_task_prefix(task_name);
-        format!("{} {}", colored_prefix, String::from_utf8_lossy(data))
+        // `no_prefix: false` in the label call is not a contradiction: this arm
+        // IS the prefixed case, and that flag chooses `[task]` over a bare
+        // `task` inside the label.
+        let prefix = stream_task_label(task_name, false, takes_color);
+        format!("{} {}", prefix, String::from_utf8_lossy(data))
     }
 }
 
@@ -176,8 +185,13 @@ impl TeeWriter {
         // buffered foreach subtask, whose bytes reach the terminal only through
         // ordered replay)
         if !self.suppress_terminal {
+            // Decided per stream, not once for the process: `colored` derives
+            // its answer from stdout, and half of what this writer prints goes
+            // to stderr. Asking stdout on behalf of stderr is what wrote colour
+            // into `otto task 2>log`.
+            let takes_color = !self.is_stderr || stderr_is_terminal();
             // Write to terminal, with or without the colored task name prefix
-            let terminal_output = format_terminal_output(&self.task_name, data, self.no_prefix);
+            let terminal_output = format_terminal_output(&self.task_name, data, self.no_prefix, takes_color);
             // Held across the write and its flush, never across an `.await`:
             // this is one of the seven sites a replayed block must not be split
             // by. Per write here, for one whole block in the replay path.

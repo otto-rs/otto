@@ -13,7 +13,7 @@
 
 use std::{
     collections::HashMap,
-    io::{self, IsTerminal, Write},
+    io::{self, Write},
     sync::{
         Arc, Condvar, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicU64, Ordering},
@@ -25,7 +25,7 @@ use std::{
 use log::{debug, error};
 
 use super::{
-    colors::{plain_task_label, task_label},
+    colors::{stderr_is_terminal, stream_task_label},
     output::terminal_lock,
 };
 use crate::cli::commands::format::format_duration;
@@ -294,8 +294,10 @@ where
 
     // Read once, here, and never re-derived: npm shipped a progress predicate
     // evaluated twice whose two readings diverged (commit 5b858c6), and nothing
-    // about a run can change whether stderr is a terminal.
-    let stderr_tty = io::stderr().is_terminal();
+    // about a run can change whether stderr is a terminal. `stderr_is_terminal`
+    // caches that read for the whole binary, so the heartbeat and the status
+    // lines cannot disagree about it.
+    let stderr_tty = stderr_is_terminal();
     let granularity = wake_granularity(interval);
     let interval_ms = saturating_ms(interval);
     debug!(
@@ -390,11 +392,7 @@ fn due_beats(clocks: &TaskClocks, live: &[String], interval_ms: u64) -> Vec<(Str
 /// Elapsed comes from otto's own `format_duration`, so `45.0s` under a minute
 /// and `2m14s` over one.
 fn beat_line(task: &str, elapsed: Duration, no_prefix: bool, stderr_tty: bool) -> String {
-    let label = if stderr_tty {
-        task_label(task, no_prefix)
-    } else {
-        plain_task_label(task, no_prefix)
-    };
+    let label = stream_task_label(task, no_prefix, stderr_tty);
     format!("{label} still running ({})\n", format_duration(elapsed.as_secs_f64()))
 }
 

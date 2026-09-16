@@ -62,3 +62,34 @@ fn test_color_combinations_count() {
         assert_ne!(format!("{bracket:?}"), format!("{text:?}"));
     }
 }
+
+/// `stream_task_label` is the selector every stderr-writing site goes through,
+/// and it must pick by the stream, not by `colored`'s stdout-derived answer.
+/// Asserted against both label functions rather than against literal text, so
+/// it holds whether or not the test process has a terminal.
+#[test]
+fn stream_task_label_picks_the_plain_form_for_a_stream_that_takes_no_colour() {
+    assert_eq!(
+        stream_task_label("build", false, false),
+        plain_task_label("build", false)
+    );
+    assert_eq!(stream_task_label("build", false, true), task_label("build", false));
+}
+
+/// The plain form still honours `--no-prefix`: the flag and the colour decision
+/// are independent, and a no-prefix run writing to a redirected stderr gets a
+/// bare task name with no escapes.
+#[test]
+fn stream_task_label_keeps_no_prefix_independent_of_colour() {
+    assert_eq!(stream_task_label("build", true, false), "build");
+    assert!(!stream_task_label("build", true, false).contains('\u{1b}'));
+    assert_eq!(stream_task_label("build", false, false), "[build]");
+}
+
+/// Read once for the process: the heartbeat reads this at spawn and every
+/// status line reads it per line, and the two must never disagree (npm's
+/// commit `5b858c6` shipped a progress predicate whose two readings diverged).
+#[test]
+fn stderr_is_terminal_answers_the_same_every_time() {
+    assert_eq!(stderr_is_terminal(), stderr_is_terminal());
+}

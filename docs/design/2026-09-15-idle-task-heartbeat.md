@@ -55,13 +55,20 @@ And the constraint that decides the shape, raised by Scott and accepted by Ian:
 - Captured output is never defaced: no carriage return, no cursor control, no
   partially overwritten or re-drawn line, in any capture route. (Scott, accepted
   by Ian)
-- The feature introduces no new escape bytes. It does not make otto's captured
-  output escape-free, because it already is not: `colored` decides colour from
-  `stdout().is_terminal()` (`colored-3.1.1/src/control.rs:107`) and otto applies
-  that decision to stderr too, so `otto task 2>log` with stdout on a terminal
-  already writes a coloured `[boom] failed` into `log` today. Measured, see
-  Acceptance Criteria. The heartbeat therefore builds its label uncoloured
-  whenever stderr is not a terminal, rather than inheriting that behaviour.
+- The feature introduces no new escape bytes. It did not, by itself, make
+  otto's captured output escape-free, because when this shipped it already was
+  not: `colored` decides colour from `stdout().is_terminal()`
+  (`colored-3.1.1/src/control.rs:107`) and otto applied that decision to stderr
+  too, so `otto task 2>log` with stdout on a terminal wrote a coloured
+  `[boom] failed` into `log`. Measured, see Acceptance Criteria. The heartbeat
+  therefore builds its label uncoloured whenever stderr is not a terminal,
+  rather than inheriting that behaviour. **That leak was fixed separately,
+  after this feature, by `fix(output): stop writing colour escapes into a
+  redirected stderr`**, which put the same stderr question behind one read-once
+  `stderr_is_terminal()` predicate (`src/executor/colors.rs`) and routed the
+  status lines, live task output and replayed logs through it. The heartbeat's
+  own behaviour is unchanged by that fix; it now reads the shared predicate
+  instead of its own.
 - A task that produces output regularly emits nothing extra. (Ian: "if a process
   is running and there hasn't been a line logged in the last 5 (3?) seconds")
 - The interval is configurable through the ottofile, per otto's `jobs`
@@ -357,8 +364,9 @@ The finding that changes Phase 3 is therefore a constraint, not a test-fix list:
   the plain `[name]` form otherwise. `status_label` reaches
   `colorize_task_prefix` (`colors.rs:70`), gated on `SHOULD_COLORIZE`, which
   `colored` derives from `stdout().is_terminal()`. Applying a stdout decision to
-  stderr is how colour reaches a redirected stderr today; the heartbeat does not
-  inherit it.
+  stderr was, at the time of this phase, how colour reached a redirected stderr;
+  the heartbeat does not inherit it. (Corrected binary-wide by the follow-up fix
+  named in Goals and in Risks.)
 - Elapsed from the existing
   `format_duration` (`src/cli/commands/format.rs:26`), not a new formatter. It
   yields `1m30s` above a minute and `45.0s` below one; the one-decimal form
@@ -697,7 +705,7 @@ in their ottofile or passes `--progress-interval 0`.
 |---|---|---|---|
 | Heartbeat lines break existing `contains` assertions in the pty suites | Med | Med | Phase 0 measures it before any production code exists |
 | A stale clock entry is read for a dead task | Low | Low | Liveness is read from `LiveChildren` itself, so a clock entry with no live child is never a candidate. No mirror exists to drift |
-| otto colours a redirected stderr because `colored` reads stdout | High | Low | Pre-existing and measured (see Acceptance Criteria). The heartbeat gates its own label; correcting otto's status lines generally is a separate change and is not folded in here |
+| otto colours a redirected stderr because `colored` reads stdout | High | Low | Was pre-existing and measured (see Acceptance Criteria). The heartbeat gated its own label; nothing else was corrected here. **Fixed separately, after this feature, by `fix(output): stop writing colour escapes into a redirected stderr`**, which found the bug broader than the status lines named here: a task's own stderr (`TeeWriter`) and a buffered subtask's replayed `stderr.log` leaked too, all three from the one root cause |
 | A heartbeat lands between a buffered block's lines | Low | Med | Emission takes `terminal_lock()`, which `write_replay_blocks` holds for a whole block (`replay.rs:375`) |
 | CI logs grow | Low | Low | One short line per stalled task per interval. A task that prints stays silent here |
 | A `tty:` task looks unmonitored | Low | Low | Stated as a non-goal with its reason. otto cannot see those bytes at all |
