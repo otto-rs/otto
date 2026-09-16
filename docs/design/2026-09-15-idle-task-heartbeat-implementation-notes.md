@@ -490,3 +490,51 @@ directory.
   pty with `otto task 2>log`, `[task] failed` writes escape bytes into `log`
   while `[task] still running` writes none. The audit calls this worth a
   follow-up on the STATUS lines, not on this feature. Nothing here touched it.
+
+## Follow-up: honour `CLICOLOR_FORCE` on a redirected stderr
+
+Not a phase of the design doc. Must-fix 3 from the round-2 implementation
+audit, on the colour predicate the earlier follow-up fix
+(`fix(output): stop writing colour escapes into a redirected stderr`)
+introduced.
+
+### Design decisions
+- **The predicate is an OR over two inputs, not a tty test**
+  (`colors.rs:stderr_takes_color`). A terminal stderr takes colour, and so does
+  a redirected one under `CLICOLOR_FORCE`, because `colored` puts that variable
+  ahead of both `NO_COLOR` and the tty check (`from_env`,
+  `colored-3.1.1/src/control.rs:102`) and otto's stderr must not rank them
+  differently from otto's stdout.
+- **`colored`'s `normalize_env` rule is copied, not reinterpreted**
+  (`colors.rs:stderr_takes_color_from`). A set value forces unless it is exactly
+  `0`, and a non-UTF-8 value forces nothing. Inventing a `"1"`/`"true"`/`"yes"`
+  truthiness would have made `CLICOLOR_FORCE=yes` colour stdout and not stderr.
+- **The decision is a pure two-argument function behind the `OnceLock`**
+  (`colors.rs:stderr_takes_color_from`). All four combinations are unit-tested
+  without mutating an environment the whole test process shares, and the public
+  predicate keeps its single read.
+
+### Deviations
+- **The predicate was renamed `stderr_is_terminal` to `stderr_takes_color`,
+  which the task raised as a question rather than an instruction.** Renamed:
+  the function no longer returns whether stderr is a terminal, and a name that
+  said it would be the same kind of stale-comment defect that hid this bug.
+  All five callers and the design doc's reference updated.
+
+### Tradeoffs
+- **Threading a `colour_env` parameter through the test file's `run` and
+  `split_streams`** vs **adding parallel `*_env` helpers.** Chose the parameter:
+  one path to a child process, and `CLICOLOR_FORCE` now gets `env_remove`d
+  alongside `NO_COLOR` and `CLICOLOR` for every test in the file, so a
+  developer with it exported cannot decide these runs. The shared `isolate()`
+  helper in `tests/common` is untouched, as before.
+- **Asserting `>= 6` escapes in the forced redirect** vs **`> 0`.** Chose 6, the
+  status line's three coloured spans, mirroring the existing pty test; `> 0`
+  would also pass for a single stray escape from somewhere else.
+
+### Open questions
+- **The three CLI-level colour sites are still untouched.**
+  `ottofile_not_found_message` (`src/cli/parser.rs:457`) and the no-database
+  notices in `history.rs:116` and `stats.rs:40` colour their own message text on
+  a redirected stderr. They are message text, not task labels, so they never
+  reached this predicate; whether they should is a separate decision.

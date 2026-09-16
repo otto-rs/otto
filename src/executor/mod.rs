@@ -14,7 +14,7 @@ pub mod workspace;
 pub use action::{ActionProcessor, BashProcessor, ProcessedAction, PythonProcessor, ScriptProcessor};
 pub use colors::{
     colorize_task_name, colorize_task_prefix, get_task_color, get_task_color_combination, plain_task_label,
-    set_global_task_order, stderr_is_terminal, stream_task_label, task_label,
+    set_global_task_order, stderr_takes_color, stream_task_label, task_label,
 };
 pub use graph::{DagVisualizer, GraphFormat, GraphOptions, NodeStyle};
 pub use output::TaskStreams;

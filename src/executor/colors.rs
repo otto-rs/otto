@@ -1,5 +1,6 @@
 use colored::{Color, Colorize};
 use std::collections::hash_map::DefaultHasher;
+use std::env;
 use std::hash::{Hash, Hasher};
 use std::io::{self, IsTerminal};
 use std::sync::{Mutex, OnceLock};
@@ -97,9 +98,9 @@ pub fn task_label(task_name: &str, no_prefix: bool) -> String {
 
 /// The same label with no colour, whatever `SHOULD_COLORIZE` says.
 ///
-/// For a line going to stderr when stderr is not a terminal. `colored` derives
+/// For a line going to a stderr that takes no colour. `colored` derives
 /// `SHOULD_COLORIZE` from `stdout().is_terminal()`
-/// (`colored-3.1.1/src/control.rs`), so [`task_label`] applies a decision about
+/// (`colored-3.1.1/src/control.rs:108`), so [`task_label`] applies a decision about
 /// stdout to whatever stream it is printed on - which is how `otto task 2>log`
 /// with stdout on a terminal used to write a coloured label into `log`. A
 /// caller writing to stderr picks between the two through
@@ -108,18 +109,45 @@ pub fn plain_task_label(task_name: &str, no_prefix: bool) -> String {
     if no_prefix { task_name.to_string() } else { format!("[{task_name}]") }
 }
 
-/// Whether otto's own stderr is a terminal. The one answer in the binary.
+/// The stderr colour decision as a function of its two inputs, so every
+/// combination is testable without mutating a process-shared environment.
+///
+/// `force` is `CLICOLOR_FORCE`'s value when it is set and valid UTF-8. The
+/// `!= "0"` test and the treatment of a non-UTF-8 value as unset are
+/// `colored`'s own `normalize_env` (`colored-3.1.1/src/control.rs:144`), copied
+/// rather than reinterpreted: otto and `colored` must not disagree about what
+/// `CLICOLOR_FORCE=yes` means. Note `CLICOLOR_FORCE=0` does not suppress
+/// colour on a terminal, in `colored` either - it resolves to no override and
+/// falls through to the tty check.
+fn stderr_takes_color_from(is_terminal: bool, force: Option<&str>) -> bool {
+    is_terminal || force.is_some_and(|value| value != "0")
+}
+
+/// Whether a line otto writes on its own stderr takes colour. The one answer in
+/// the binary.
+///
+/// True when stderr is a terminal, and also under `CLICOLOR_FORCE`: `colored`
+/// documents that variable as its highest-priority override, ahead of
+/// `NO_COLOR` and the tty check (`from_env`,
+/// `colored-3.1.1/src/control.rs:102`), and it is the knob a user reaches for
+/// to pipe colour into a file. A predicate that asked only about the terminal
+/// vetoed it.
 ///
 /// Read once and cached on purpose: nothing about a run can change whether
-/// stderr is a terminal, and npm shipped a progress predicate evaluated twice
-/// whose two readings diverged (commit `5b858c6`).
+/// stderr is a terminal or what the environment said at startup, and npm
+/// shipped a progress predicate evaluated twice whose two readings diverged
+/// (commit `5b858c6`).
 ///
-/// Not by itself a decision to colour: it answers only the half `colored` gets
-/// wrong, which stream the bytes land on. `NO_COLOR`, `CLICOLOR` and the
-/// stdout tty read stay with `colored`, reached through [`task_label`].
-pub fn stderr_is_terminal() -> bool {
-    static STDERR_IS_TERMINAL: OnceLock<bool> = OnceLock::new();
-    *STDERR_IS_TERMINAL.get_or_init(|| io::stderr().is_terminal())
+/// Not by itself the whole decision to colour: it answers only the half
+/// `colored` gets wrong, which stream the bytes land on. `NO_COLOR`, `CLICOLOR`
+/// and the stdout tty read stay with `colored`, reached through [`task_label`],
+/// as does `CLICOLOR_FORCE` for stdout.
+pub fn stderr_takes_color() -> bool {
+    static STDERR_TAKES_COLOR: OnceLock<bool> = OnceLock::new();
+    *STDERR_TAKES_COLOR.get_or_init(|| {
+        let force = env::var("CLICOLOR_FORCE").ok();
+        stderr_takes_color_from(io::stderr().is_terminal(), force.as_deref())
+    })
 }
 
 /// The label for a line about to be written to a stream that takes colour
@@ -128,7 +156,7 @@ pub fn stderr_is_terminal() -> bool {
 /// The decision comes in as a parameter because the caller is the one that
 /// knows which of otto's two streams it is writing on, and because that keeps
 /// every label site pure and unit-testable without a real terminal. stderr
-/// sites pass [`stderr_is_terminal`]; stdout sites pass `true` and let
+/// sites pass [`stderr_takes_color`]; stdout sites pass `true` and let
 /// `colored` have the last word.
 pub fn stream_task_label(task_name: &str, no_prefix: bool, takes_color: bool) -> String {
     if takes_color {

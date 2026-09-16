@@ -25,7 +25,7 @@ use super::state::SkipKind;
 use super::task::{Task, TaskEdge};
 use super::{
     action::{ActionProcessor, ProcessedAction},
-    colors::{set_global_task_order, stderr_is_terminal, stream_task_label},
+    colors::{set_global_task_order, stderr_takes_color, stream_task_label},
     heartbeat::{self, TaskClock, TaskClocks},
     output::{OutputType, TaskMessage, TaskStreams, TuiTaskStatus, format_terminal_output, terminal_lock},
     workspace::{ExecutionContext, Workspace},
@@ -1475,7 +1475,7 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
     /// here too: `colored` answers about stdout, so a status line on a
     /// redirected stderr took its colour from the wrong stream.
     fn status_label(&self, task_name: &str, to_stderr: bool) -> String {
-        stream_task_label(task_name, self.no_prefix, !to_stderr || stderr_is_terminal())
+        stream_task_label(task_name, self.no_prefix, !to_stderr || stderr_takes_color())
     }
 
     /// Set pre-created TaskStreams for TUI mode

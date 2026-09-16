@@ -384,7 +384,7 @@ fn truncation_marker(block: &ReplayBlock, issue: &DrainIssue) -> String {
 fn write_replay_blocks(notice: Option<String>, blocks: Vec<ReplayBlock>, no_prefix: bool) {
     // A replayed stderr log is still stderr: prefixing it with the decision
     // `colored` made about stdout is the same leak the live leg had.
-    let err_takes_color = stderr_is_terminal();
+    let err_takes_color = stderr_takes_color();
     let _terminal = terminal_lock();
     let stdout = io::stdout();
     let stderr = io::stderr();

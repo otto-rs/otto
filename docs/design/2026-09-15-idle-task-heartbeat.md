@@ -58,17 +58,24 @@ And the constraint that decides the shape, raised by Scott and accepted by Ian:
 - The feature introduces no new escape bytes. It did not, by itself, make
   otto's captured output escape-free, because when this shipped it already was
   not: `colored` decides colour from `stdout().is_terminal()`
-  (`colored-3.1.1/src/control.rs:107`) and otto applied that decision to stderr
+  (`colored-3.1.1/src/control.rs:108`) and otto applied that decision to stderr
   too, so `otto task 2>log` with stdout on a terminal wrote a coloured
   `[boom] failed` into `log`. Measured, see Acceptance Criteria. The heartbeat
   therefore builds its label uncoloured whenever stderr is not a terminal,
   rather than inheriting that behaviour. **That leak was fixed separately,
   after this feature, by `fix(output): stop writing colour escapes into a
   redirected stderr`**, which put the same stderr question behind one read-once
-  `stderr_is_terminal()` predicate (`src/executor/colors.rs`) and routed the
-  status lines, live task output and replayed logs through it. The heartbeat's
-  own behaviour is unchanged by that fix; it now reads the shared predicate
-  instead of its own.
+  `stderr_takes_color()` predicate (`src/executor/colors.rs`) and routed the
+  status lines, live task output and replayed logs through it. That first fix
+  asked only whether stderr was a terminal, which also vetoed `CLICOLOR_FORCE`,
+  `colored`'s highest-priority override
+  (`colored-3.1.1/src/control.rs:102`) and the knob for piping colour into a
+  file; `fix(output): honour CLICOLOR_FORCE on a redirected stderr` restored it,
+  so a redirected stderr now takes colour when it is a terminal OR
+  `CLICOLOR_FORCE` is set to anything but `0`, matching `colored`'s own
+  `normalize_env` rule and its precedence over `NO_COLOR`. The heartbeat's own
+  behaviour is unchanged by either fix; it reads the shared predicate instead of
+  its own.
 - A task that produces output regularly emits nothing extra. (Ian: "if a process
   is running and there hasn't been a line logged in the last 5 (3?) seconds")
 - The interval is configurable through the ottofile, per otto's `jobs`
@@ -265,7 +272,7 @@ an `auto` that always equals `always` would be theater. `0` is the off switch.
 - Kept, but it is not the load-bearing unknown. It measures how brittle the
   existing suite is to extra stderr lines. The assumptions correctness rests on
   are settled above by reading source: the colour predicate
-  (`colored-3.1.1/src/control.rs:107`), `blocking_lock` being legal off-runtime,
+  (`colored-3.1.1/src/control.rs:108`), `blocking_lock` being legal off-runtime,
   `report_status_line` being `async fn`, and the ticker lifetime.
 
 **RESULT (2026-09-15, run on a scratch branch off `b51b509`, nothing merged).**
@@ -360,7 +367,7 @@ The finding that changes Phase 3 is therefore a constraint, not a test-fix list:
   `TERMINAL_LOCK`, which is a non-reentrant `std::sync::Mutex`
   (`output.rs:36`): the ticker takes the lock once and calls nothing that takes
   it again.
-- Label from `status_label` (`scheduler.rs:1369`) when stderr is a terminal, and
+- Label from `status_label` (`scheduler.rs:1369`) when stderr takes colour, and
   the plain `[name]` form otherwise. `status_label` reaches
   `colorize_task_prefix` (`colors.rs:70`), gated on `SHOULD_COLORIZE`, which
   `colored` derives from `stdout().is_terminal()`. Applying a stdout decision to
@@ -461,7 +468,11 @@ ready; the fifth says why it was not. The probe ottofile is three tasks: `quiet`
     heartbeat gated its own label on stderr rather than reusing `status_label`
     unconditionally. It was out of scope here, named in Risks, and fixed
     afterwards by `fix(output): stop writing colour escapes into a redirected
-    stderr`, which closed all three EXECUTOR label sites. Three CLI-level sites
+    stderr`, which closed all three EXECUTOR label sites, and refined by
+    `fix(output): honour CLICOLOR_FORCE on a redirected stderr`: with
+    `CLICOLOR_FORCE=1` the same run puts those 6 escape bytes back into
+    `err.txt`, deliberately, because that variable outranks the tty check in
+    `colored` and otto must not disagree with it. Three CLI-level sites
     still colour their own message text on a redirected stderr:
     `ottofile_not_found_message` (`src/cli/parser.rs:457`, 14 escape bytes),
     and the yellow no-database notices in `history.rs:116` and `stats.rs:40`

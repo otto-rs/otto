@@ -25,7 +25,7 @@ use std::{
 use log::{debug, error};
 
 use super::{
-    colors::{stderr_is_terminal, stream_task_label},
+    colors::{stderr_takes_color, stream_task_label},
     output::terminal_lock,
 };
 use crate::cli::commands::format::format_duration;
@@ -294,14 +294,15 @@ where
 
     // Read once, here, and never re-derived: npm shipped a progress predicate
     // evaluated twice whose two readings diverged (commit 5b858c6), and nothing
-    // about a run can change whether stderr is a terminal. `stderr_is_terminal`
-    // caches that read for the whole binary, so the heartbeat and the status
-    // lines cannot disagree about it.
-    let stderr_tty = stderr_is_terminal();
+    // about a run can change whether stderr is a terminal or what
+    // `CLICOLOR_FORCE` said at startup. `stderr_takes_color` caches that read
+    // for the whole binary, so the heartbeat and the status lines cannot
+    // disagree about it.
+    let stderr_color = stderr_takes_color();
     let granularity = wake_granularity(interval);
     let interval_ms = saturating_ms(interval);
     debug!(
-        "heartbeat::spawn: interval={interval_ms}ms granularity={}ms stderr_tty={stderr_tty}",
+        "heartbeat::spawn: interval={interval_ms}ms granularity={}ms stderr_color={stderr_color}",
         granularity.as_millis()
     );
 
@@ -312,7 +313,7 @@ where
         .name("otto-heartbeat".to_string())
         .spawn(move || {
             while !signal.sleep(granularity) {
-                tick(&clocks, &live, interval_ms, no_prefix, stderr_tty, &stop);
+                tick(&clocks, &live, interval_ms, no_prefix, stderr_color, &stop);
             }
         });
 
@@ -360,14 +361,14 @@ fn saturating_ms(interval: Duration) -> u64 {
 /// it selected can exit, deregister and have its own `finished successfully`
 /// printed - leaving the beat to land after the line that says the task is
 /// done. Deciding and writing have to be one critical section.
-fn tick<L>(clocks: &TaskClocks, live: &L, interval_ms: u64, no_prefix: bool, stderr_tty: bool, shutdown: &Shutdown)
+fn tick<L>(clocks: &TaskClocks, live: &L, interval_ms: u64, no_prefix: bool, stderr_color: bool, shutdown: &Shutdown)
 where
     L: Fn() -> Vec<String>,
 {
     if due_beats(clocks, &live(), interval_ms).is_empty() {
         return;
     }
-    emit_due(clocks, live, interval_ms, no_prefix, stderr_tty, shutdown);
+    emit_due(clocks, live, interval_ms, no_prefix, stderr_color, shutdown);
 }
 
 /// The live tasks a tick should print a line for: silent for at least the
@@ -391,8 +392,8 @@ fn due_beats(clocks: &TaskClocks, live: &[String], interval_ms: u64) -> Vec<(Str
 /// terminal, rather than inheriting `task_label`'s stdout-derived decision.
 /// Elapsed comes from otto's own `format_duration`, so `45.0s` under a minute
 /// and `2m14s` over one.
-fn beat_line(task: &str, elapsed: Duration, no_prefix: bool, stderr_tty: bool) -> String {
-    let label = stream_task_label(task, no_prefix, stderr_tty);
+fn beat_line(task: &str, elapsed: Duration, no_prefix: bool, stderr_color: bool) -> String {
+    let label = stream_task_label(task, no_prefix, stderr_color);
     format!("{label} still running ({})\n", format_duration(elapsed.as_secs_f64()))
 }
 
@@ -411,8 +412,14 @@ fn beat_line(task: &str, elapsed: Duration, no_prefix: bool, stderr_tty: bool) -
 /// Nothing is carried in from the pre-check - not the shutdown state, not the
 /// candidate list, not the elapsed figure - because all three can go stale
 /// while this waits for the lock.
-fn emit_due<L>(clocks: &TaskClocks, live: &L, interval_ms: u64, no_prefix: bool, stderr_tty: bool, shutdown: &Shutdown)
-where
+fn emit_due<L>(
+    clocks: &TaskClocks,
+    live: &L,
+    interval_ms: u64,
+    no_prefix: bool,
+    stderr_color: bool,
+    shutdown: &Shutdown,
+) where
     L: Fn() -> Vec<String>,
 {
     let _terminal = terminal_lock();
@@ -425,7 +432,7 @@ where
     }
     let mut err = io::stderr().lock();
     for (task, clock) in &due {
-        let line = beat_line(task, clock.elapsed(), no_prefix, stderr_tty);
+        let line = beat_line(task, clock.elapsed(), no_prefix, stderr_color);
         let _ = err.write_all(line.as_bytes());
     }
     let _ = err.flush();

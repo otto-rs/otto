@@ -14,7 +14,7 @@ use tokio::{
 };
 
 use super::{
-    colors::{stderr_is_terminal, stream_task_label},
+    colors::{stderr_takes_color, stream_task_label},
     heartbeat::TaskClock,
 };
 
@@ -189,7 +189,7 @@ impl TeeWriter {
             // its answer from stdout, and half of what this writer prints goes
             // to stderr. Asking stdout on behalf of stderr is what wrote colour
             // into `otto task 2>log`.
-            let takes_color = !self.is_stderr || stderr_is_terminal();
+            let takes_color = !self.is_stderr || stderr_takes_color();
             // Write to terminal, with or without the colored task name prefix
             let terminal_output = format_terminal_output(&self.task_name, data, self.no_prefix, takes_color);
             // Held across the write and its flush, never across an `.await`:

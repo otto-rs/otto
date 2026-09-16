@@ -90,6 +90,35 @@ fn stream_task_label_keeps_no_prefix_independent_of_colour() {
 /// status line reads it per line, and the two must never disagree (npm's
 /// commit `5b858c6` shipped a progress predicate whose two readings diverged).
 #[test]
-fn stderr_is_terminal_answers_the_same_every_time() {
-    assert_eq!(stderr_is_terminal(), stderr_is_terminal());
+fn stderr_takes_color_answers_the_same_every_time() {
+    assert_eq!(stderr_takes_color(), stderr_takes_color());
+}
+
+/// `CLICOLOR_FORCE` forces colour onto a stderr that is not a terminal, which
+/// is the whole point of the variable and what the terminal-only predicate
+/// vetoed. Tested through the pure form: the suite is process-shared and cannot
+/// set an environment variable for one test.
+#[test]
+fn clicolor_force_makes_a_non_terminal_stderr_take_colour() {
+    assert!(stderr_takes_color_from(false, Some("1")));
+    assert!(!stderr_takes_color_from(false, None));
+}
+
+/// `colored`'s `normalize_env` rule, not a truthiness rule of otto's own: only
+/// the exact value `0` declines, so `CLICOLOR_FORCE=yes` cannot colour otto's
+/// stdout and not its stderr.
+#[test]
+fn only_the_value_zero_declines_the_force() {
+    assert!(!stderr_takes_color_from(false, Some("0")));
+    assert!(stderr_takes_color_from(false, Some("yes")));
+    assert!(stderr_takes_color_from(false, Some("")));
+}
+
+/// A terminal stderr still takes colour with the force set to `0`: in `colored`
+/// that value resolves to no override and falls through to the tty check, so
+/// treating it as a suppressor would diverge.
+#[test]
+fn a_terminal_stderr_is_not_suppressed_by_a_zero_force() {
+    assert!(stderr_takes_color_from(true, Some("0")));
+    assert!(stderr_takes_color_from(true, None));
 }
