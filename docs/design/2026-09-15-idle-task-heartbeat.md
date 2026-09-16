@@ -2,7 +2,9 @@
 
 **Author:** Scott Idler
 **Date:** 2026-09-15
-**Status:** Implemented
+**Status:** Implemented (5 of 6 acceptance criteria verified; the sixth,
+`otto ci` green *on the runner*, is UNVERIFIED pending a push and is the
+only thing between this and Verified. See Acceptance Criteria.)
 **Review Passes Completed:** 5/5, plus review-panel round 1 folded in
 
 ## Summary
