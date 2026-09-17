@@ -1495,6 +1495,7 @@ fn test_progress_interval_zero_is_accepted() {
 // =========================================================================
 
 #[test]
+#[serial_test::serial(otto_progress)]
 fn test_progress_flag_defaults_to_auto() {
     use std::fs;
     use tempfile::TempDir;
@@ -1516,6 +1517,7 @@ fn test_progress_flag_defaults_to_auto() {
 }
 
 #[test]
+#[serial_test::serial(otto_progress)]
 fn test_progress_never_flag_parses() {
     use std::fs;
     use tempfile::TempDir;
@@ -1542,6 +1544,7 @@ fn test_progress_never_flag_parses() {
 /// rejects it before `Parser::parse` ever runs application logic, the same
 /// way an out-of-range `-j` value is rejected.
 #[test]
+#[serial_test::serial(otto_progress)]
 fn test_progress_always_is_rejected_not_silently_accepted() {
     use std::fs;
     use tempfile::TempDir;
@@ -1569,9 +1572,164 @@ fn test_progress_always_is_rejected_not_silently_accepted() {
     );
 }
 
+/// Set `OTTO_PROGRESS` for the length of a test and take it back off again.
+///
+/// clap resolves the variable inside `Parser::parse`, so there is no seam that
+/// takes it as an argument and the only way to exercise the env layer is to
+/// mutate the process environment. That is why every test in this section
+/// carries `#[serial_test::serial(otto_progress)]`: a concurrent `parse` in
+/// another test would see the variable too and resolve a different setting.
+///
+/// The removal is in `Drop` so a failing assertion still cleans up. A leaked
+/// `OTTO_PROGRESS` would make the next test in the group lie rather than fail.
+struct OttoProgressEnv;
+
+impl OttoProgressEnv {
+    fn set(value: &str) -> Self {
+        // SAFETY: the serial group keeps this the only thread touching the
+        // environment for the duration of the test.
+        unsafe { std::env::set_var("OTTO_PROGRESS", value) };
+        Self
+    }
+}
+
+impl Drop for OttoProgressEnv {
+    fn drop(&mut self) {
+        // SAFETY: as above.
+        unsafe { std::env::remove_var("OTTO_PROGRESS") };
+    }
+}
+
+/// The MIDDLE layer of `flag > env > file`, which nothing pinned before: the
+/// implementation notes claimed this section covered the chain in both
+/// directions, and the env layer was absent from it entirely. It is the layer
+/// `OTTO_PROGRESS` rides on, so an unpinned middle means the whole chain is
+/// unpinned.
+///
+/// `$OTTO_PROGRESS` beats `otto.progress`. clap reports
+/// `ValueSource::EnvVariable`, which is not `DefaultValue`, so
+/// `progress_explicit` is true and the file's value is validated but not
+/// applied.
+#[test]
+#[serial_test::serial(otto_progress)]
+fn test_otto_progress_env_var_overrides_the_ottofile() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let ottofile_path = temp_dir.path().join("otto.yml");
+    fs::write(
+        &ottofile_path,
+        "otto:\n  progress: auto\ntasks:\n  test:\n    action: echo test\n",
+    )
+    .unwrap();
+
+    let _env = OttoProgressEnv::set("never");
+    let args = vec![
+        "otto".to_string(),
+        "--ottofile".to_string(),
+        ottofile_path.to_string_lossy().to_string(),
+        "test".to_string(),
+    ];
+
+    let mut parser = Parser::new(args).unwrap();
+    let plan = parser.parse().unwrap().into_run().unwrap();
+    assert_eq!(
+        plan.progress,
+        ProgressSetting::Never,
+        "$OTTO_PROGRESS must beat otto.progress"
+    );
+}
+
+/// And the top layer over the middle one: an explicit `--progress` beats
+/// `$OTTO_PROGRESS`. The two disagree here on purpose, and the flag's value is
+/// the one that must survive.
+#[test]
+#[serial_test::serial(otto_progress)]
+fn test_explicit_progress_flag_overrides_the_env_var() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let ottofile_path = temp_dir.path().join("otto.yml");
+    fs::write(&ottofile_path, "tasks:\n  test:\n    action: echo test\n").unwrap();
+
+    let _env = OttoProgressEnv::set("never");
+    let args = vec![
+        "otto".to_string(),
+        "--progress".to_string(),
+        "auto".to_string(),
+        "--ottofile".to_string(),
+        ottofile_path.to_string_lossy().to_string(),
+        "test".to_string(),
+    ];
+
+    let mut parser = Parser::new(args).unwrap();
+    let plan = parser.parse().unwrap().into_run().unwrap();
+    assert_eq!(
+        plan.progress,
+        ProgressSetting::Auto,
+        "--progress must beat $OTTO_PROGRESS"
+    );
+}
+
+/// All three layers at once, with all three disagreeing, so the ORDER is pinned
+/// and not just each adjacent pair.
+#[test]
+#[serial_test::serial(otto_progress)]
+fn test_progress_precedence_is_flag_then_env_then_file() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn resolve(flag: Option<&str>, env: Option<&str>, file: Option<&str>) -> ProgressSetting {
+        let temp_dir = TempDir::new().unwrap();
+        let ottofile_path = temp_dir.path().join("otto.yml");
+        let body = match file {
+            Some(value) => format!("otto:\n  progress: {value}\ntasks:\n  test:\n    action: echo test\n"),
+            None => "tasks:\n  test:\n    action: echo test\n".to_string(),
+        };
+        fs::write(&ottofile_path, body).unwrap();
+
+        let _env = env.map(OttoProgressEnv::set);
+        let mut args = vec!["otto".to_string()];
+        if let Some(flag) = flag {
+            args.push("--progress".to_string());
+            args.push(flag.to_string());
+        }
+        args.push("--ottofile".to_string());
+        args.push(ottofile_path.to_string_lossy().to_string());
+        args.push("test".to_string());
+
+        let mut parser = Parser::new(args).unwrap();
+        parser.parse().unwrap().into_run().unwrap().progress
+    }
+
+    assert_eq!(
+        resolve(Some("auto"), Some("never"), Some("never")),
+        ProgressSetting::Auto,
+        "the flag wins over both"
+    );
+    assert_eq!(
+        resolve(None, Some("never"), Some("auto")),
+        ProgressSetting::Never,
+        "with no flag, the env var wins over the file"
+    );
+    assert_eq!(
+        resolve(None, None, Some("never")),
+        ProgressSetting::Never,
+        "with neither, the file wins over the default"
+    );
+    assert_eq!(
+        resolve(None, None, None),
+        ProgressSetting::Auto,
+        "with none of the three, the default stands"
+    );
+}
+
 /// `otto.progress` sets the default only when `--progress` was not given
 /// explicitly, the same shape as `otto.jobs` and `otto.progress-interval`.
 #[test]
+#[serial_test::serial(otto_progress)]
 fn test_otto_progress_config_sets_default_when_flag_omitted() {
     use std::fs;
     use tempfile::TempDir;
@@ -1599,6 +1757,7 @@ fn test_otto_progress_config_sets_default_when_flag_omitted() {
 /// An explicit `--progress` wins over `otto.progress` even when the two
 /// disagree.
 #[test]
+#[serial_test::serial(otto_progress)]
 fn test_explicit_progress_flag_overrides_otto_config() {
     use std::fs;
     use tempfile::TempDir;
@@ -1629,6 +1788,7 @@ fn test_explicit_progress_flag_overrides_otto_config() {
 /// invalid value is caught here, not at deserialize time - and must fail
 /// exactly as loudly as an invalid `--progress` flag value.
 #[test]
+#[serial_test::serial(otto_progress)]
 fn test_otto_progress_config_rejects_an_invalid_value() {
     use std::fs;
     use tempfile::TempDir;
@@ -1653,4 +1813,52 @@ fn test_otto_progress_config_rejects_an_invalid_value() {
     let msg = err.to_string();
     assert!(msg.contains("otto.progress"), "error should name the key: {msg}");
     assert!(msg.contains("sometimes"), "error should name the rejected value: {msg}");
+}
+
+/// And it is rejected even when a higher-precedence layer is going to win, so
+/// the file's value is never applied.
+///
+/// An ottofile is shared. Parsing its value only when nothing outranked it made
+/// a typo refuse the run for whoever had no `OTTO_PROGRESS` exported and pass
+/// silently for whoever did: same file, same typo, two answers. Validation and
+/// precedence are two questions and they are answered separately now.
+#[test]
+#[serial_test::serial(otto_progress)]
+fn test_an_invalid_otto_progress_is_rejected_even_when_a_higher_layer_wins() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    for (flag, env) in [
+        (None, Some("never")),
+        (None, Some("auto")),
+        (Some("auto"), Some("never")),
+    ] {
+        let temp_dir = TempDir::new().unwrap();
+        let ottofile_path = temp_dir.path().join("otto.yml");
+        fs::write(
+            &ottofile_path,
+            "otto:\n  progress: sometimes\ntasks:\n  test:\n    action: echo test\n",
+        )
+        .unwrap();
+
+        let _env = env.map(OttoProgressEnv::set);
+        let mut args = vec!["otto".to_string()];
+        if let Some(flag) = flag {
+            args.push("--progress".to_string());
+            args.push(flag.to_string());
+        }
+        args.push("--ottofile".to_string());
+        args.push(ottofile_path.to_string_lossy().to_string());
+        args.push("test".to_string());
+
+        let mut parser = Parser::new(args).unwrap();
+        let err = parser.parse().expect_err(&format!(
+            "otto.progress: sometimes must be rejected with flag={flag:?} env={env:?}"
+        ));
+        let msg = err.to_string();
+        assert!(
+            msg.contains("otto.progress") && msg.contains("sometimes"),
+            "the error must name the key and the value with flag={flag:?} env={env:?}: {msg}"
+        );
+    }
 }

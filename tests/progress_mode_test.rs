@@ -144,10 +144,17 @@ fn an_invalid_otto_progress_is_refused_whether_or_not_the_env_var_wins() {
     }
 }
 
-/// And the precedence the validation must not disturb: a valid file value
-/// loses to `OTTO_PROGRESS`, and a valid file value alone still applies.
+/// The other side of the validation: a VALID `otto.progress` still loads under
+/// every env layer, so the unconditional parse refuses typos without refusing
+/// correct files.
+///
+/// Deliberately not a precedence claim. Both streams are pipes here, so `auto`
+/// and `never` both resolve to Quiet and this run cannot see which layer won.
+/// Precedence itself is pinned at the unit level, where the resolved
+/// `ProgressSetting` is readable:
+/// `src/cli/parser_tests_a.rs::test_progress_precedence_is_flag_then_env_then_file`.
 #[test]
-fn a_valid_otto_progress_still_loses_to_the_env_var_and_still_applies_alone() {
+fn a_valid_otto_progress_loads_under_every_env_layer() {
     let dir = TempDir::new().expect("tempdir");
     fs::write(
         dir.path().join("otto.yml"),

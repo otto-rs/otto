@@ -1034,3 +1034,73 @@ deferred by decision, below.
   every assertion in the file would be vacuously satisfied on a CI runner
   instead of failing there. The pty tests that predate it do not do this and
   would go quiet on a runner. Whether they should is a separate call.
+
+### Superseding corrections to earlier notes entries
+
+Append-only file, so the false entries stay where they are and are corrected
+here. Each names the entry it supersedes and what is true now. Raised by the
+round-1 audit's M5.
+
+- **Supersedes notes:770, "Terminal width and height are re-read on every
+  draw."** It was true of width (`Region::width`, called from `redraw`) and
+  false of height: `self.cap()` had exactly one call site, inside `started`, so
+  a populated region never asked about the height again. The same false claim
+  was in the code, on `Region::cap`. Both are corrected by C3 above: `cap()` now
+  has two call sites, `start_row` and `rebalance`, and `rebalance` runs on every
+  `Region::refresh`, which is 5/s. The comment on `cap` now says which two ask
+  and when, rather than claiming the re-read alone is the SIGWINCH handling.
+  Pinned by `region_tests.rs::a_resize_moves_rows_between_the_screen_and_the_overflow_row`
+  and by `tests/progress_winsize_test.rs`, which is the first test in the suite
+  that changes a winsize at all.
+
+- **Supersedes notes:425-426, "unit-level precedence: flag > env > file, both
+  directions" in `src/cli/parser_tests_a.rs`.** The env layer was absent from
+  that section entirely: its six tests covered flag-vs-default, flag-vs-file and
+  invalid values, and the only `OTTO_PROGRESS` in the file was the section
+  comment. That is a coverage hole, not a wording slip, because the env layer is
+  the one `OTTO_PROGRESS` rides on and it sat between two pinned layers with
+  nothing pinning it. Now added, in the same section:
+  - `test_otto_progress_env_var_overrides_the_ottofile` (env beats file),
+  - `test_explicit_progress_flag_overrides_the_env_var` (flag beats env),
+  - `test_progress_precedence_is_flag_then_env_then_file`, all three layers
+    disagreeing at once plus the no-source default, so the ORDER is pinned and
+    not only each adjacent pair,
+  - `test_an_invalid_otto_progress_is_rejected_even_when_a_higher_layer_wins`,
+    which is C1's unit-level twin.
+  clap resolves `OTTO_PROGRESS` inside `Parser::parse` and there is no seam that
+  takes it as an argument, so these mutate the process environment through an
+  `OttoProgressEnv` guard that removes the variable in `Drop`. Every test in the
+  section that resolves a `ProgressSetting` now carries
+  `#[serial_test::serial(otto_progress)]`, the four pre-existing ones included:
+  without that, a concurrent `parse` in another test would see the variable and
+  resolve a different setting. The guard's `Drop` also means a failing assertion
+  cannot leak the variable into the next test in the group.
+
+- **Corrects an overclaiming test name added earlier in this same remediation.**
+  `tests/progress_mode_test.rs`'s `a_valid_otto_progress_still_loses_to_the_env_var_and_still_applies_alone`
+  could not observe which layer won: both of its streams are pipes, so `auto`
+  and `never` both resolve to Quiet. Renamed to
+  `a_valid_otto_progress_loads_under_every_env_layer`, which is what it actually
+  checks, with the precedence claim delegated to the unit test above.
+
+- **The env-layer tests forced one change outside the progress section.**
+  clap renders a flag's env var with its CURRENT value, so
+  `parser_tests_b.rs::test_help_global_flags_no_drift` - which pins the whole
+  rendered `Options:` block - read `[env: OTTO_PROGRESS=never]` while a
+  precedence test held the variable set, and failed. It is paired to the same
+  group with `#[serial_test::parallel(otto_progress)]`, which lets it keep
+  running alongside everything else and only excludes it from the window where
+  the variable is set. Found the hard way: it passed under plain
+  `cargo test --lib` and failed under `cargo llvm-cov`'s scheduling. Any future
+  test that pins rendered global help needs the same attribute, and the test
+  carries a comment saying so.
+
+- **Not superseded, recorded for completeness: notes:420's "`otto.progress` is
+  an `Option<String>` on purpose" still stands.** That is why the key needs
+  explicit validation at all, and why C1 was possible: `otto.jobs` cannot drift
+  the same way because serde types it at deserialize time.
+
+The third M5 item, doc:842's claim that the design does not take
+`ProgressDrawTarget::term()`, is a design-doc statement and is the doc owner's
+to correct. No code change follows from it: the decision to stay on indicatif
+0.18.3 survives on its other two reasons.
