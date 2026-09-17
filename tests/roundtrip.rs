@@ -485,3 +485,71 @@ fn a_misspelled_progress_interval_key_fails_loudly() {
     assert!(err.contains("progress-intervals"), "must name the field: {err}");
     assert!(err.contains("otto"), "must name the path: {err}");
 }
+
+/// `otto.progress` round-trips byte-identically, same shape as
+/// `progress-interval` above (design doc
+/// 2026-09-16-live-progress-renderer.md, Phase 3).
+#[test]
+fn progress_round_trips_byte_identical() {
+    let yaml = "otto:\n  progress: never\n";
+    assert_roundtrips(yaml);
+
+    let config: ConfigSpec = yaml_serde::from_str(yaml).expect("parse");
+    let emitted = yaml_serde::to_string(&config).expect("serialize");
+
+    assert!(
+        emitted.contains("progress: never"),
+        "an explicit progress key must not be dropped or reworded;\ngot:\n{emitted}"
+    );
+}
+
+/// A config that never wrote `progress:` must not gain one, same reasoning as
+/// `an_absent_progress_interval_key_stays_absent_on_re_emit`.
+#[test]
+fn an_absent_progress_key_stays_absent_on_re_emit() {
+    let yaml = "tasks:\n  build:\n    bash: echo hi\n";
+
+    let config: ConfigSpec = yaml_serde::from_str(yaml).expect("parse");
+    let emitted = yaml_serde::to_string(&config).expect("serialize");
+
+    assert_eq!(emitted, yaml, "an absent progress key must not be invented");
+}
+
+/// `otto.progress` accepts only `auto`/`never` at load, same as the CLI flag.
+/// `always` is the one spelling a reader may expect from cargo's
+/// `term.progress.when`; it must fail loudly here too, not silently become
+/// `auto`.
+#[test]
+fn an_invalid_progress_value_fails_loudly() {
+    let yaml = "otto:\n  progress: always\ntasks:\n  build:\n    bash: echo hi\n";
+    let config: ConfigSpec = yaml_serde::from_str(yaml).expect("parse");
+    let args = vec![
+        "otto".to_string(),
+        "--ottofile".to_string(),
+        write_temp_ottofile(&config),
+        "build".to_string(),
+    ];
+    let mut parser = otto::Parser::new(args).expect("parser::new");
+    let err = parser.parse().expect_err("otto.progress: always must be rejected");
+    let msg = err.to_string();
+    assert!(msg.contains("always"), "error should name the rejected value: {msg}");
+    assert!(
+        msg.contains("auto") && msg.contains("never"),
+        "error should name valid values: {msg}"
+    );
+}
+
+/// Writes `config` to a fresh temp ottofile and returns its path, for tests
+/// that need `Parser::parse` (which loads from a path, not from a
+/// `ConfigSpec` directly) rather than the direct `yaml_serde` round trip the
+/// rest of this file uses.
+fn write_temp_ottofile(config: &ConfigSpec) -> String {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let path = dir.path().join("otto.yml");
+    std::fs::write(&path, yaml_serde::to_string(config).expect("serialize")).expect("write ottofile");
+    // Leaked on purpose: `Parser::parse` reads the path lazily, after this
+    // function returns, so the TempDir must outlive it. This file's other
+    // tests never spawn `Parser`, so this is the only leak site.
+    std::mem::forget(dir);
+    path.to_string_lossy().to_string()
+}

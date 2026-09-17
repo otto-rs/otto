@@ -356,3 +356,140 @@ None.
   is currently unguarded; the ordering the doc wants (teardown before
   `flush_cancelled_groups` prints) is a Phase 4/5 concern once there is a
   region to erase.
+
+## Phase 3: Mode plumbing and config migration
+
+`--progress <auto|never>` / `OTTO_PROGRESS` / `otto.progress` now exist,
+resolved with the same flag > env > file precedence `-j/--jobs` already uses,
+computed once into a `ProgressMode` at startup, and plumbed as far as
+`RuntimeConfig` - no renderer reads it yet. `progress-interval` (flag, env,
+and ottofile key) is retained, accepted, and now warns on stderr instead of
+silently doing nothing. `OTTO_PROGRESS` is stripped from every task's child
+environment, on the design's revised rationale: not because `always`
+propagates (that spelling is cut), but because the spawn site inherits the
+parent's env by design, so a parent's `OTTO_PROGRESS=never` would otherwise
+mute a nested otto's own `auto` decision.
+
+### Design decisions
+
+- `ProgressSetting` (`auto`/`never`, what was asked for) and `ProgressMode`
+  (`Live`/`Quiet`, what stderr resolves it to) are two enums, not one, in
+  `src/executor/progress/mode.rs`. The doc's own Data Model only names
+  `ProgressMode`, but the CLI/env/file layer needs a type to parse and
+  validate BEFORE stderr is available to consult (`Parser::parse` runs long
+  before `RuntimeConfig::from_parser` computes the live-or-quiet decision),
+  and collapsing the two would mean either validating against a value that
+  does not exist yet or resolving against stderr twice.
+- `ProgressMode::resolve` is a thin wrapper over a private, argument-taking
+  `resolve_with(setting, stderr_is_terminal, term, ci)`. The real one reads
+  `std::io::stderr().is_terminal()`, `$TERM`, and `$CI`; the test-only one
+  takes them as arguments, so `mode_tests.rs` can assert every combination
+  (tty x dumb x CI) without redirecting the real terminal or mutating process
+  env vars other tests in the same binary might read concurrently.
+- `OttoSpec::progress` is a raw `Option<String>`, not `Option<ProgressSetting>`
+  (`src/cfg/otto.rs`). `executor` already depends on `cfg` (e.g. `Task`), so
+  giving `cfg` a `Deserialize` impl that reaches into `executor::progress`
+  would cycle the module graph. `Parser::parse` validates the file's string
+  through the same `ProgressSetting::parse` the CLI flag uses, so both
+  surfaces share one accepted-values list and one error message shape, at the
+  cost of the invalid case surfacing at `parse()` time instead of at
+  deserialize time (see Tradeoffs).
+- The deprecation warning for `progress-interval` fires whenever ANY of its
+  three sources set it explicitly (`--progress-interval`,
+  `OTTO_PROGRESS_INTERVAL`, or `otto.progress-interval`), not only the
+  ottofile key the success criterion names. A user who only ever typed the
+  flag would otherwise see no signal that it does nothing.
+- `--progress`'s CLI validation is clap's own `PossibleValuesParser`
+  (`ProgressSetting::VALID`), the same mechanism `--format` and `--log-level`
+  already use in `global_args()`. `always` is rejected before
+  `Parser::parse`'s own logic ever runs, with clap's own "possible values:
+  auto, never" text, so `ProgressSetting::parse` is in practice reached only
+  from `otto.progress` (confirmed by the `expect` at the CLI call site,
+  which has never fired in any test run).
+- The nested-otto success criterion is tested against an ACTUAL nested otto
+  process (`tests/progress_mode_test.rs`,
+  `a_nested_otto_sees_no_otto_progress_in_its_environment`), an outer task
+  invoking the same binary under test as its own child, rather than only
+  asserting the strip on a single task's environment. The single-task case
+  would already prove the mechanism, but the criterion's own wording is about
+  a nested otto specifically, and cargo's `CARGO_TERM_PROGRESS_WHEN` hazard
+  this design cites is exactly the nested-process case.
+
+### Deviations
+
+- **`OttoSpec::progress` is `Option<String>`, not a typed enum**, unlike
+  every other otto-owned enum-shaped key in this codebase (e.g. `Nargs`,
+  `When`). Recorded here because it reads as an inconsistency without the
+  module-cycle reason above written down next to it.
+- **The design doc names no test file for Phase 3**; `tests/progress_mode_test.rs`
+  is new, alongside additions to `src/cli/parser_tests_a.rs` (unit-level
+  precedence: flag > env > file, both directions, plus the invalid-value
+  cases) and `tests/roundtrip.rs` (serialize/deserialize fidelity for the new
+  key, mirroring the existing `progress-interval` round-trip tests).
+- **`docs/commands/ottofile-reference.md` and its cross-checking test
+  (`ottofile_reference_key_inventory_is_exhaustive`,
+  `src/cfg/task_tests.rs`) were updated**, even though the design doc assigns
+  README/`docs/commands/` updates to Phase 5. Not optional here: that test
+  destructures `OttoSpec` and asserts its on-disk key count and names against
+  the reference doc, so adding `otto.progress` without documenting it is a
+  compile-and-test-time failure, not a style choice deferred to a later
+  phase. `README.md` itself is untouched (see Open questions): nothing forces
+  it, and its `--progress-interval` example belongs to Phase 5's mandate.
+- **The exact CLI exit code for a rejected `--progress` value is 1, not
+  clap's own 2.** otto's `main.rs` converts every `Parser::parse` `Err` -
+  including a clap `PossibleValuesParser` rejection wrapped in an
+  `eyre::Report` - into exit code 1 (`main.rs`'s catch-all), rather than
+  letting clap's own `try_get_matches_from` print and exit(2) itself. This is
+  pre-existing behavior (an out-of-range `-j` value exits the same way) and
+  not something Phase 3 changed; noted because a first draft of
+  `tests/progress_mode_test.rs` asserted exit code 2 and was wrong.
+- **The `progress-interval` help text update cited at `src/cli/parser/help.rs:72`
+  resolved to line 69-75** in the Phase-2 tree (the citation drifted, as the
+  doc's Implementation Plan preface warns it would); re-located by symbol
+  (`Arg::new("progress-interval")`), not by line number.
+
+### Tradeoffs
+
+- **`otto.progress`'s invalid-value error surfaces at `Parser::parse()`,
+  not at YAML-deserialize time**, unlike `otto.jobs`'s `0` rejection
+  (`deserialize_jobs`, `src/cfg/otto.rs`). The alternative (a custom
+  `Deserialize` on a `cfg`-local newtype mirroring `ProgressSetting`) would
+  duplicate the accepted-values list and its error text in two places that
+  could drift, which is the exact npm `5b858c6` lesson this design cites
+  elsewhere; deferring validation one layer up keeps one list and one
+  message, at the cost of a bad ottofile value surfacing very slightly later
+  in the same `Parser::parse` call than `otto.jobs: 0` does.
+- **The deprecation warning is a plain `eprintln!` in `src/cli/parser.rs`,
+  not routed through the Phase 2 facade.** The canonical writer grep in
+  Acceptance Criteria is scoped to `src/executor/`, and `parser.rs` already
+  prints its own config-load errors the same way (`eprintln!("Error: {e:#}")`
+  a few lines above), so this matches the file's existing convention rather
+  than reaching into `executor::progress::facade` from `cli` for a
+  startup-time, one-shot warning that happens before any live rendering
+  could be in flight regardless.
+- **One `#[test]` fixture per success criterion, plus process-level and
+  unit-level coverage of the same precedence rules**, rather than only the
+  three criteria the doc names. The unit tests in `parser_tests_a.rs` run in
+  microseconds and pin the flag/env/file precedence directly; the
+  process-level tests in `progress_mode_test.rs` are slower but are what
+  actually proves the CLI's clean-error behavior and the nested-otto
+  environment, which no unit test can observe.
+
+### Open questions
+
+- `README.md`'s Usage section still shows `otto --progress-interval 5 build`
+  as if it does something, and its flag table has no `--progress` row. The
+  design doc assigns README updates to Phase 5 (alongside flipping the
+  superseded heartbeat doc's Status); left untouched here rather than
+  partially updating it out of order. Confirm Phase 5 still owns this.
+- The deprecation warning's exact wording and channel (a bare `eprintln!`,
+  once per invocation, naming all three deprecated spellings) was not
+  specified by the design doc beyond "warned on". If a structured warning
+  (e.g. routed through `log::warn!` as well, for otto's own log file) is
+  wanted, that is a one-line addition here or in a later phase.
+- `rg -c 'progress[-_]interval|PROGRESS_INTERVAL' src/ tests/` now reads 84
+  lines, down from 98 on `main` at `1783f1c`. It does not reach zero, by
+  design: the key is deprecated for one release, not removed, and this
+  phase's own new test file (`tests/progress_mode_test.rs`) legitimately
+  names both spellings in its warning-text assertions. The count should drop
+  further only when a later release removes the key outright.

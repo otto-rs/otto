@@ -309,12 +309,14 @@ pub struct RuntimeConfig {
     /// `--no-prefix`: suppress the `[task]` prefix on terminal output.
     /// See docs/design/2026-08-28-boundary-fixes-and-dynamic-foreach.md Phase 8.
     pub no_prefix: bool,
-    /// Seconds of task silence before otto reports the task is still
-    /// running. See `RunPlan::progress_interval`. The heartbeat that used to
-    /// read this was removed in Phase 1 of
-    /// docs/design/2026-09-16-live-progress-renderer.md; nothing reads this
-    /// field until that doc's Phase 3 wires the deprecation warning.
+    /// Deprecated, ignored. See `RunPlan::progress_interval`; `Parser::parse`
+    /// is what warns about it.
     pub progress_interval: u64,
+    /// Whether this run draws a live region on stderr, resolved ONCE here
+    /// from `RunPlan::progress` against stderr's own state at startup and
+    /// never re-derived. No renderer reads this yet: Phase 5 of
+    /// docs/design/2026-09-16-live-progress-renderer.md adds it.
+    pub progress_mode: crate::executor::progress::ProgressMode,
     pub retention: RetentionSpec,
     /// The task and subtask names literally requested, for the run record.
     /// See `RunPlan::requested_tasks` and `ExecutionContext::record_requested`.
@@ -338,6 +340,10 @@ impl RuntimeConfig {
             ParseOutcome::Exit(code) => return Ok(Startup::Exit(code)),
         };
         let retention = parser.retention();
+        // Computed ONCE, here, at startup - never re-derived. See
+        // `ProgressMode::resolve` and the Data Model section of
+        // docs/design/2026-09-16-live-progress-renderer.md.
+        let progress_mode = crate::executor::progress::ProgressMode::resolve(plan.progress);
         Ok(Startup::Run(Box::new(Self {
             tasks: plan.tasks,
             hash: plan.hash,
@@ -346,6 +352,7 @@ impl RuntimeConfig {
             tui_mode: plan.tui_mode,
             no_prefix: plan.no_prefix,
             progress_interval: plan.progress_interval,
+            progress_mode,
             retention,
             requested_tasks: plan.requested_tasks,
         })))

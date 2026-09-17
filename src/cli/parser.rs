@@ -27,6 +27,7 @@ use crate::cfg::resolver::{self, DynamicResolver};
 use crate::cfg::task::{ForeachItem, ForeachSpec, TaskSpecs};
 use crate::cli::builtins::{BUILTIN_COMMANDS, is_builtin};
 use crate::executor::colors::{stderr_takes_color, stream_styled};
+use crate::executor::progress::ProgressSetting;
 
 pub type DAG<T> = Dag<T, (), u32>;
 
@@ -145,12 +146,18 @@ pub struct RunPlan {
     pub tui_mode: bool,
     /// `--no-prefix`: suppress the `[task]` prefix on terminal output.
     pub no_prefix: bool,
-    /// Seconds of task silence before otto reports the task is still
-    /// running; `0` disables. Threaded through to `RuntimeConfig` and the
-    /// scheduler starting Phase 1 of
-    /// docs/design/2026-09-15-idle-task-heartbeat.md; nothing reads it until
-    /// Phase 3.
+    /// Deprecated, ignored: the ticker that read this was removed by
+    /// docs/design/2026-09-16-live-progress-renderer.md Phase 1. Threaded
+    /// through only so `otto Convert`-style round trips and any other reader
+    /// of `RuntimeConfig` still see the value the user set; nothing acts on
+    /// it. `Parser::parse` is what warns about it.
     pub progress_interval: u64,
+    /// `--progress` / `OTTO_PROGRESS` / `otto.progress`, resolved against
+    /// flag > env > file precedence but not yet against stderr - that
+    /// resolution to a live-or-quiet [`crate::executor::progress::ProgressMode`]
+    /// happens once, in `RuntimeConfig::from_parser`. See
+    /// docs/design/2026-09-16-live-progress-renderer.md.
+    pub progress: crate::executor::progress::ProgressSetting,
     /// The task and subtask names literally asked for: what the user named on
     /// the command line, or the ottofile's `otto.tasks:` default list when
     /// nothing was named. This is **not** `tasks` above, which is the
@@ -748,6 +755,8 @@ pub struct Parser {
     jobs: usize,
     /// See `RunPlan::progress_interval`.
     progress_interval: u64,
+    /// See `RunPlan::progress`.
+    progress: ProgressSetting,
     /// Per-invocation cache for dynamic (command-sourced) config values, plus
     /// the memoized global `envs:` those commands run with. Interior-mutable so
     /// the `&self` call sites (partitioning, `--list-subtasks`, `--tasks`,
@@ -768,6 +777,7 @@ impl Parser {
             ottofile: None,
             jobs: default_jobs(),
             progress_interval: DEFAULT_PROGRESS_INTERVAL,
+            progress: ProgressSetting::Auto,
             resolver: DynamicResolver::new(),
         })
     }
@@ -932,6 +942,7 @@ impl Parser {
                                                 ottofile: Some(path.clone()),
                                                 jobs: default_jobs(),
                                                 progress_interval: DEFAULT_PROGRESS_INTERVAL,
+                                                progress: ProgressSetting::Auto,
                                                 resolver: DynamicResolver::new(),
                                             };
                                             temp_parser.inject_builtin_commands();
@@ -1002,14 +1013,34 @@ impl Parser {
         // Extract progress-interval, same `value_source` pattern as `jobs`
         // above: the flag always has a value (clap's default is 10), so
         // `value_source` is the only way to tell "the user actually typed
-        // --progress-interval" from "clap filled it in". Nothing reads
-        // `self.progress_interval` yet (docs/design/2026-09-15-idle-task-heartbeat.md
-        // Phase 1); Phase 3 is the ticker that does.
+        // --progress-interval" from "clap filled it in". Deprecated: the
+        // ticker that read it was removed by
+        // docs/design/2026-09-16-live-progress-renderer.md Phase 1. Kept
+        // accepted so an ottofile that still sets it keeps loading; warned on
+        // below, once the ottofile's own `otto.progress-interval` is known
+        // too.
         self.progress_interval = *matches
             .get_one::<u64>("progress-interval")
             .expect("progress-interval should have default value");
         let progress_interval_explicit = !matches!(
             matches.value_source("progress-interval"),
+            Some(clap::parser::ValueSource::DefaultValue)
+        );
+
+        // Extract --progress, same `value_source` pattern as `jobs` and
+        // `progress-interval` above. clap's `PossibleValuesParser` (see
+        // `cli/parser/help.rs`) already rejects anything outside
+        // `ProgressSetting::VALID` - including `always` - with its own clean
+        // usage error before this line runs, so the `expect` below is really
+        // "clap validated this", not a hopeful cast.
+        self.progress = ProgressSetting::parse(
+            matches
+                .get_one::<String>("progress")
+                .expect("progress should have default value"),
+        )
+        .expect("clap's PossibleValuesParser already rejected anything ProgressSetting::parse would reject");
+        let progress_explicit = !matches!(
+            matches.value_source("progress"),
             Some(clap::parser::ValueSource::DefaultValue)
         );
 
@@ -1037,6 +1068,27 @@ impl Parser {
         // either way the flag on the command line always wins.
         if !progress_interval_explicit && let Some(progress_interval) = self.config_spec.otto.progress_interval {
             self.progress_interval = progress_interval;
+        }
+        // Deprecated key, accepted and ignored: warn once, from whichever
+        // source set it (flag, `$OTTO_PROGRESS_INTERVAL`, or the ottofile),
+        // so a rollback to an older otto and a migration forward both keep
+        // loading. Silence otherwise - a fixture that never touches the key
+        // should never see the warning.
+        if progress_interval_explicit || self.config_spec.otto.progress_interval.is_some() {
+            eprintln!(
+                "otto: --progress-interval/OTTO_PROGRESS_INTERVAL/otto.progress-interval is deprecated and ignored; use --progress instead"
+            );
+        }
+
+        // `otto.progress` is an `Option<String>`, same shape as `otto.jobs`:
+        // absent leaves clap's default (`auto`) in place, present overrides
+        // it, and either way the flag or `$OTTO_PROGRESS` always wins. Unlike
+        // `otto.jobs`, the file's value is a raw `String` (see `OttoSpec`'s
+        // field doc for why), so it is validated here through the same
+        // `ProgressSetting::parse` the CLI flag uses - the one place both
+        // surfaces share the same accepted spellings and the same error text.
+        if !progress_explicit && let Some(progress) = &self.config_spec.otto.progress {
+            self.progress = ProgressSetting::parse(progress).map_err(|e| eyre!("otto.progress: {e}"))?;
         }
 
         // Inject built-in commands
@@ -1142,6 +1194,7 @@ impl Parser {
             tui_mode,
             no_prefix,
             progress_interval: self.progress_interval,
+            progress: self.progress,
             requested_tasks: tasks_to_run,
         }))
     }

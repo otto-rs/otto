@@ -12,6 +12,7 @@ fn test_runtime_config_fields() {
         tui_mode: false,
         no_prefix: false,
         progress_interval: 10,
+        progress_mode: crate::executor::progress::ProgressMode::Quiet,
         retention: crate::cfg::otto::RetentionSpec::default(),
         requested_tasks: vec![],
     };
@@ -23,6 +24,7 @@ fn test_runtime_config_fields() {
     assert!(!config.tui_mode);
     assert!(!config.no_prefix);
     assert_eq!(config.progress_interval, 10);
+    assert_eq!(config.progress_mode, crate::executor::progress::ProgressMode::Quiet);
     assert_eq!(config.retention, crate::cfg::otto::RetentionSpec::default());
 }
 

@@ -62,14 +62,34 @@ impl Parser {
                 .long("no-prefix")
                 .help("Suppress the [task] prefix on task output")
                 .action(clap::ArgAction::SetTrue),
-            // Drives the idle-task heartbeat ticker in the scheduler
-            // (docs/design/2026-09-15-idle-task-heartbeat.md). `0`
-            // disables rather than being rejected, unlike `jobs`, since a
-            // silenced heartbeat is a valid choice and not a hot-spin hazard.
+            // The live-progress renderer's mode
+            // (docs/design/2026-09-16-live-progress-renderer.md). `auto` is
+            // Live iff stderr is a terminal, `TERM` is not `dumb`, and no `CI`
+            // env var is set; `never` is always Quiet. `always` was measured
+            // and cut by that design's Phase 0 - indicatif 0.18.3 cannot
+            // supply a correct width/height or a cursor erase for a stream
+            // that is not a terminal - so it is not in the possible-values
+            // list below and clap rejects it the same way it rejects any
+            // other unlisted value.
+            Arg::new("progress")
+                .long("progress")
+                .value_name("MODE")
+                .help("Live progress rendering on stderr: 'auto' (default) or 'never'")
+                .env("OTTO_PROGRESS")
+                .default_value("auto")
+                .value_parser(clap::builder::PossibleValuesParser::new(ProgressSetting::VALID)),
+            // Accepted and ignored, one release, for ottofiles written before
+            // docs/design/2026-09-16-live-progress-renderer.md replaced the
+            // heartbeat ticker this used to drive
+            // (docs/design/2026-09-15-idle-task-heartbeat.md). `OttoSpec` is
+            // `deny_unknown_fields`, so the ottofile key cannot simply be
+            // deleted without breaking every ottofile that still sets it;
+            // Parser::parse warns on stderr when either form is set, then
+            // does nothing else with the value.
             Arg::new("progress-interval")
                 .long("progress-interval")
                 .value_name("SECONDS")
-                .help("Seconds of task silence before otto reports the task is still running; 0 disables")
+                .help("Deprecated, ignored: use --progress instead. Kept only so old ottofiles still load")
                 .env("OTTO_PROGRESS_INTERVAL")
                 .default_value(DEFAULT_PROGRESS_INTERVAL.to_string())
                 .value_parser(value_parser!(u64)),

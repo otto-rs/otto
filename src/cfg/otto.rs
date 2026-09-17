@@ -293,15 +293,27 @@ pub struct OttoSpec {
     )]
     pub jobs: Option<usize>,
 
-    /// Seconds of task silence before otto reports the task is still running;
-    /// `0` disables. Used only when `--progress-interval` was not given
-    /// explicitly (see `Parser::parse`'s `value_source` check, the same
-    /// pattern `jobs` uses above). Kebab on disk, matching `envs-command`.
-    /// Nothing reads this yet: Phase 1 of
-    /// docs/design/2026-09-15-idle-task-heartbeat.md only threads the value
-    /// through to the scheduler. Phase 3 is the ticker that reads it.
+    /// Deprecated, ignored. Used to be seconds of task silence before otto
+    /// reported the task still running; the heartbeat that read it was
+    /// removed by Phase 1 of
+    /// docs/design/2026-09-16-live-progress-renderer.md. Kept as an accepted
+    /// key, for one release, because `OttoSpec` is `deny_unknown_fields`:
+    /// dropping the field outright would fail every ottofile that still sets
+    /// it rather than warn. `Parser::parse` is what warns; this struct only
+    /// keeps the key loadable. Kebab on disk, matching `envs-command`.
     #[serde(default, rename = "progress-interval", skip_serializing_if = "Option::is_none")]
     pub progress_interval: Option<u64>,
+
+    /// `--progress` / `OTTO_PROGRESS`'s ottofile-level default: `"auto"` or
+    /// `"never"`. Used only when neither the flag nor the env var was given
+    /// explicitly (see `Parser::parse`'s `value_source` check, the same
+    /// pattern `jobs` and `progress-interval` use above). Kept as a raw
+    /// `String` rather than `progress::ProgressSetting` on purpose:
+    /// `executor` already depends on `cfg` (e.g. `Task`), so the reverse
+    /// import would cycle the module graph. `Parser::parse` is what validates
+    /// it, through the same `ProgressSetting::parse` the CLI flag uses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<String>,
 
     #[serde(default = "default_tasks", skip_serializing_if = "is_default_tasks")]
     pub tasks: Vec<String>,
@@ -328,6 +340,7 @@ impl Default for OttoSpec {
             api: default_api(),
             jobs: None,
             progress_interval: None,
+            progress: None,
             tasks: default_tasks(),
             envs: HashMap::new(),
             envs_command: None,

@@ -90,6 +90,7 @@ fn test_parse_outcome_into_run_returns_the_plan() {
         tui_mode: false,
         no_prefix: true,
         progress_interval: 10,
+        progress: ProgressSetting::Auto,
         requested_tasks: vec![],
     })
     .into_run()
@@ -1486,4 +1487,170 @@ fn test_progress_interval_zero_is_accepted() {
     let mut parser = Parser::new(args).unwrap();
     let plan = parser.parse().unwrap().into_run().unwrap();
     assert_eq!(plan.progress_interval, 0);
+}
+
+// =========================================================================
+// --progress / OTTO_PROGRESS / otto.progress
+// (docs/design/2026-09-16-live-progress-renderer.md, Phase 3)
+// =========================================================================
+
+#[test]
+fn test_progress_flag_defaults_to_auto() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let ottofile_path = temp_dir.path().join("otto.yml");
+    fs::write(&ottofile_path, "tasks:\n  test:\n    action: echo test\n").unwrap();
+
+    let args = vec![
+        "otto".to_string(),
+        "--ottofile".to_string(),
+        ottofile_path.to_string_lossy().to_string(),
+        "test".to_string(),
+    ];
+
+    let mut parser = Parser::new(args).unwrap();
+    let plan = parser.parse().unwrap().into_run().unwrap();
+    assert_eq!(plan.progress, ProgressSetting::Auto);
+}
+
+#[test]
+fn test_progress_never_flag_parses() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let ottofile_path = temp_dir.path().join("otto.yml");
+    fs::write(&ottofile_path, "tasks:\n  test:\n    action: echo test\n").unwrap();
+
+    let args = vec![
+        "otto".to_string(),
+        "--progress".to_string(),
+        "never".to_string(),
+        "--ottofile".to_string(),
+        ottofile_path.to_string_lossy().to_string(),
+        "test".to_string(),
+    ];
+
+    let mut parser = Parser::new(args).unwrap();
+    let plan = parser.parse().unwrap().into_run().unwrap();
+    assert_eq!(plan.progress, ProgressSetting::Never);
+}
+
+/// `always` was measured and cut by Phase 0. clap's `PossibleValuesParser`
+/// rejects it before `Parser::parse` ever runs application logic, the same
+/// way an out-of-range `-j` value is rejected.
+#[test]
+fn test_progress_always_is_rejected_not_silently_accepted() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let ottofile_path = temp_dir.path().join("otto.yml");
+    fs::write(&ottofile_path, "tasks:\n  test:\n    action: echo test\n").unwrap();
+
+    let args = vec![
+        "otto".to_string(),
+        "--progress".to_string(),
+        "always".to_string(),
+        "--ottofile".to_string(),
+        ottofile_path.to_string_lossy().to_string(),
+        "test".to_string(),
+    ];
+
+    let mut parser = Parser::new(args).unwrap();
+    let err = parser.parse().expect_err("--progress always must be rejected");
+    let msg = err.to_string();
+    assert!(msg.contains("always"), "error should name the rejected value: {msg}");
+    assert!(
+        msg.contains("auto") && msg.contains("never"),
+        "error should name the valid values: {msg}"
+    );
+}
+
+/// `otto.progress` sets the default only when `--progress` was not given
+/// explicitly, the same shape as `otto.jobs` and `otto.progress-interval`.
+#[test]
+fn test_otto_progress_config_sets_default_when_flag_omitted() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let ottofile_path = temp_dir.path().join("otto.yml");
+    fs::write(
+        &ottofile_path,
+        "otto:\n  progress: never\ntasks:\n  test:\n    action: echo test\n",
+    )
+    .unwrap();
+
+    let args = vec![
+        "otto".to_string(),
+        "--ottofile".to_string(),
+        ottofile_path.to_string_lossy().to_string(),
+        "test".to_string(),
+    ];
+
+    let mut parser = Parser::new(args).unwrap();
+    let plan = parser.parse().unwrap().into_run().unwrap();
+    assert_eq!(plan.progress, ProgressSetting::Never);
+}
+
+/// An explicit `--progress` wins over `otto.progress` even when the two
+/// disagree.
+#[test]
+fn test_explicit_progress_flag_overrides_otto_config() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let ottofile_path = temp_dir.path().join("otto.yml");
+    fs::write(
+        &ottofile_path,
+        "otto:\n  progress: never\ntasks:\n  test:\n    action: echo test\n",
+    )
+    .unwrap();
+
+    let args = vec![
+        "otto".to_string(),
+        "--progress".to_string(),
+        "auto".to_string(),
+        "--ottofile".to_string(),
+        ottofile_path.to_string_lossy().to_string(),
+        "test".to_string(),
+    ];
+
+    let mut parser = Parser::new(args).unwrap();
+    let plan = parser.parse().unwrap().into_run().unwrap();
+    assert_eq!(plan.progress, ProgressSetting::Auto);
+}
+
+/// `otto.progress` is a raw `String` (see `OttoSpec::progress`'s doc), so an
+/// invalid value is caught here, not at deserialize time - and must fail
+/// exactly as loudly as an invalid `--progress` flag value.
+#[test]
+fn test_otto_progress_config_rejects_an_invalid_value() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let ottofile_path = temp_dir.path().join("otto.yml");
+    fs::write(
+        &ottofile_path,
+        "otto:\n  progress: sometimes\ntasks:\n  test:\n    action: echo test\n",
+    )
+    .unwrap();
+
+    let args = vec![
+        "otto".to_string(),
+        "--ottofile".to_string(),
+        ottofile_path.to_string_lossy().to_string(),
+        "test".to_string(),
+    ];
+
+    let mut parser = Parser::new(args).unwrap();
+    let err = parser.parse().expect_err("otto.progress: sometimes must be rejected");
+    let msg = err.to_string();
+    assert!(msg.contains("otto.progress"), "error should name the key: {msg}");
+    assert!(msg.contains("sometimes"), "error should name the rejected value: {msg}");
 }

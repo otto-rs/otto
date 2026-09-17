@@ -78,13 +78,18 @@ fn a_silent_task_emits_no_still_running_line() {
 }
 
 /// `0` used to be the heartbeat's off switch. It remains an accepted value -
-/// removing it is Phase 3's job, not this one's - and still produces no
-/// heartbeat line, same as every other value now.
+/// Phase 3 of the new design deprecates the flag rather than removing it,
+/// warning on stderr instead of erroring - and still produces no heartbeat
+/// line, same as every other value now.
 #[test]
 fn a_zero_progress_interval_is_still_accepted_and_emits_nothing() {
     let (ok, out) = run_merged(0, "quiet");
     assert!(ok, "--progress-interval 0 must still be accepted:\n{out}");
     assert!(!out.contains("still running"), "no heartbeat may appear:\n{out}");
+    assert!(
+        out.contains("deprecated"),
+        "an explicit --progress-interval must warn (Phase 3):\n{out}"
+    );
 }
 
 /// The motivating case: a `\r`-redrawn bar that never emits a newline used to

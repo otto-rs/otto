@@ -221,6 +221,17 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
                 cmd.arg(&script_path)
                     .current_dir(workspace.root())
                     // Inherit current environment by default (no env_clear())
+                    // MINUS `OTTO_PROGRESS`: this call site inherits the parent
+                    // env by design, so a parent's `OTTO_PROGRESS=never` would
+                    // otherwise mute a nested otto that should make its own
+                    // `auto` decision. Not the nesting handshake this design
+                    // rejects (docs/design/2026-09-16-live-progress-renderer.md,
+                    // API Design): no marker, no detection, no second source
+                    // of truth, just removing one var otto itself sets before
+                    // the child's own `--progress`/`OTTO_PROGRESS`/`otto.progress`
+                    // gets to speak. A task's own `envs:` still wins below, if
+                    // it names the var explicitly.
+                    .env_remove("OTTO_PROGRESS")
                     .envs(&envs) // Override with user-specified env vars
                     .env("OTTO_TASK", &task_name)
                     .env("OTTO_TASK_DIR", task_dir.to_string_lossy().to_string())
