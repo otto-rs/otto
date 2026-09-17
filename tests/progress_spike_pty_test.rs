@@ -158,17 +158,21 @@ tasks:
       echo "OWNER-START"
 "#;
 
-/// Measured on main at 1783f1c: the tty child's output lands before otto has
-/// finished replaying the ordinary group, so the two writers share the terminal.
+/// **INVERTED BY PHASE 4**, per the rule at the top of this file.
 ///
-/// Observed 10/10 through a pipe and 5/5 through a pty on 2026-09-16, with
-/// `OWNER-START` landing strictly inside a replay block in 9 of those 15.
+/// As measured on main at 1783f1c this asserted the defect: the tty child's
+/// output landed before otto had finished replaying the ordinary group, so the
+/// two writers shared the terminal. Observed 10/10 through a pipe and 5/5
+/// through a pty on 2026-09-16, with `OWNER-START` landing strictly inside a
+/// replay block in 9 of those 15.
 ///
-/// This test PASSES today and is the evidence. Phase 4 inverts it: when the
-/// admission gate lands, the assertion below must be flipped to its twin,
-/// `phase_4_no_tty_child_writes_before_every_admitted_task_has_reported`.
+/// Phase 4's admission gate closed it, so the assertion now reads the other
+/// way: the tty child writes only after the last replay block. The per-block
+/// form of the same claim is the criterion twin below, which Phase 4
+/// un-ignored; this one keeps the fixture's vacuous-pass guards and the
+/// measurement's provenance in one place.
 #[test]
-fn today_a_tty_child_writes_while_otto_is_still_replaying_another_task() {
+fn a_tty_child_no_longer_writes_while_otto_is_still_replaying_another_task() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("home");
     let ottofile = write_ottofile(temp.path(), "handoff.yml", HANDOFF_FIXTURE);
@@ -192,25 +196,24 @@ fn today_a_tty_child_writes_while_otto_is_still_replaying_another_task() {
     let last_block = line_of(&out, "[bulk:c] finished successfully");
 
     assert!(
-        owner < last_block,
-        "the handoff race did not reproduce: the tty child wrote at line {owner}, after the last \
-         replay block ended at {last_block}. Either the race is gone (invert this test and \
-         un-ignore its Phase 4 twin) or the fixture stopped widening the window."
+        owner > last_block,
+        "the tty child wrote at line {owner}, before the last replay block ended at \
+         {last_block}: the admission gate let a tty task take a terminal otto was still \
+         writing to."
     );
 }
 
-/// Phase 4's acceptance criterion, ignored because it FAILS on today's binary.
+/// Phase 4's acceptance criterion. Shipped `#[ignore]`d by Phase 0 because it
+/// FAILED on that binary; **Phase 4 removed the attribute** and it is a
+/// first-class test of the gate now.
 ///
 /// `#[ignore]` rather than deletion, and rather than `#[should_panic]`: the
 /// criterion is a real assertion about the shipped gate, and `should_panic`
-/// would keep passing for any panic at all, including a broken fixture. Phase 4
-/// removes the attribute. Run it deliberately with
-/// `cargo test --test progress_spike_pty_test -- --ignored`.
+/// would keep passing for any panic at all, including a broken fixture.
 ///
 /// Measured failure on 1783f1c, 2026-09-16: `OWNER-START` at line 1490 of 6008,
 /// inside `bulk:a`'s replay block, which ends at line 2003.
 #[test]
-#[ignore = "Phase 4 criterion: fails on today's binary; the tty gate does not exist yet"]
 fn phase_4_no_tty_child_writes_before_every_admitted_task_has_reported() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("home");

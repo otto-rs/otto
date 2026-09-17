@@ -493,3 +493,190 @@ mute a nested otto's own `auto` decision.
   phase's own new test file (`tests/progress_mode_test.rs`) legitimately
   names both spellings in its warning-text assertions. The count should drop
   further only when a later release removes the key outright.
+
+## Phase 4: Terminal-ownership gate
+
+Two independent pieces, both of them scheduler-and-facade work with no
+renderer anywhere:
+
+- the admission gate in `src/executor/scheduler.rs` (`may_admit`, `InFlight`,
+  `is_bookkeeping`, and a drain-mode flag local to `execute_all`).
+- the handoff in `src/executor/progress/ownership.rs`, reached through
+  `Facade::surrender` / `Facade::reclaim`, taken around the `tty:` spawn in
+  `src/executor/scheduler/task_execution.rs`.
+
+### Design decisions
+
+- **`InFlight` gained a `total` field rather than a new counter beside it** —
+  `scheduler.rs:ActiveTasks::in_flight` — the count is `self.running.len()`,
+  the same map the other two arms project, so the tty rule reads the same
+  snapshot as the rules it sits beside and cannot disagree with them. The doc
+  named `in_flight_len` as the right shape; this is that number, delivered
+  through the struct `may_admit` already takes so the function stays pure and
+  table-testable.
+- **Drain mode is a `bool` local to `execute_all`, passed into `may_admit` as
+  its third argument** — `scheduler.rs:execute_all` — so the whole admission
+  decision is still one pure function with one table test
+  (`drain_mode_stops_ordinary_tasks_overtaking_a_deferred_tty_task`), rather
+  than a predicate plus an `if` somewhere in a 400-line loop. It is set in
+  BOTH deferral branches (the cap branch and the ownership branch) and cleared
+  when a tty task is admitted or when nothing is left in flight.
+- **Drain mode ends when nothing is in flight, whether or not the tty task
+  went in** — `scheduler.rs:execute_all`, top of the launch pass. A tty task
+  restored to the head of the queue can still be skipped by a gate on its way
+  back through, and a flag left waiting for a task that is never coming would
+  stop the loop admitting anything for the rest of the run.
+- **Drain mode covers `Admission::Capped` only, which is exactly the doc's
+  wording ("stops admitting ordinary tasks")** — `scheduler.rs:may_admit`.
+  Applying it to exempt items as well compiled, passed the two Phase 4
+  criteria, and broke `foreach_jobs_concurrency_test.rs`'s
+  `a_tty_task_and_an_exempt_group_never_overlap_at_one_job`: with a tty task
+  waiting, ONE item of a `jobs: all` group started and the other two were
+  deferred, which is `foreach.jobs`'s whole promise broken. An exempt item
+  overtaking a ready tty task is also not the hole drain mode exists to close:
+  it is what otto did before this phase, and a group is finite, so the tty
+  task's wait is bounded by it either way.
+- **`is_bookkeeping` — a virtual parent with an empty action — is the one
+  thing a tty task yields to, and the one thing drain mode does not hold** —
+  `scheduler.rs:is_bookkeeping`, used twice in `execute_all`. Found by running
+  the Phase 0 criterion test against the bare predicate: it still failed, with
+  `OWNER-START` at line 6004 and `[bulk] finished successfully` at 6005. The
+  mechanism is that a foreach group's virtual parent becomes ready only once
+  every subtask has reported, so at that instant `in_flight.total == 0` and the
+  tty task - sitting at the head of the queue after its earlier deferral - is
+  admitted ahead of the group's own completion line. The parent runs no script
+  (`as_virtual_parent`, `src/cfg/task.rs`, sets `action: String::new()`), so
+  yielding to it costs one replenishment and cannot reintroduce the
+  unbounded-delay regression drain mode exists to prevent. Drain mode must
+  exempt it or the two rules deadlock against each other: the tty task waits
+  for the parent, and drain mode would hold the parent.
+- **The handoff is an RAII guard (`TerminalHandoff`), not an acquire call
+  paired with a release call** — `ownership.rs`, taken at
+  `task_execution.rs`'s `tty` arm. Three of the four ways out of that spawn
+  (spawn failure, cancellation dropping the body mid-`wait`, and a `?` on the
+  log-marker write) never reach a line an author could have put a release on.
+  `Drop` reaches all four.
+- **Ownership is state on the `Facade`, not a second static** —
+  `facade.rs:Facade::terminal`. Every site takes `order` first and `terminal`
+  second, so a handoff cannot land in the middle of a block: `surrender`
+  itself blocks until whatever replay was mid-write has finished, which IS the
+  handoff the design's diagram describes.
+- **Held output is drained by `teardown` as well as by the guard** —
+  `facade.rs:Facade::teardown`. A run that exits while a `tty:` task still
+  owns the terminal has held bytes nobody else will flush, because the body
+  that would hand ownership back is being dropped or already was. Teardown is
+  the last writer on every exit path (Phase 2 put it there), so it is also the
+  last chance. Pinned by
+  `teardown_hands_the_terminal_back_rather_than_leaving_output_held` and,
+  end to end, by
+  `a_cancelled_run_still_prints_its_notice_with_the_terminal_surrendered`.
+- **The spill is framed (`tag | u64 len | bytes`) and re-streamed in pieces**
+  — `ownership.rs:Surrendered::spill_write`, `drain_spill`. otto's two streams
+  interleave inside one replayed block, so a plain concatenation could not be
+  put back on the right handle; `io::copy` over a `take(len)` keeps re-arm's
+  memory cost at the copy buffer rather than the record size.
+
+### Deviations
+
+- **The doc's "a surrendered replay spills to its own per-task log file" is
+  implemented as a spill file in the TTY task's run directory
+  (`<run>/tasks/<tty task>/otto-surrendered.log`), not as a deferral that
+  re-reads the replayed subtask's `stdout.log`.** Same effect, correct seam:
+  the facade is byte-oriented and has no task identity, so the deferral
+  reading would have to plumb re-stream closures (or block descriptors) back
+  out through the scheduler and find a thread to run them on at re-arm.
+  Everything the doc asked for holds: memory is bounded by
+  `SURRENDER_MEMORY_BYTES` (64 KiB, replay's own chunk bound), nothing touches
+  the streaming path while the terminal is surrendered, and the bytes are
+  re-streamed from a file that is deleted once they are.
+- **The tty gate additionally yields to a ready bookkeeping parent**, which
+  the doc's Phase 4 bullets do not mention. It is not extra scope: it is what
+  the doc's own Phase 0 criterion test demands, and without it that test
+  fails. Recorded here because it is a rule the doc does not state.
+- **`may_admit(Tty, ...)` now also refuses a second tty task** (`total == 0`
+  subsumes the old `exempt == 0`, and `tty` is part of `total`). The old rule
+  admitted a tty task beside another tty task and let the shared semaphore
+  serialize them. Nothing depended on that: it is one terminal, and the test
+  that pinned the old cell,
+  `the_admission_rules_are_symmetric_and_bind_only_tty_against_exempt`, was
+  renamed `a_tty_task_waits_for_every_admitted_task_to_report` and has the
+  inverted cells called out inline rather than being left green by accident.
+- **`today_a_tty_child_writes_while_otto_is_still_replaying_another_task` was
+  inverted and renamed** to
+  `a_tty_child_no_longer_writes_while_otto_is_still_replaying_another_task`,
+  per the rule at the top of `tests/progress_spike_pty_test.rs` ("A later
+  phase that fixes the behaviour must INVERT the named test, not delete it").
+  Its criterion twin was un-ignored in the same file.
+- **`Facade::new` went from private to `pub(super)`** so `ownership_tests.rs`
+  can build a private facade instead of mutating the process-wide one, which
+  is the same reason `facade_tests.rs` already built its own.
+
+### Tradeoffs
+
+- **Spill file vs. deferring the replay** — a spill costs disk equal to the
+  held output and one extra copy of those bytes, where deferring costs
+  nothing but needs the replay layer to become ownership-aware. Chosen for the
+  spill because the only reachable path that can produce a mid-surrender
+  replay today is the cancellation flush (the admission gate closes every
+  other one), and paying bytes on a cancellation path is better than adding an
+  ownership concept to `replay.rs` that the gate makes almost unreachable.
+- **Held output is bounded in memory but NOT bounded overall** — past a failed
+  spill, `Surrendered::overflow` grows without limit. Deliberate: the
+  alternative is dropping a failure status on a filesystem that is already
+  broken, and the condition is reported on stderr at re-arm rather than
+  swallowed (`a_spill_that_cannot_be_opened_keeps_the_output_and_reports_itself`).
+- **Surrender is unconditional, not gated on `ProgressMode`** —
+  `task_execution.rs`. In `Quiet` (piped) runs otto's own status lines are now
+  held for the duration of a `tty:` child rather than interleaving with its
+  inherited output. That is the better ordering, it costs nothing measurable,
+  and gating it on the mode would give the two paths different terminal
+  semantics for no stated reason.
+- **The drain-mode fixture is built out of dependency edges, not declaration
+  order** — `tests/tty_admission_gate_test.rs`. The run set's order is a
+  `HashMap` iteration order: measured 2026-09-17, four independent tasks
+  started in two different orders on two consecutive runs of the same
+  ottofile. The fixture uses two gate tasks so that `[tty, long-1, long-2]` is
+  the queue the pass actually sees; the first draft assumed declaration order
+  and was testing the allocator.
+- **No integration test for a failed `tty:` spawn.** The interpreter is only
+  ever `bash` or `python3` (`ProcessedAction`, `src/executor/action.rs`), so a
+  spawn failure cannot be provoked portably from an ottofile. The path is
+  covered structurally instead: the guard is taken before `spawn()` and
+  released by `Drop`, and `the_facade_holds_writes_while_the_terminal_is_surrendered`
+  pins that dropping it hands the terminal back with no other call involved.
+
+### Open questions
+
+- **Buffering while surrendered is now almost unobservable end to end, by
+  construction.** The gate admits a `tty:` task only when nothing else is in
+  flight, so the only otto writes that can land during a surrender are a skip
+  line for a task the loop retires while the child runs, and the
+  run-cancelled notice. The second is tested
+  (`a_cancelled_run_still_prints_its_notice_with_the_terminal_surrendered`);
+  the rest of the hold-and-replay contract is covered by unit tests on
+  `Surrendered`. Confirm that is the intended division rather than a missing
+  integration test.
+- **Citations re-located; one in the doc no longer resolves as written, and
+  one in the Phase 0 test file does not either.** Everything the phase relied
+  on was found by symbol, against the tree as committed by this phase:
+  `scheduler.rs:342` (`Admission::Tty => in_flight.exempt == 0`) is now `:366`
+  (and reads `total == 0`); `:348` (`Capped => true`) is `:392`; `:408`
+  (`in_flight_len`) is `:465`; `:484` (`reported`) is `:544`; `:317-321`
+  (`InFlight`) is `:326-337`; `:1638-1639`
+  (`deferred_by_admission.push(task); continue;`) is `:1653-1654`;
+  `:1662-1663` (restore to the head) is `:1718-1721`; `:363-367`
+  (`admission_for`) is `:418-426`; `task_execution.rs:298-299` (the inherited
+  stdout/stderr) is `:324-325`.
+  **`scheduler.rs:1524-1530`, the shared run-start `Instant` the doc cites for
+  Phase 5, is now `:1531-1541`** - it resolves by symbol, but Phase 5 must
+  re-locate it rather than trust the number.
+  **`replay.rs:389-391`, cited by the Phase 4 bullet as "that path takes real
+  stdout/stderr handles", no longer resolves as written**: Phase 2 replaced
+  the raw handles with `facade().block(...)`, now at `replay.rs:393`, and the
+  handles live inside `Facade::block`. The claim is still true and is exactly
+  why the hold does not spill to the streaming path; only the address is
+  stale. The Phase 0 header comment in `tests/progress_spike_pty_test.rs` also
+  cites `scheduler.rs:363-367` for "a buffered foreach without `jobs`
+  classifies `Capped`", which is `admission_for`, now `:418-426`; left as
+  written, since that file is Phase 0's record and the line numbers in it were
+  true when it was measured.

@@ -61,6 +61,15 @@ const COMPLETION_CHANNEL_CAPACITY: usize = 32;
 /// terminal. The marker keeps the record honest.
 pub const TTY_LOG_MARKER: &str = "otto: tty task, output not captured";
 
+/// Where otto's own output goes when it overflows the memory bound while a
+/// `tty:` task owns the terminal.
+///
+/// In that task's own run directory, beside its two log files: the terminal is
+/// the one place those bytes must not go until the task hands it back
+/// (`progress::ownership`), and this file is deleted the moment they are
+/// re-streamed from it.
+const SURRENDERED_OUTPUT_LOG: &str = "otto-surrendered.log";
+
 /// Why one of a task's two output drains did not finish cleanly.
 ///
 /// `task_execution.rs` distinguishes three outcomes per stream and today only
@@ -316,13 +325,19 @@ impl Admission {
 /// and a count is the honest answer to build that from.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct InFlight {
+    /// Every task the loop has admitted and not yet seen report, whatever its
+    /// class. A `tty:` task waits on this one: it owns the terminal, and otto
+    /// is still writing another task's output to that terminal until the report
+    /// arrives, not until the child exits.
+    total: usize,
     /// `tty: true` tasks the loop has admitted and not yet seen report.
     tty: usize,
     /// Exempt foreach items the loop has admitted and not yet seen report.
     exempt: usize,
 }
 
-/// The two admission rules, as one pure function over what is in flight.
+/// The admission rules, as one pure function over what is in flight and
+/// whether the loop is draining for a `tty:` task.
 ///
 /// **Both are decided here, in the single-threaded launch loop, and nowhere
 /// else.** `execute_all` is the one admission point in the program: it runs in
@@ -335,19 +350,60 @@ struct InFlight {
 ///
 /// This is sound only because an admitted task counts as in flight for the
 /// whole time its body is still queuing for a permit; see `ActiveTasks::spawn`.
-fn may_admit(class: Admission, in_flight: InFlight) -> bool {
+///
+/// `draining_for_tty` is the launch loop's own state rather than a fourth
+/// counter: it is set when this function refuses a `tty:` task and cleared when
+/// one is admitted or nothing is left in flight to drain.
+fn may_admit(class: Admission, in_flight: InFlight, draining_for_tty: bool) -> bool {
     match class {
-        // A tty task owns the terminal. Exempt items are outside the shared
-        // semaphore it makes itself exclusive with, so the only thing keeping
-        // them off the terminal is this rule.
-        Admission::Tty => in_flight.exempt == 0,
-        // The mirror. An exempt item that started beside a running tty task
-        // would write to a terminal another task owns.
+        // A tty task owns the terminal, so nothing otto has admitted may still
+        // be on its way to that terminal. `total` and not `exempt`: the permit
+        // an ordinary task holds is released when its body ends
+        // (`task_execution.rs`, the `outcome` future), while its status line and
+        // its buffered replay are written after the report, so the semaphore
+        // alone leaves a window where a tty child and otto share the terminal.
+        // Being in flight until `reported` is exactly that window.
+        Admission::Tty => in_flight.total == 0,
+        // An exempt item that started beside a running tty task would write to
+        // a terminal another task owns.
+        //
+        // Drain mode deliberately does NOT reach this arm. An exempt group's
+        // items are one unit of work whose concurrency IS `foreach.jobs`'s
+        // promise: holding siblings back because a tty task is waiting starts
+        // one item of a `jobs: all` group and defers the rest, which
+        // `a_tty_task_and_an_exempt_group_never_overlap_at_one_job` catches.
+        // Nor is it the hole drain mode exists to close: an exempt item
+        // overtaking a ready tty task is what otto already did before this
+        // phase, and the group is finite, so the tty task's wait is bounded by
+        // it either way.
         Admission::Exempt => in_flight.tty == 0,
+        // Drain mode. A tty task has been deferred for ownership and is waiting
+        // at the head of the ready queue; admitting another ORDINARY task now
+        // would put fresh work in flight for the rule above to wait on, and the
+        // loop would keep doing that for as long as ready tasks kept arriving.
+        // Not a deadlock - the task set is finite - but one long ordinary task
+        // could hold the tty task off for its whole duration, which the rule
+        // this replaces did not do. Stated as a loop MODE rather than folded
+        // into the predicate above because the predicate cannot see that a tty
+        // task is waiting.
+        Admission::Capped if draining_for_tty => false,
         // The launch cap is the loop's own condition; nothing else gates an
         // ordinary task.
         Admission::Capped => true,
     }
+}
+
+/// Whether a task is otto's own bookkeeping for work that has already run: a
+/// virtual foreach parent with no action, whose entire effect is one status
+/// line (`as_virtual_parent`, `src/cfg/task.rs`, empties the action).
+///
+/// The launch loop treats one specially in both directions. Drain mode does not
+/// hold it, and a `tty:` task waits for it, because the alternative is a
+/// finished group's last line printing after an interactive task has come and
+/// gone. It cannot hold a tty task off for long the way an ordinary task can:
+/// it runs no script, so it reports as soon as it has a permit.
+fn is_bookkeeping(task: &Task) -> bool {
+    task.is_virtual_parent && task.action.is_empty()
 }
 
 /// Which of the three admission classes a task belongs to.
@@ -421,7 +477,10 @@ impl ActiveTasks {
 
     /// What the two admission rules read.
     fn in_flight(&self) -> InFlight {
-        let mut counts = InFlight::default();
+        let mut counts = InFlight {
+            total: self.running.len(),
+            ..InFlight::default()
+        };
         for class in self.running.values() {
             match class {
                 Admission::Tty => counts.tty += 1,
@@ -1523,6 +1582,12 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
         // (when: failure / when: always) still get a chance to run.
         let mut final_error: Option<eyre::Report> = None;
 
+        // Set the moment a `tty:` task is deferred for ownership, cleared when
+        // one is admitted or nothing is in flight. See `may_admit`: without it
+        // the ready queue `[tty, long-1, long-2]` admits both long tasks ahead
+        // of the tty task the same pass deferred.
+        let mut draining_for_tty = false;
+
         while completed_tasks < total_tasks {
             if self.cancel.is_cancelled() {
                 return self.abandon_run(&mut active_tasks, &mut cursor, &mut rx).await;
@@ -1538,6 +1603,14 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
             // (both rules read a non-zero count), so the pass that defers is
             // always followed by a wait on a report rather than a spin.
             let mut deferred_by_admission: Vec<Task> = Vec::new();
+            // Drain mode ends when there is nothing left to drain, whether or
+            // not the tty task that started it ever went in: it may have been
+            // skipped by a gate on the way back through the queue, and a flag
+            // waiting for a task that is never coming would stop the loop
+            // admitting anything ever again.
+            if active_tasks.is_empty() {
+                draining_for_tty = false;
+            }
             while !ready_queue.is_empty() {
                 // The cap is checked per task below, not as this loop's
                 // condition, because an exempt item must be admitted past a
@@ -1576,17 +1649,52 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
                 // `active_tasks` - a local nothing else mutates.
                 let class = admission_for(&task);
                 if class.is_capped() && active_tasks.capped_len() >= max_concurrent {
+                    draining_for_tty |= matches!(class, Admission::Tty);
                     deferred_by_admission.push(task);
                     continue;
                 }
-                if !may_admit(class, active_tasks.in_flight()) {
+                // A finished group's own completion line is still otto's to
+                // print, and a virtual parent is where it comes from. Admitting
+                // a tty task ahead of one puts the interactive child's output
+                // in front of a line about work that ended before it started.
+                // The wait is one replenishment: the parent runs no script.
+                if matches!(class, Admission::Tty)
+                    && ready_queue
+                        .iter()
+                        .chain(deferred_by_admission.iter())
+                        .any(is_bookkeeping)
+                {
                     debug!(
-                        "execute_all: deferring {} ({class:?}) against in-flight {:?}",
+                        "execute_all: deferring {} behind a group's own completion line",
+                        task.name
+                    );
+                    draining_for_tty = true;
+                    deferred_by_admission.push(task);
+                    continue;
+                }
+                // Drain mode does not hold otto's own bookkeeping: the tty task
+                // above is waiting for exactly that task to report, so holding
+                // it would be a deadlock rather than a deferral.
+                if !may_admit(
+                    class,
+                    active_tasks.in_flight(),
+                    draining_for_tty && !is_bookkeeping(&task),
+                ) {
+                    debug!(
+                        "execute_all: deferring {} ({class:?}) against in-flight {:?} draining={draining_for_tty}",
                         task.name,
                         active_tasks.in_flight()
                     );
+                    // A deferred tty task is restored to the HEAD of the queue
+                    // below, so drain mode holds the run for exactly one
+                    // replenishment, not for the whole of whatever is running.
+                    draining_for_tty |= matches!(class, Admission::Tty);
                     deferred_by_admission.push(task);
                     continue;
+                }
+                if matches!(class, Admission::Tty) {
+                    debug!("execute_all: admitting tty task {}; drain mode ends", task.name);
+                    draining_for_tty = false;
                 }
 
                 // Try to start the task (handles rebuild check, skipping, and errors)

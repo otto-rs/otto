@@ -1073,28 +1073,123 @@ mod foreach_jobs_admission {
         assert_eq!(admission_for(&both), Admission::Tty);
     }
 
-    /// The two admission rules, as a table. Every cell is one sentence of the
-    /// design doc: a tty task waits for exempt items, exempt items wait for a
-    /// tty task, and an ordinary task is gated only by the launch cap.
+    /// The admission rules, as a table.
+    ///
+    /// **Phase 4 of `docs/design/2026-09-16-live-progress-renderer.md` inverted
+    /// two cells of this test rather than adding a new one beside it.** Before
+    /// it, a tty task was held off only by exempt items
+    /// (`may_admit(Tty, ordinary_running)` was true), which is the hole the
+    /// phase closes: an ordinary task's permit is released when its body ends,
+    /// while its status line and its buffered replay are written after its
+    /// report, so a tty child could take the terminal while otto was still
+    /// writing to it.
     #[test]
-    fn the_admission_rules_are_symmetric_and_bind_only_tty_against_exempt() {
+    fn a_tty_task_waits_for_every_admitted_task_to_report() {
         let idle = InFlight::default();
-        let exempt_running = InFlight { tty: 0, exempt: 3 };
-        let tty_running = InFlight { tty: 1, exempt: 0 };
+        let exempt_running = InFlight {
+            total: 3,
+            tty: 0,
+            exempt: 3,
+        };
+        let tty_running = InFlight {
+            total: 1,
+            tty: 1,
+            exempt: 0,
+        };
+        let ordinary_running = InFlight {
+            total: 1,
+            tty: 0,
+            exempt: 0,
+        };
 
-        assert!(may_admit(Admission::Tty, idle));
-        assert!(!may_admit(Admission::Tty, exempt_running));
-        assert!(may_admit(Admission::Tty, tty_running));
+        assert!(may_admit(Admission::Tty, idle, false));
+        assert!(!may_admit(Admission::Tty, exempt_running, false));
+        assert!(
+            !may_admit(Admission::Tty, tty_running, false),
+            "a tty task admitted beside another tty task is two owners of one terminal"
+        );
+        assert!(
+            !may_admit(Admission::Tty, ordinary_running, false),
+            "INVERTED by Phase 4: an ordinary task that has not reported is still writing the \
+             terminal a tty task is about to take"
+        );
 
-        assert!(may_admit(Admission::Exempt, idle));
-        assert!(may_admit(Admission::Exempt, exempt_running));
-        assert!(!may_admit(Admission::Exempt, tty_running));
+        assert!(may_admit(Admission::Exempt, idle, false));
+        assert!(may_admit(Admission::Exempt, exempt_running, false));
+        assert!(!may_admit(Admission::Exempt, tty_running, false));
 
-        // An ordinary task is never held by these rules: the tty task's
-        // exclusivity against it is the shared semaphore's job, unchanged.
-        assert!(may_admit(Admission::Capped, idle));
-        assert!(may_admit(Admission::Capped, exempt_running));
-        assert!(may_admit(Admission::Capped, tty_running));
+        // An ordinary task is never held by the in-flight counts: the tty
+        // task's exclusivity against it is the shared semaphore's job.
+        assert!(may_admit(Admission::Capped, idle, false));
+        assert!(may_admit(Admission::Capped, exempt_running, false));
+        assert!(may_admit(Admission::Capped, tty_running, false));
+    }
+
+    /// A finished group's own completion line is otto's to print, and the
+    /// virtual parent is where it comes from: no action, and its whole effect
+    /// one status line. A tty task waits for one of these; drain mode does not
+    /// hold one, because the tty task is waiting for exactly it.
+    #[test]
+    fn a_virtual_parent_with_no_action_is_bookkeeping_and_nothing_else_is() {
+        let mut parent = plain("bulk");
+        parent.action = String::new();
+        parent.is_virtual_parent = true;
+        assert!(is_bookkeeping(&parent));
+
+        let mut with_action = plain("bulk");
+        with_action.is_virtual_parent = true;
+        assert!(
+            !is_bookkeeping(&with_action),
+            "a virtual parent that still has a script runs one, so it is ordinary work"
+        );
+
+        let mut empty_leaf = plain("noop");
+        empty_leaf.action = String::new();
+        assert!(
+            !is_bookkeeping(&empty_leaf),
+            "an ordinary task that happens to have no action is not a group's completion line"
+        );
+        assert!(!is_bookkeeping(&item("tail:s1", "tail", 4)));
+    }
+
+    /// Drain mode, the half of the gate a predicate cannot express.
+    ///
+    /// The launch loop defers and continues in the same pass, ordinary tasks
+    /// are ungated, and a deferred tty task goes back to the head of the queue
+    /// only to be deferred again. With one active ordinary task and a ready
+    /// queue of `[tty, long-1, long-2]`, a bare predicate admits both long
+    /// tasks ahead of the tty task it just deferred: not a deadlock, but one
+    /// long task holding the tty task off for its whole duration, which the
+    /// rule this replaces did not do.
+    #[test]
+    fn drain_mode_stops_ordinary_tasks_overtaking_a_deferred_tty_task() {
+        let ordinary_running = InFlight {
+            total: 1,
+            tty: 0,
+            exempt: 0,
+        };
+
+        assert!(
+            may_admit(Admission::Capped, ordinary_running, false),
+            "without a deferred tty task an ordinary task is admitted as it always was"
+        );
+        assert!(
+            !may_admit(Admission::Capped, ordinary_running, true),
+            "an ordinary task overtook the tty task the loop is draining for"
+        );
+        assert!(
+            may_admit(Admission::Exempt, ordinary_running, true),
+            "drain mode must not reach exempt items: one item of a `jobs: all` group would \
+             start and the rest would be deferred"
+        );
+        assert!(
+            !may_admit(Admission::Tty, ordinary_running, true),
+            "drain mode does not admit a tty task the in-flight count still refuses"
+        );
+        assert!(
+            may_admit(Admission::Tty, InFlight::default(), true),
+            "drain mode exists to let the tty task in the moment the run drains"
+        );
     }
 
     /// The launch cap must not count exempt items, and cancellation must.
@@ -1109,10 +1204,24 @@ mod foreach_jobs_admission {
 
         assert_eq!(active.capped_len(), 1, "only the ordinary task is capped");
         assert_eq!(active.in_flight_len(), 3, "all three are in flight");
-        assert_eq!(active.in_flight(), InFlight { tty: 0, exempt: 2 });
+        assert_eq!(
+            active.in_flight(),
+            InFlight {
+                total: 3,
+                tty: 0,
+                exempt: 2
+            }
+        );
 
         active.reported("tail:s1");
-        assert_eq!(active.in_flight(), InFlight { tty: 0, exempt: 1 });
+        assert_eq!(
+            active.in_flight(),
+            InFlight {
+                total: 2,
+                tty: 0,
+                exempt: 1
+            }
+        );
         assert_eq!(active.capped_len(), 1);
     }
 
@@ -1155,11 +1264,15 @@ mod foreach_jobs_admission {
         );
         assert_eq!(
             active.in_flight(),
-            InFlight { tty: 1, exempt: 0 },
+            InFlight {
+                total: 1,
+                tty: 1,
+                exempt: 0
+            },
             "a task the loop admitted counts as in flight while its body queues"
         );
         assert!(
-            !may_admit(Admission::Exempt, active.in_flight()),
+            !may_admit(Admission::Exempt, active.in_flight(), false),
             "the admission view must not be stale: an exempt group must be held off by a tty \
              task that has not acquired its permits yet"
         );

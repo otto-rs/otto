@@ -305,6 +305,21 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
                         // the whole point of the flag. The logs still exist,
                         // carrying the marker line.
                         write_tty_log_markers(&tasks_dir, &task_name).await?;
+                        // The handoff (design doc
+                        // `docs/design/2026-09-16-live-progress-renderer.md`,
+                        // Phase 4). Taken BEFORE the spawn, because the child
+                        // can write its first byte before `spawn` has even
+                        // returned here, and given back by `Drop` so it is also
+                        // given back when the spawn fails and when a cancelled
+                        // run drops this body mid-`wait`. otto's own writes are
+                        // held meanwhile, and replayed when the terminal comes
+                        // back; the spill path is inside this task's own run
+                        // directory, the one destination that is never a
+                        // terminal.
+                        let _terminal = facade().surrender(
+                            &task_name,
+                            tasks_dir.join(&task_name).join(SURRENDERED_OUTPUT_LOG),
+                        );
                         let mut child = cmd
                             .stdout(std::process::Stdio::inherit())
                             .stderr(std::process::Stdio::inherit())
