@@ -5,6 +5,7 @@ use crate::cli::commands::history::HistoryCommand;
 use crate::cli::commands::stats::StatsCommand;
 use crate::cli::parser::{Task, ottofile_base_dir};
 use crate::cli::{CleanCommand, ConvertCommand, ParseOutcome, Parser};
+use crate::executor::progress::facade;
 use crate::executor::{TaskScheduler, Workspace};
 use clap::ValueEnum as _;
 use eyre::{Report, Result, eyre};
@@ -475,6 +476,11 @@ pub async fn execute_with_terminal_output(
     // included, since a run left `running` is a run `Clean` cannot age out.
     workspace.record_run_complete_in_db(result.is_ok()).await;
 
+    // Ahead of the prune, not after it: `report_prune_failure` writes to the
+    // terminal, and anything the facade is holding down there has to be cleared
+    // before that message lands on top of it.
+    facade().teardown();
+
     // Auto-prune runs even if tasks failed — failing CI jobs that never prune
     // are exactly the scenario that fills disks
     if let Ok(otto_home) = crate::executor::layout::resolve_otto_home() {
@@ -565,8 +571,11 @@ fn install_stop_handler(
 
         if let Some((name, number)) = next_stop_signal().await {
             // Whatever the caller has to undo comes first: a message printed
-            // onto the alternate screen is a message nobody ever sees.
+            // onto the alternate screen is a message nobody ever sees. The
+            // facade comes second, once the caller has put the primary screen
+            // back, and both come ahead of the message for the same reason.
             before_exit();
+            facade().teardown();
             eprintln!("otto: second signal ({name}); exiting without finishing teardown");
             std::process::exit(128 + number);
         }
@@ -747,6 +756,9 @@ pub async fn execute_with_tui(
 
     // Same teardown as the non-TUI path: a run that ended is a run marked ended.
     workspace.record_run_complete_in_db(result.is_ok()).await;
+
+    // Same ordering as the plain path, for the same reason: the prune can print.
+    facade().teardown();
 
     // Auto-prune runs even if tasks failed
     if let Ok(otto_home) = crate::executor::layout::resolve_otto_home() {

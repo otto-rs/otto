@@ -38,9 +38,9 @@ pub struct TaskClock {
     /// For the elapsed figure in the line.
     started: Instant,
     /// When this task last produced a LINE. Written from `TeeWriter::write` on
-    /// the tokio drain tasks, read from the ticker thread, so an atomic rather
-    /// than a second mutex: a counter needs no lock ordering against
-    /// `TERMINAL_LOCK`.
+    /// the tokio drain tasks, read from whatever reports liveness, so an atomic
+    /// rather than a second mutex: a counter needs no lock ordering against the
+    /// output facade's.
     last_line_ms: AtomicU64,
     /// When this task was last heartbeated, so spacing is measured from the
     /// previous beat rather than from the task start.
@@ -172,10 +172,10 @@ impl TaskClocks {
     }
 
     /// Take the map's lock, recovering from poisoning rather than propagating
-    /// it - the same reasoning as `terminal_lock` (`output.rs`): a panic while
-    /// it was held leaves no invariant broken here, and refusing to time
-    /// anything for the rest of the run would be a worse failure than a clock
-    /// read taken beside a task that panicked.
+    /// it - the same reasoning as the output facade's ordering lock
+    /// (`progress/facade.rs`): a panic while it was held leaves no invariant
+    /// broken here, and refusing to time anything for the rest of the run would
+    /// be a worse failure than a clock read taken beside a task that panicked.
     fn map(&self) -> MutexGuard<'_, ClockMap> {
         self.clocks.lock().unwrap_or_else(PoisonError::into_inner)
     }

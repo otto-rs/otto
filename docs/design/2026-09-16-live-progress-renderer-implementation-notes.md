@@ -244,3 +244,115 @@ per the design doc's instruction to keep `TaskClock` as-is.
 ### Open questions
 
 None.
+
+## Phase 2: The output facade
+
+### Design decisions
+
+- `progress::facade` is a module directory (`src/executor/progress/{mod,facade,
+  facade_tests}.rs`), not a single file beside `output.rs` — the doc's
+  Architecture table already names four siblings (`mode.rs`, `facade.rs`,
+  `region.rs`, `ownership.rs`) that later phases add, so the directory exists
+  now rather than being a move in Phase 3.
+- The facade is reached through a `OnceLock` (`progress/facade.rs::facade`),
+  mirroring the `static` lock it replaces, so no scheduler signature changed.
+  `Facade::new` stays private so the process instance is the only one
+  production code can get; the tests build their own to exercise the ordering
+  lock without contending with the harness's captured output.
+- `Stream` is a new enum, deliberately NOT `output::OutputType`
+  (`progress/facade.rs`). `OutputType` names the stream a *task* produced and
+  is `Serialize`d into the run record; `Stream` names one of otto's own two
+  handles. Reusing the persisted type would put a display concern inside it.
+- Every facade write is best-effort and never panics
+  (`progress/facade.rs::write`). `print!`/`eprint!` panic on a failed write,
+  which is the hazard `main.rs::report_fatal` already documents for a terminal
+  that hung up. The doc's "write failure is best-effort and never fatal,
+  matching replay's existing contract" is now true of the live leg too, not
+  only of replay.
+- `write_replay_blocks` (`scheduler/replay.rs`) holds ONE `facade.block` for
+  the whole batch, and the two locked handles are rebound as `out`/`err` locals
+  so the body reads exactly as it did under the raw handles. The facade owns
+  the lock; it does not own the shape of the writes.
+- `report_prune_failure` (`pruning.rs`) became ONE facade write of a
+  two-line string instead of two `eprintln!`s. Same bytes, and the two lines
+  are one message that a concurrently replayed block must not land between.
+- `teardown` is on every exit path even though it only flushes today
+  (`progress/facade.rs::teardown`): the call sites are the expensive part to
+  find, and Phase 5 should add a renderer, not go hunting for exit paths. It is
+  idempotent because the paths overlap — a fatal error during a signalled run
+  reaches two of them.
+- `tests/output_facade_test.rs` pins the doc's canonical writer grep and the
+  `TERMINAL_LOCK` deletion as tests, using the same spellings and the same
+  `*_tests*.rs` exclusion. Phase 5 draws a redrawn region on this terminal; one
+  ad-hoc writer re-added between now and then is how it gets scribbled over, so
+  the criterion needs to keep biting after the phase that introduced it.
+
+### Deviations
+
+- **Facade API is a subset of the doc's.** Shipped: `write`, `block`,
+  `teardown`. Not shipped: `task_started` / `task_finished`. They are row
+  mutation on a region that does not exist until Phase 5, and no-op methods
+  with no callers are dead code the compiler would have to be told to ignore.
+  Same seam, added when there is something behind it.
+- **Two `auto_prune` sites got teardown, not one.** The doc cites `app.rs:507`
+  (the plain path). `execute_with_tui` has its own `auto_prune` call with the
+  same `report_prune_failure` hazard, so both got the call.
+- **Second-signal teardown sits in `install_stop_handler`, after
+  `before_exit()`, not inside the caller's closure.** The doc says "inside the
+  `before_exit` closure". One call in the handler covers both callers, and
+  placing it AFTER `before_exit()` respects the ordering the existing comment
+  at that line already states: the `--tui` caller has to put the primary screen
+  back before anything is drawn or erased on it. Same effect, correct seam.
+- **Stale line numbers in the doc's Phase 2 bullet, relative to the tree it
+  landed in.** `app.rs:507` / `:596` / `:597` were accurate at `1783f1c` but
+  Phase 1 (`1526d4c`) removed 26 lines from `app.rs`; the same code is at
+  `:481`, `:570`, `:571`. The three acquisition sites (`output.rs:198`,
+  `replay.rs:388`, `replay.rs:479`) and `main.rs:235` verified exact.
+- **`clocks.rs` had TWO stale references, not one.** The doc names the
+  `TERMINAL_LOCK` doc comment at `:43`; there is a second at `:175` pointing at
+  `terminal_lock` (`output.rs`) by name. Both rewritten to name the facade.
+- The unterminated-final-chunk fix was NOT made here, per the doc's Resolved
+  Decision of 2026-09-16. Phase 5 owns it.
+
+### Tradeoffs
+
+- **Byte-identity is asserted over a fixture matrix, not over the whole test
+  suite's output.** Method: build the binary at `1526d4c` and at this tree,
+  run 12 invocations (chatty/quiet/failing/buffered-foreach/fan-out/fan-out
+  with `--no-prefix`/`Graph`/`--help`/`--tasks`/`--list-subtasks`/unknown
+  task/missing ottofile) against isolated `OTTO_HOME`s with `NO_COLOR=1`,
+  capture stdout and stderr separately, normalize only the run-directory path
+  (which embeds a timestamp), and `cmp`. All 36 captures matched. The two
+  fan-out fixtures are compared as a sorted multiset of lines, not byte-exact,
+  because task interleaving across independent tasks is nondeterministic on
+  BOTH binaries: a control run of the Phase 1 binary against ITSELF already
+  differed byte-wise there and matched sorted. The control run is part of the
+  method, not a footnote — without it, "sorted" would be an unexplained
+  weakening of the criterion.
+- The facade's unit tests write zero-length strings rather than capturing a
+  sink. Testing the ordering invariant needs the lock, not the bytes, and
+  injecting a sink would mean the production path and the tested path are
+  different code. The cost: `write`'s actual byte delivery is covered only by
+  the fixture matrix and the existing end-to-end suite, not by a unit test.
+- `a_write_cannot_complete_while_a_block_is_open` asserts from the safe
+  direction (a write CANNOT finish while a block is open, so a failure is
+  always real; a scheduling hiccup can only make it pass without racing). The
+  alternative — sampling a shared flag from outside the write — is what the
+  first draft did, and it failed 9 times out of 200 because the sample happens
+  after the lock is already released.
+
+### Open questions
+
+- `app.rs`'s second-signal `eprintln!` and `main.rs`'s two error prints are
+  still raw macros. They are outside the canonical writer grep's scope
+  (`src/executor/`), which looks deliberate, but "the facade is the ONLY
+  terminal writer" and "these three are exempt" cannot both be true. If they
+  should route too, that is a one-line change per site in a later phase.
+- The doc's Lifecycle section lists a FIRST-SIGINT teardown as its own path
+  ("`before_exit` does NOT fire here, so this path needs its own teardown
+  call"), but Phase 2's bullet enumerates only three sites and does not include
+  it. Not added here. On the plain path a first signal still reaches
+  `facade.teardown()` through the normal return into `auto_prune`, so nothing
+  is currently unguarded; the ordering the doc wants (teardown before
+  `flush_cancelled_groups` prints) is a Phase 4/5 concern once there is a
+  region to erase.

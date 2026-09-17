@@ -5,6 +5,7 @@ use std::env;
 use std::path::Path;
 use std::process::Command;
 
+use super::progress::{Stream, facade};
 use super::task::{DAG, Task};
 use crate::cfg::task::{ForeachSpec, TaskSpecs};
 use crate::cli::Parser;
@@ -106,7 +107,12 @@ impl DagVisualizer {
         let visualizer = DagVisualizer::new(options);
         let result = visualizer.visualize(&dag, original_specs)?;
 
-        println!("{result}");
+        // Through the facade like every other otto-authored terminal write:
+        // this builtin prints while nothing else is running today, but the
+        // rule is "no ad-hoc writers", not "no ad-hoc writers that currently
+        // race". `visualize` returns the graph with no trailing newline, so the
+        // line terminator the macro used to add is added here.
+        facade().write(Stream::Stdout, &format!("{result}\n"));
 
         Ok(())
     }

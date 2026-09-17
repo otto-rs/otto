@@ -232,6 +232,11 @@ async fn main() {
     };
 
     if let Err(e) = otto::run(config).await {
+        // Before the error is printed, never after: clearing what the facade
+        // holds after `report_fatal` would erase the error it just wrote. This
+        // path calls `exit` and so unwinds nothing, which is why teardown is an
+        // explicit call and not a `Drop`.
+        otto::executor::progress::facade().teardown();
         report_fatal(&e);
         std::process::exit(1);
     }

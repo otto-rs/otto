@@ -27,7 +27,8 @@ use super::{
     action::{ActionProcessor, ProcessedAction},
     clocks::{TaskClock, TaskClocks},
     colors::{set_global_task_order, stderr_takes_color, stream_task_label},
-    output::{OutputType, TaskMessage, TaskStreams, TuiTaskStatus, format_terminal_output, terminal_lock},
+    output::{OutputType, TaskMessage, TaskStreams, TuiTaskStatus, format_terminal_output},
+    progress::{Stream, facade},
     workspace::{ExecutionContext, Workspace},
 };
 use crate::cfg::edge::When;

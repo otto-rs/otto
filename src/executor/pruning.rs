@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use crate::executor::layout::parse_project_dir_name;
+use crate::executor::progress::{Stream, facade};
 
 /// How recently a cached script may have been touched and still be considered in
 /// use. A run that has written its cache entry but not yet its symlink looks
@@ -173,8 +174,14 @@ pub async fn auto_prune(otto_home: &Path, retention: &RetentionSpec) {
 /// Still a `warn!` as well, so the log keeps the whole history.
 fn report_prune_failure(detail: &str) {
     warn!("Auto-prune failed: {detail}");
-    eprintln!("otto: auto-prune failed: {detail}");
-    eprintln!("otto: old runs under $OTTO_HOME are not being cleaned up; `otto Clean --dry-run` shows what is there");
+    // One facade write, not two: these two lines are one message, and a
+    // concurrently replayed block must not land between them.
+    facade().write(
+        Stream::Stderr,
+        &format!(
+            "otto: auto-prune failed: {detail}\notto: old runs under $OTTO_HOME are not being cleaned up; `otto Clean --dry-run` shows what is there\n"
+        ),
+    );
 }
 
 /// Remove orphaned cache entries that are no longer referenced by any run.

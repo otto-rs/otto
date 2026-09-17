@@ -1,5 +1,4 @@
 use std::{
-    io::{self, Write},
     path::{Path, PathBuf},
     sync::Arc,
     time::SystemTime,
@@ -16,38 +15,13 @@ use tokio::{
 use super::{
     clocks::TaskClock,
     colors::{stderr_takes_color, stream_task_label},
+    progress::{Stream, facade},
 };
 
 /// Capacity of a task's output broadcast channel. Large because a chatty task can
 /// emit thousands of lines before a slow subscriber (the TUI) drains them, and a
 /// lagged broadcast subscriber loses messages rather than blocking the producer.
 const TASK_OUTPUT_CHANNEL_CAPACITY: usize = 10_000;
-
-/// Process-wide terminal lock. Every site that writes to otto's own stdout or
-/// stderr takes it, so a buffered-foreach block can be replayed as one
-/// contiguous run of lines without a concurrently running task's output, status
-/// line, skip message, failure message, or the run-cancelled message landing in
-/// the middle of it.
-///
-/// Naming `TeeWriter` alone would not have been enough: five of the seven
-/// terminal-writing sites are in the scheduler, not here (design doc
-/// `2026-08-31-buffered-foreach-computed-envs-required-params.md`, Phase 4).
-/// Live writers take it per write; replay holds it for one whole block.
-///
-/// A `std::sync::Mutex` on purpose: it is only ever held across synchronous
-/// writes, never across an `.await`, and replay runs inside `spawn_blocking`
-/// where blocking is the point.
-static TERMINAL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-/// Take the process-wide terminal lock.
-///
-/// Poisoning is recovered rather than propagated: the lock guards nothing but
-/// write ordering, so a panic while it was held leaves no invariant broken, and
-/// refusing to print for the rest of the run would be a worse failure than an
-/// interleaved line.
-pub(crate) fn terminal_lock() -> std::sync::MutexGuard<'static, ()> {
-    TERMINAL_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-}
 
 /// Type of output stream
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -192,26 +166,13 @@ impl TeeWriter {
             let takes_color = !self.is_stderr || stderr_takes_color();
             // Write to terminal, with or without the colored task name prefix
             let terminal_output = format_terminal_output(&self.task_name, data, self.no_prefix, takes_color);
-            // Held across the write and its flush, never across an `.await`:
-            // this is one of the seven sites a replayed block must not be split
-            // by. Per write here, for one whole block in the replay path.
-            let _terminal = terminal_lock();
-            if self.is_stderr {
-                eprint!("{terminal_output}");
-            } else {
-                print!("{terminal_output}");
-            }
-
-            // Flushing per write (rather than batching) is deliberate: task
-            // output is interleaved with the scheduler's own status lines, and
-            // buffering here would let a chatty task's lines arrive out of
-            // order relative to those. The syscall cost is accepted for that
-            // ordering guarantee.
-            if self.is_stderr {
-                io::stderr().flush()?;
-            } else {
-                io::stdout().flush()?;
-            }
+            // One facade write per line, never across an `.await`: this is one
+            // of the sites a replayed block must not be split by. Per write
+            // here, for one whole block in the replay path. The facade flushes,
+            // which is what keeps a chatty task's lines in order against the
+            // scheduler's own status lines.
+            let stream = if self.is_stderr { Stream::Stderr } else { Stream::Stdout };
+            facade().write(stream, &terminal_output);
         }
 
         Ok(())

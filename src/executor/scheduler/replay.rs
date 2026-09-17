@@ -376,72 +376,78 @@ fn truncation_marker(block: &ReplayBlock, issue: &DrainIssue) -> String {
 /// Write a batch of blocks, and an optional notice ahead of them, as one
 /// contiguous run of terminal output.
 ///
-/// Runs inside `spawn_blocking`: the process-wide terminal lock is taken and
-/// released entirely inside this function, using `std::fs` and locked
-/// `io::stdout()`/`io::stderr()`. Doing this inline in the `execute_all` ready
-/// loop would stall a tokio worker and starve every concurrent task, and the
-/// block cannot be assembled with `.await` points inside the lock.
+/// Runs inside `spawn_blocking`: the facade block is entered and left entirely
+/// inside this function, using `std::fs` and the two locked handles the facade
+/// hands over. Doing this inline in the `execute_all` ready loop would stall a
+/// tokio worker and starve every concurrent task, and the block cannot be
+/// assembled with `.await` points inside the facade block.
+///
+/// ONE facade block for the whole batch, never one per line: that is what makes
+/// a replayed group contiguous, and it is also what keeps a later renderer from
+/// suspending and redrawing once per chatty line.
 fn write_replay_blocks(notice: Option<String>, blocks: Vec<ReplayBlock>, no_prefix: bool) {
     // A replayed stderr log is still stderr: prefixing it with the decision
-    // `colored` made about stdout is the same leak the live leg had.
+    // `colored` made about stdout is the same leak the live leg had. Read
+    // before the block is entered: it is a terminal question, not a write.
     let err_takes_color = stderr_takes_color();
-    let _terminal = terminal_lock();
-    let stdout = io::stdout();
-    let stderr = io::stderr();
-    let mut out = stdout.lock();
-    let mut err = stderr.lock();
+    facade().block(|streams| {
+        // Rebound as locals so the body below reads exactly as it did under the
+        // raw handles; the facade owns the lock, not the shape of the writes.
+        let mut out = &mut *streams.out;
+        let mut err = &mut *streams.err;
 
-    // Every write is best-effort: a closed pipe must not take the run down from
-    // the display path, and there is nowhere left to report it to.
-    if let Some(notice) = notice {
-        let _ = err.write_all(notice.as_bytes());
-        let _ = err.flush();
-    }
+        // Every write is best-effort: a closed pipe must not take the run down from
+        // the display path, and there is nowhere left to report it to.
+        if let Some(notice) = notice {
+            let _ = err.write_all(notice.as_bytes());
+            let _ = err.flush();
+        }
 
-    for block in blocks {
-        match block.kind {
-            BlockKind::Logs => {
-                let _ = stream_log(&mut out, &block.stdout_log, &block.task_name, no_prefix, true);
-                let _ = out.flush();
-                let _ = stream_log(
-                    &mut err,
-                    &block.stderr_log,
-                    &block.task_name,
-                    no_prefix,
-                    err_takes_color,
-                );
-                for issue in &block.drain {
-                    let _ = err.write_all(truncation_marker(&block, issue).as_bytes());
+        for block in blocks {
+            match block.kind {
+                BlockKind::Logs => {
+                    let _ = stream_log(&mut out, &block.stdout_log, &block.task_name, no_prefix, true);
+                    let _ = out.flush();
+                    let _ = stream_log(
+                        &mut err,
+                        &block.stderr_log,
+                        &block.task_name,
+                        no_prefix,
+                        err_takes_color,
+                    );
+                    for issue in &block.drain {
+                        let _ = err.write_all(truncation_marker(&block, issue).as_bytes());
+                    }
+                    let _ = err.flush();
                 }
-                let _ = err.flush();
+                BlockKind::KilledPaths => {
+                    let _ = err.write_all(
+                        format!(
+                            "otto: {} was killed mid-run; its logs are partial and are not replayed: {} {}\n",
+                            block.task_name,
+                            block.stdout_log.display(),
+                            block.stderr_log.display()
+                        )
+                        .as_bytes(),
+                    );
+                    let _ = err.flush();
+                }
+                BlockKind::DidNotStart => {
+                    let _ = err.write_all(format!("otto: {} did not start\n", block.task_name).as_bytes());
+                    let _ = err.flush();
+                }
             }
-            BlockKind::KilledPaths => {
-                let _ = err.write_all(
-                    format!(
-                        "otto: {} was killed mid-run; its logs are partial and are not replayed: {} {}\n",
-                        block.task_name,
-                        block.stdout_log.display(),
-                        block.stderr_log.display()
-                    )
-                    .as_bytes(),
-                );
-                let _ = err.flush();
-            }
-            BlockKind::DidNotStart => {
-                let _ = err.write_all(format!("otto: {} did not start\n", block.task_name).as_bytes());
-                let _ = err.flush();
+            if let Some(line) = block.status_line {
+                if block.status_to_stderr {
+                    let _ = err.write_all(line.as_bytes());
+                    let _ = err.flush();
+                } else {
+                    let _ = out.write_all(line.as_bytes());
+                    let _ = out.flush();
+                }
             }
         }
-        if let Some(line) = block.status_line {
-            if block.status_to_stderr {
-                let _ = err.write_all(line.as_bytes());
-                let _ = err.flush();
-            } else {
-                let _ = out.write_all(line.as_bytes());
-                let _ = out.flush();
-            }
-        }
-    }
+    });
 }
 
 impl<F: FileSystem + 'static> TaskScheduler<F> {
@@ -449,8 +455,8 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
     ///
     /// Called from all four terminal-transition sites. For a buffered subtask
     /// the line is stashed and travels with the block; for everything else it
-    /// prints immediately, now under the process-wide terminal lock so it can
-    /// never land in the middle of someone else's replayed block.
+    /// prints immediately, through the facade so it can never land in the
+    /// middle of someone else's replayed block.
     async fn report_status_line(
         &self,
         cursor: &mut ReplayCursor,
@@ -476,14 +482,8 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
         if self.tui_mode {
             return;
         }
-        let _terminal = terminal_lock();
-        if to_stderr {
-            eprint!("{line}");
-            io::stderr().flush().unwrap_or(());
-        } else {
-            print!("{line}");
-            io::stdout().flush().unwrap_or(());
-        }
+        let stream = if to_stderr { Stream::Stderr } else { Stream::Stdout };
+        facade().write(stream, &line);
     }
 
     /// Emit every block that is now unblocked in `task_name`'s group: the
