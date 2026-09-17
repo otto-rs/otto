@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use std::{
+    os::fd::{AsRawFd, FromRawFd, OwnedFd},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -8,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use super::{Facade, ProgressMode, Stream, facade};
+use super::{Facade, ProgressMode, Stream, facade, reset_targets, share_destination};
 use crate::executor::clocks::TaskClocks;
 
 /// The whole reason the facade owns a lock: two callers cannot be inside a
@@ -174,6 +175,153 @@ fn two_handles_on_one_destination_share_one_line_state() {
     assert!(
         f.line_start(Stream::Stdout),
         "a newline on stderr put the shared cursor back at column zero"
+    );
+}
+
+/// The `fstat` triple answers "same open file", and a terminal reached through
+/// two device files is one terminal with two open files: `/dev/tty` and the pts
+/// slave share a cursor and share nothing else. Two ptys stand in for that pair
+/// here - `/dev/tty` is not addressable from a unit test, which has no
+/// controlling terminal of its own to speak of - and they make the same point
+/// the same way: both are terminals, neither triple matches, and otto's two
+/// handles are never on two different terminals in any invocation it sees.
+///
+/// Measured before the fix, with the real pair, in
+/// `tests/progress_shared_terminal_test.rs`: `[t] ERR[t] finished successfully`.
+#[test]
+fn two_terminals_are_one_destination_whatever_fstat_says() {
+    let (_a_master, a) = pty_slave();
+    let (_b_master, b) = pty_slave();
+    assert_ne!(
+        identity(&a),
+        identity(&b),
+        "the fixture needs two terminals that DISAGREE on the fstat triple, or it proves nothing"
+    );
+    assert!(
+        share_destination(a.as_raw_fd(), b.as_raw_fd()),
+        "two terminals are one terminal, and one cursor"
+    );
+}
+
+/// The other side of the same predicate, and the regression the per-stream line
+/// state exists for: files are not terminals, so a captured run never reaches
+/// the terminal test and stays decoupled.
+#[test]
+fn two_separate_files_are_not_one_destination() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let out = std::fs::File::create(temp.path().join("out.log")).unwrap();
+    let err = std::fs::File::create(temp.path().join("err.log")).unwrap();
+    assert!(
+        !share_destination(out.as_raw_fd(), err.as_raw_fd()),
+        "`> out 2> err` is two cursors"
+    );
+}
+
+/// And `> log 2>&1`, spelled as the two independent opens it can also be: one
+/// file, so one cursor, so one line state.
+#[test]
+fn one_file_reached_by_two_handles_is_one_destination() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let path = temp.path().join("both.log");
+    let out = std::fs::File::create(&path).unwrap();
+    let err = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+    assert!(
+        share_destination(out.as_raw_fd(), err.as_raw_fd()),
+        "both handles on one file share its cursor"
+    );
+}
+
+/// A pty master/slave pair, of which the caller wants the slave and has to keep
+/// the master alive to hold it open.
+fn pty_slave() -> (OwnedFd, OwnedFd) {
+    let mut master_fd = 0;
+    let mut slave_fd = 0;
+    // Safe: both out-params are written on success and nothing else is passed
+    // in.
+    let rc = unsafe {
+        libc::openpty(
+            &mut master_fd,
+            &mut slave_fd,
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    assert_eq!(rc, 0, "openpty failed: {}", std::io::Error::last_os_error());
+    // Safe: `openpty` just handed both fds over and nothing else owns them.
+    unsafe { (OwnedFd::from_raw_fd(master_fd), OwnedFd::from_raw_fd(slave_fd)) }
+}
+
+/// The `(device, inode, rdev)` triple `share_destination` compares, read the
+/// long way round so the test does not reach into its private helper.
+fn identity(fd: &OwnedFd) -> (u64, u64, u64) {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::File::from(fd.try_clone().expect("dup the fd"))
+        .metadata()
+        .expect("fstat the fd");
+    (meta.dev(), meta.ino(), meta.rdev())
+}
+
+/// A `tty:` child inherits BOTH of otto's streams, so the terminal whose SGR
+/// state it left open is whichever of them is a terminal. Gating the whole
+/// reset on stderr left `otto owner 2>log` red for the rest of the run
+/// (measured, audit round 2), which is the second row here.
+#[test]
+fn a_reset_goes_to_whichever_handle_is_a_terminal() {
+    assert_eq!(
+        reset_targets(false, true, false),
+        vec![Stream::Stderr],
+        "a terminal stderr with stdout captured"
+    );
+    assert_eq!(
+        reset_targets(true, false, false),
+        vec![Stream::Stdout],
+        "`otto owner 2>log`: the terminal the child dirtied is stdout"
+    );
+    assert_eq!(
+        reset_targets(true, true, true),
+        vec![Stream::Stderr],
+        "one terminal, one cursor, one reset"
+    );
+    assert_eq!(
+        reset_targets(false, false, false),
+        Vec::<Stream>::new(),
+        "a fully captured run has no attributes to reset and must gain no escape bytes"
+    );
+}
+
+/// Both handback paths, because there are two and only one of them had the
+/// reset: `teardown` drained held output on its own, and `abandon_run` reaches
+/// it on the first SIGINT. A teardown that takes the held output first leaves
+/// the handoff's later `Drop` with `None`, so `reclaim` returns before the
+/// reset - which is the third assertion below.
+#[test]
+fn both_handback_paths_close_the_childs_sgr_state() {
+    let temp = tempfile::TempDir::new().unwrap();
+
+    let reclaimed = Facade::with_one_destination(false);
+    let handoff = reclaimed.surrender("owner", temp.path().join("reclaim.log"));
+    assert_eq!(reclaimed.sgr_resets(), 0, "nothing has been handed back yet");
+    drop(handoff);
+    assert_eq!(
+        reclaimed.sgr_resets(),
+        1,
+        "the normal handback closes the child's SGR state"
+    );
+
+    let torn_down = Facade::with_one_destination(false);
+    let handoff = torn_down.surrender("owner", temp.path().join("teardown.log"));
+    torn_down.teardown();
+    assert_eq!(
+        torn_down.sgr_resets(),
+        1,
+        "teardown is a handback too: it is where a first SIGINT takes the terminal back"
+    );
+    drop(handoff);
+    assert_eq!(
+        torn_down.sgr_resets(),
+        1,
+        "and the handoff's Drop then finds nothing held, which is the window the reset was missing from"
     );
 }
 

@@ -1,5 +1,7 @@
 #![cfg(test)]
 
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
 use super::*;
 use crate::executor::clocks::TaskClocks;
 
@@ -192,6 +194,152 @@ fn a_renderer_panic_is_caught_and_the_write_still_happens_exactly_once() {
         "a retired region has nothing on the screen to suspend"
     );
     // None of these may panic either: every one of them reaches indicatif.
+    region.refresh();
+    region.erase();
+    region.rearm();
+    region.finished("a");
+}
+
+/// A terminal that works until the suspended write happens and fails from then
+/// on, which is the only way to reach the SECOND of indicatif's two unwraps.
+///
+/// [`BrokenTerm`] fails every call, so `clear().unwrap()` always trips first
+/// and `draw(...).unwrap()` after the closure is unreachable from it - measured
+/// during the round-2 audit: the panic lands at `indicatif-0.18.3
+/// src/multi.rs:389:25`, the clear. The two sides of the exactly-once guarantee
+/// are different code (`pending.take()` before, `done` after), so each needs
+/// its own fixture.
+/// What the fixture and the terminal share: indicatif takes the `TermLike` by
+/// `Box`, so the test keeps its own handle on the state rather than on the
+/// terminal.
+#[derive(Debug, Default)]
+struct TermState {
+    /// Flipped by the suspended closure, so the clear sees a working terminal
+    /// and the redraw after it does not.
+    failing: AtomicBool,
+    /// Operations that returned `Ok`, and operations that returned `Err`. They
+    /// are what makes the fixture checkable rather than assumed: a rise in
+    /// `succeeded` between entering `suspend` and reaching the closure is the
+    /// clear having run to completion, and a rise in `failed` after the closure
+    /// is the redraw being the unwrap that tripped.
+    succeeded: AtomicUsize,
+    failed: AtomicUsize,
+}
+
+#[derive(Debug)]
+struct FailsAfterTheClear {
+    state: Arc<TermState>,
+}
+
+impl FailsAfterTheClear {
+    fn op(&self) -> std::io::Result<()> {
+        if self.state.failing.load(Ordering::SeqCst) {
+            self.state.failed.fetch_add(1, Ordering::SeqCst);
+            Err(std::io::Error::other(
+                "deliberate: the terminal hung up AFTER the suspended write",
+            ))
+        } else {
+            self.state.succeeded.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+}
+
+impl indicatif::TermLike for FailsAfterTheClear {
+    fn width(&self) -> u16 {
+        80
+    }
+
+    fn height(&self) -> u16 {
+        24
+    }
+
+    fn move_cursor_up(&self, _: usize) -> std::io::Result<()> {
+        self.op()
+    }
+
+    fn move_cursor_down(&self, _: usize) -> std::io::Result<()> {
+        self.op()
+    }
+
+    fn move_cursor_right(&self, _: usize) -> std::io::Result<()> {
+        self.op()
+    }
+
+    fn move_cursor_left(&self, _: usize) -> std::io::Result<()> {
+        self.op()
+    }
+
+    fn write_line(&self, _: &str) -> std::io::Result<()> {
+        self.op()
+    }
+
+    fn write_str(&self, _: &str) -> std::io::Result<()> {
+        self.op()
+    }
+
+    fn clear_line(&self) -> std::io::Result<()> {
+        self.op()
+    }
+
+    fn flush(&self) -> std::io::Result<()> {
+        self.op()
+    }
+}
+
+/// The other side of `a_renderer_panic_is_caught_and_the_write_still_happens_exactly_once`:
+/// a panic AFTER the suspended write must not run it a second time.
+///
+/// This is the half `Region::suspend`'s `done` slot exists for. With the write
+/// already made, re-running the closure is not a lost line but a duplicated
+/// one, and the fallback that covers the first half would do exactly that if it
+/// could not tell the two cases apart.
+#[test]
+fn a_panic_after_the_suspended_write_does_not_run_it_again() {
+    let term = Arc::new(TermState::default());
+    let target = indicatif::ProgressDrawTarget::term_like(Box::new(FailsAfterTheClear {
+        state: Arc::clone(&term),
+    }));
+    let mut region = Region::with_draw_target(&names(&["a"]), target);
+    region.started("a", clock("a"));
+    assert!(
+        region.is_drawn(),
+        "the fixture needs a drawn region, or `suspend` short-circuits and proves nothing"
+    );
+
+    let before = term.succeeded.load(Ordering::SeqCst);
+    let mut writes = 0;
+    let mut cleared = 0;
+    let value = region.suspend(|| {
+        writes += 1;
+        cleared = term.succeeded.load(Ordering::SeqCst) - before;
+        // From here on the terminal is gone, so indicatif's post-closure
+        // `draw(...).unwrap()` is the unwrap that trips.
+        term.failing.store(true, Ordering::SeqCst);
+        "the plain write"
+    });
+    assert_eq!(value, "the plain write", "the closure's value must still come back");
+    assert!(
+        cleared > 0,
+        "the clear never reached the terminal, so this fixture is the PRE-write unwrap again"
+    );
+    assert!(
+        term.failed.load(Ordering::SeqCst) > 0,
+        "nothing failed after the write, so the post-write unwrap was never reached"
+    );
+    assert_eq!(
+        writes, 1,
+        "the suspended write ran twice: a panic AFTER it re-ran the closure, duplicating output"
+    );
+    assert!(
+        region.is_retired(),
+        "a renderer that panicked must be retired; indicatif does not recover its own poisoned lock"
+    );
+
+    // Same tail as the pre-write fixture: every one of these reaches indicatif.
+    let mut later = 0;
+    region.suspend(|| later += 1);
+    assert_eq!(later, 1, "a retired region still writes, plainly");
     region.refresh();
     region.erase();
     region.rearm();

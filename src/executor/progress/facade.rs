@@ -128,11 +128,15 @@ pub struct Facade {
     /// Whether otto's stdout and stderr resolve to the SAME open destination -
     /// one terminal, or one file both were redirected to.
     ///
-    /// Decided once, from `fstat`, because it is a property of how otto was
-    /// invoked and cannot change mid-run. When it holds, the two streams share
-    /// one cursor and so share one line state; when it does not, a newline
-    /// written to one says nothing about where the other is.
+    /// Decided once, by [`share_destination`], because it is a property of how
+    /// otto was invoked and cannot change mid-run. When it holds, the two
+    /// streams share one cursor and so share one line state; when it does not,
+    /// a newline written to one says nothing about where the other is.
     one_destination: bool,
+    /// How many times [`Facade::reset_attributes`] has run. See
+    /// [`Facade::sgr_resets`] for why it is test-only.
+    #[cfg(test)]
+    sgr_resets: std::sync::atomic::AtomicUsize,
 }
 
 /// The one facade. A `OnceLock` rather than a threaded parameter, mirroring the
@@ -191,6 +195,8 @@ impl Facade {
             region: Mutex::new(None),
             at_line_start: [AtomicBool::new(true), AtomicBool::new(true)],
             one_destination,
+            #[cfg(test)]
+            sgr_resets: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -487,6 +493,14 @@ impl Facade {
         // the last writer, so it is also the last chance.
         let held = self.terminal().take();
         if let Some(held) = held {
+            // The SECOND handback path, and it needs the same reset the first
+            // one does: `abandon_run` calls teardown on the first SIGINT, and a
+            // teardown that takes the held output first leaves the handoff's
+            // later `Drop` with `None`, so `reclaim` returns before it ever gets
+            // to the reset. A cancelled run that was holding a `tty:` child's
+            // open SGR state would then print everything after it in the
+            // child's colour.
+            self.reset_attributes();
             let stdout = io::stdout();
             let stderr = io::stderr();
             held.drain_into(&mut stdout.lock(), &mut stderr.lock());
@@ -573,11 +587,35 @@ impl Facade {
     /// Only onto a terminal, and never through [`Facade::note_written`]: a
     /// reset moves no cursor, so it changes no line state, and a captured
     /// stream has no attributes to reset and must not gain escape bytes.
+    ///
+    /// Whichever handles are terminals, not stderr alone. A `tty:` child
+    /// inherits BOTH of otto's streams, so the terminal it dirtied is whichever
+    /// one is one: gating the whole reset on stderr left `otto owner 2>log` on
+    /// a terminal stdout red through every line of the rest of the run
+    /// (measured, audit round 2).
     fn reset_attributes(&self) {
-        if !io::stderr().is_terminal() {
-            return;
+        #[cfg(test)]
+        self.sgr_resets.fetch_add(1, Ordering::Relaxed);
+        for stream in reset_targets(
+            io::stdout().is_terminal(),
+            io::stderr().is_terminal(),
+            self.one_destination,
+        ) {
+            raw_write(stream, "\x1b[0m");
         }
-        raw_write(REGION_STREAM, "\x1b[0m");
+    }
+
+    /// How many times a handback has closed SGR state, for the tests that pin
+    /// BOTH handback paths.
+    ///
+    /// Test-only, and a count rather than the bytes: under `cargo test` neither
+    /// of otto's handles is a terminal, so [`Facade::reset_attributes`] writes
+    /// nothing and there is nothing on a terminal to read back. The defect this
+    /// exists for was a missing CALL SITE, so the call is what has to be
+    /// observable.
+    #[cfg(test)]
+    pub(super) fn sgr_resets(&self) -> usize {
+        self.sgr_resets.load(Ordering::Relaxed)
     }
 
     /// Take what is currently held without writing it anywhere.
@@ -594,20 +632,63 @@ impl Facade {
     }
 }
 
+/// Which of otto's own handles a defensive reset goes to, given which of them
+/// are terminals.
+///
+/// A pure predicate rather than three `is_terminal()` calls inside the write,
+/// so every combination is assertable without a terminal.
+///
+/// Once per DESTINATION, not once per handle: two handles on one terminal share
+/// one cursor and one set of attributes, so the second reset would be three
+/// more bytes saying what the first already said. Stderr leads because it is
+/// [`REGION_STREAM`], which is the handle the rows are about to come back on.
+fn reset_targets(stdout_is_terminal: bool, stderr_is_terminal: bool, one_destination: bool) -> Vec<Stream> {
+    let mut targets = Vec::new();
+    if stderr_is_terminal {
+        targets.push(Stream::Stderr);
+    }
+    if stdout_is_terminal && !(stderr_is_terminal && one_destination) {
+        targets.push(Stream::Stdout);
+    }
+    targets
+}
+
 /// Whether otto's own stdout and stderr land on the same open destination.
 ///
-/// `fstat` on both handles and compare the device, inode and rdev: one
-/// terminal answers the same triple twice, `> log 2>&1` answers the same
-/// triple twice, and two pipes, two files, or a file and a terminal do not.
-/// That is exactly the question the facade's line state has to answer, and it
-/// is a question about the invocation rather than about the bytes, so it is
+/// It is a question about the invocation rather than about the bytes, so it is
 /// asked once.
+fn streams_share_destination() -> bool {
+    share_destination(libc::STDOUT_FILENO, libc::STDERR_FILENO)
+}
+
+/// [`streams_share_destination`] against two GIVEN fds, so a test can hand it a
+/// pair it opened itself instead of being at the mercy of how the harness wired
+/// the process's own handles.
+///
+/// Two tests, in this order:
+///
+/// 1. BOTH fds are terminals. Then they are the same terminal, and the same
+///    cursor. otto is never invoked with its two streams on two different
+///    terminals, and the alternative to assuming that is being wrong about the
+///    case that IS invoked: `otto >/dev/tty` on the terminal whose pts slave is
+///    otto's stderr is one cursor reached through two device files, and the two
+///    fds answer different `fstat` triples - `/dev/tty` is the `(5,0)` character
+///    device and the slave is a `devpts` inode. Measured: `(7,12,1280)` versus
+///    `(146,3,34816)`.
+/// 2. Otherwise, `fstat` both and compare the device, inode and rdev. `> log
+///    2>&1` answers the same triple twice, and two pipes, two files, or a file
+///    and a terminal do not. Files are not terminals, so test 1 never reaches
+///    this case and every capture stays decoupled.
 ///
 /// A handle that cannot be `fstat`ed is treated as NOT shared: the cost of
 /// guessing wrong that way is a missing newline on one line, and the cost of
 /// guessing wrong the other way is a spurious newline in a captured stream,
 /// which is the regression this replaces.
-fn streams_share_destination() -> bool {
+fn share_destination(out_fd: i32, err_fd: i32) -> bool {
+    fn is_terminal(fd: i32) -> bool {
+        // Safe: `isatty` only asks the kernel about the fd and writes nothing.
+        unsafe { libc::isatty(fd) == 1 }
+    }
     fn identity(fd: i32) -> Option<(libc::dev_t, libc::ino_t, libc::dev_t)> {
         let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
         // Safe: `fstat` writes the whole `struct stat` on success and touches
@@ -620,7 +701,10 @@ fn streams_share_destination() -> bool {
         let stat = unsafe { stat.assume_init() };
         Some((stat.st_dev, stat.st_ino, stat.st_rdev))
     }
-    match (identity(libc::STDOUT_FILENO), identity(libc::STDERR_FILENO)) {
+    if is_terminal(out_fd) && is_terminal(err_fd) {
+        return true;
+    }
+    match (identity(out_fd), identity(err_fd)) {
         (Some(out), Some(err)) => out == err,
         _ => false,
     }

@@ -953,6 +953,11 @@ fn test_otto_name_and_about_reach_help_output() {
 /// of them happens to be in flight - observed once, under `cargo llvm-cov`'s
 /// scheduling and not under plain `cargo test`. Any future test that pins
 /// rendered global help needs the same attribute.
+///
+/// And the other direction, which is equally load-bearing: the snapshot pins
+/// `[env: OTTOFILE=]` and `[env: OTTO_PROGRESS_INTERVAL=]` as well, so a future
+/// test that sets EITHER of those on the process needs the `otto_progress`
+/// serial key, whatever else it is about.
 #[test]
 #[serial_test::parallel(otto_progress)]
 fn test_help_global_flags_no_drift() {

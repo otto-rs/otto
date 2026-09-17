@@ -1572,7 +1572,8 @@ fn test_progress_always_is_rejected_not_silently_accepted() {
     );
 }
 
-/// Set `OTTO_PROGRESS` for the length of a test and take it back off again.
+/// Set `OTTO_PROGRESS` for the length of a test and put back whatever was
+/// there before.
 ///
 /// clap resolves the variable inside `Parser::parse`, so there is no seam that
 /// takes it as an argument and the only way to exercise the env layer is to
@@ -1580,24 +1581,83 @@ fn test_progress_always_is_rejected_not_silently_accepted() {
 /// carries `#[serial_test::serial(otto_progress)]`: a concurrent `parse` in
 /// another test would see the variable too and resolve a different setting.
 ///
-/// The removal is in `Drop` so a failing assertion still cleans up. A leaked
+/// The restore is in `Drop` so a failing assertion still cleans up. A leaked
 /// `OTTO_PROGRESS` would make the next test in the group lie rather than fail.
-struct OttoProgressEnv;
+/// It restores rather than removes: a developer running the suite with
+/// `OTTO_PROGRESS` exported would otherwise have it stripped for the rest of
+/// the process by the first test in the group.
+struct OttoProgressEnv {
+    /// What `OTTO_PROGRESS` held before this guard set it. `None` is the usual
+    /// case - the variable is not normally set - and restores as a removal.
+    prior: Option<std::ffi::OsString>,
+}
 
 impl OttoProgressEnv {
     fn set(value: &str) -> Self {
-        // SAFETY: the serial group keeps this the only thread touching the
-        // environment for the duration of the test.
+        let prior = std::env::var_os("OTTO_PROGRESS");
+        // SAFETY: `set_var` is unsafe because a concurrent read of the
+        // environment on another thread is a data race, and `serial_test` does
+        // NOT rule that out. All it does is serialize the `otto_progress` group
+        // against itself and keep `#[serial_test::parallel(otto_progress)]`
+        // tests from running alongside the group; every other test in this
+        // binary keeps running, and the ones that call `Parser::parse` do read
+        // the environment, because that is where clap resolves an `[env: ...]`
+        // value from.
+        //
+        // What the group buys is the part that is otto's to control: nothing
+        // else in the suite WRITES `OTTO_PROGRESS` (`rg 'set_var\(' src/ tests/`
+        // finds this guard and nothing else), and the one snapshot that renders
+        // the variable's current value carries the group's `parallel` key, so it
+        // cannot read a value one of these tests set.
         unsafe { std::env::set_var("OTTO_PROGRESS", value) };
-        Self
+        Self { prior }
     }
 }
 
 impl Drop for OttoProgressEnv {
     fn drop(&mut self) {
-        // SAFETY: as above.
-        unsafe { std::env::remove_var("OTTO_PROGRESS") };
+        match self.prior.take() {
+            // SAFETY: as above.
+            Some(prior) => unsafe { std::env::set_var("OTTO_PROGRESS", prior) },
+            // SAFETY: as above.
+            None => unsafe { std::env::remove_var("OTTO_PROGRESS") },
+        }
     }
+}
+
+/// The guard has to put back what it found, not just clear the variable: a
+/// suite run with `OTTO_PROGRESS` exported would otherwise lose it at the first
+/// test in the group, and every later test that reads it would be reading the
+/// guard's cleanup rather than the developer's environment.
+#[test]
+#[serial_test::serial(otto_progress)]
+fn the_env_guard_puts_back_what_it_found() {
+    // SAFETY: same reasoning as `OttoProgressEnv::set`, and this test is in the
+    // same serial group.
+    unsafe { std::env::set_var("OTTO_PROGRESS", "auto") };
+    {
+        let _env = OttoProgressEnv::set("never");
+        assert_eq!(
+            std::env::var("OTTO_PROGRESS").as_deref(),
+            Ok("never"),
+            "the guard is what the precedence tests read"
+        );
+    }
+    assert_eq!(
+        std::env::var("OTTO_PROGRESS").as_deref(),
+        Ok("auto"),
+        "an inherited value has to come back"
+    );
+
+    // SAFETY: as above.
+    unsafe { std::env::remove_var("OTTO_PROGRESS") };
+    {
+        let _env = OttoProgressEnv::set("never");
+    }
+    assert!(
+        std::env::var_os("OTTO_PROGRESS").is_none(),
+        "and the usual case, unset, has to stay unset"
+    );
 }
 
 /// The MIDDLE layer of `flag > env > file`, which nothing pinned before: the

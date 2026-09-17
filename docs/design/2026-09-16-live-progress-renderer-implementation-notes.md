@@ -1104,3 +1104,118 @@ The third M5 item, doc:842's claim that the design does not take
 `ProgressDrawTarget::term()`, is a design-doc statement and is the doc owner's
 to correct. No code change follows from it: the decision to stay on indicatif
 0.18.3 survives on its other two reasons.
+
+## Audit remediation (round 2)
+
+Remediation on top of round 1, not a phase. Base `cc83f6d`. Findings from the
+round-2 implementation audit (`/tmp/review-panel/2iTWowMT/synthesis.md`,
+round-2 section; probes in `probes-r2.md`), which returned **zero must-fix**:
+N1, N2, N3, N5, N6, N7 are here. N4 is a line of the design doc and belongs to
+the owner. D1 stays deferred.
+
+### Design decisions
+
+- **The one-destination question asks `isatty` on both handles FIRST, and only
+  then compares `fstat` triples** - `facade.rs`, `share_destination`. The
+  triple answers "the same open file", and one terminal reached through two
+  device files is two open files: `/dev/tty` and that terminal's own pts slave
+  are the same cursor and answer `(7,12,1280)` and `(146,3,34816)`. Measured
+  both ways (`otto >/dev/tty` and `otto 2>/dev/tty`): the streams stayed
+  decoupled and otto's completion line landed on the end of a task's
+  unterminated last line, which is the defect the per-stream state exists to
+  fix. Two terminals for otto's two handles is not an invocation otto sees;
+  files are not terminals, so nothing captured reaches the new branch.
+- **`share_destination` takes the two fds rather than reading fds 1 and 2
+  itself**, with `streams_share_destination()` the one caller that supplies
+  them. The predicate is about how otto was invoked, so a test cannot assert it
+  by being invoked differently; giving it fds lets a test open the pair it wants
+  to ask about.
+- **A defensive reset goes to whichever of otto's handles is a terminal, once
+  per destination** - `facade.rs`, `reset_targets` and `reset_attributes`. It
+  was gated on stderr and written to stderr, but a `tty:` child inherits BOTH
+  handles, so `otto owner 2>log` on a terminal stdout stayed red through every
+  line of the rest of the run. Once per destination, not per handle: two handles
+  on one terminal share one set of attributes, and the second reset would only
+  repeat the first.
+- **`teardown` closes the child's SGR state too** - `facade.rs`, `teardown`.
+  There are two handback paths and only `reclaim` had the reset. `abandon_run`
+  calls teardown on the first SIGINT, and a teardown that takes the held output
+  first leaves the handoff's later `Drop` with `None`, so `reclaim` returns
+  before the reset would have run.
+- **`Facade::sgr_resets` is a test-only counter** - `facade.rs`. Under
+  `cargo test` neither of otto's handles is a terminal, so the reset writes no
+  bytes and no output assertion can see it; the defect being pinned was a
+  MISSING CALL SITE, so the call is what has to be observable. Same shape as the
+  existing `#[cfg(test)] take_held`.
+- **The N5 fixture measures its own preconditions** -
+  `region_tests.rs`, `TermState::succeeded` / `failed`. `BrokenTerm` fails every
+  `TermLike` call, so indicatif's PRE-closure `clear().unwrap()` always trips
+  first and the post-closure `draw().unwrap()` was unreachable from it (the
+  panic lands at `indicatif-0.18.3 multi.rs:389:25`). The new terminal works
+  until the suspended closure flips it, which puts the panic at `multi.rs:391`,
+  and the two counters are what prove that rather than assume it: the clear must
+  have succeeded before the closure and something must have failed after it.
+- **The env guard restores the prior value instead of removing the variable** -
+  `parser_tests_a.rs`, `OttoProgressEnv`. Running the suite with
+  `OTTO_PROGRESS` exported otherwise lost it at the first test in the group, and
+  every later reader would be reading the guard's cleanup.
+- **The guard's SAFETY comment now says what `serial_test` actually
+  guarantees.** It claimed the serial group made the test the only thread
+  touching the environment. It does not: it serializes the `otto_progress` group
+  against itself and keeps `#[parallel(otto_progress)]` out of the group's way,
+  and the rest of the binary keeps running, including tests whose `Parser::parse`
+  reads the environment. What the group does buy is stated instead: nothing else
+  writes `OTTO_PROGRESS`, and the one snapshot that renders its value carries
+  the group's key.
+
+### Deviations
+
+- **Round 1's tradeoff "`fstat` comparison vs. `isatty` on both handles" is
+  superseded, not reversed.** Its reasoning about `isatty` alone was right -
+  `isatty` cannot tell `> log 2>&1` from `> out 2> err` - and `fstat` still
+  decides every pair that is not two terminals, so both of those stay
+  distinguishable. What it missed is the other direction: two terminals are
+  always ONE terminal, so `isatty` on both is sufficient there and `fstat` is
+  wrong there.
+- **N1's unit test uses two pty slaves, not `/dev/tty` plus a slave.** A unit
+  test has no controlling terminal of its own to address, and the property under
+  test is "both are terminals, and their triples disagree", which two ptys have.
+  The real pair is covered end to end in
+  `tests/progress_split_handles_test.rs`, which gives the child its own session
+  and controlling terminal so `/dev/tty` resolves to the test's pty.
+- **The N1 integration fixtures run `--progress never`.** With a live region
+  installed, the region's own `ensure_line_start` emits the missing newline as a
+  side effect of drawing and masks the coupling question entirely. The quiet
+  path is where otto's line state is the only thing that knows where the cursor
+  is.
+- **Design doc line 445 is left as it is**, still describing the predicate as
+  "decided once from `fstat` by comparing `(st_dev, st_ino, st_rdev)` on fds 1
+  and 2". The doc is the owner's this round; reported rather than edited.
+
+### Tradeoffs
+
+- **`isatty` first vs. resolving `/dev/tty` to the pts it points at.** Resolving
+  would answer "the same terminal" exactly, and would need `ttyname`/`readlink`
+  plumbing plus a story for every platform. `isatty` on both handles is two
+  syscalls and is wrong only for an invocation that puts otto's stdout and
+  stderr on two DIFFERENT terminals, which is not an invocation otto sees.
+- **One reset per destination vs. one per handle unconditionally.** Per handle
+  is simpler and costs four extra bytes on a shared terminal; per destination
+  keeps the "otto writes what it needs and nothing else" property that the
+  captured-stream case is already held to.
+- **A test-only field on `Facade` vs. no test for N3.** The alternative that
+  needs no field is an end-to-end fixture with a cancellation landing while a
+  `tty:` child still holds the terminal, which is a race, and a test on a race
+  is a flake.
+- **`tests/progress_split_handles_test.rs` adds three pty runs to the suite.**
+  Each is a sub-second task; the file is the only place any of these three
+  wirings is exercised at all.
+
+### Open questions
+
+- **doc:445 needs the round-2 wording** (the predicate is `isatty`-then-`fstat`
+  now). Owner's line, not touched here.
+- **N3's window is closed by construction but still not reproduced.** The unit
+  test pins the call site on both handback paths; the cancellation timing that
+  reaches teardown-before-`Drop` is a race and was not reproduced by the audit
+  either.
