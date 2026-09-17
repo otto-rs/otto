@@ -277,7 +277,13 @@ otto.progress: auto|never          (ottofile)
   `scheduler/task_execution.rs:223` inherits the parent env by design (its own
   comment: "Inherit current environment by default (no env_clear())"), so a
   parent's `OTTO_PROGRESS=never` would otherwise mute a nested otto that should
-  be making its own `auto` decision. Stripping one env var otto itself sets is
+  be making its own `auto` decision. **Precisely: this changes behaviour only
+  for a nested otto under a `tty:` task**, which is the only child that
+  inherits the terminal and could therefore have resolved `auto` to Live. A
+  nested otto under an ordinary task has its stderr captured by the parent, so
+  its `auto` resolves Quiet whether the variable reaches it or not. The strip
+  is still right unconditionally; its EFFECT is `tty:`-only, and an earlier
+  revision stated the benefit generally (implementation audit round 1, Q2). Stripping one env var otto itself sets is
   NOT the nesting handshake this design rejects: no marker, no detection, no
   second source of truth.
 - `never`: Quiet unconditionally. The `TURBO_UI=false` escape hatch, which
@@ -392,6 +398,29 @@ before a second-signal exit. Copy it rather than invent:
   lock with no facade frame on the stack. The facade must therefore treat a
   poisoned bar lock as "renderer permanently retired" on its next call, not as
   something it can catch at the moment it happens.
+  **The panic boundary itself was missing and is now `Region::shielded`**
+  (implementation audit round 1, finding M3), wrapping `suspend`, `started`,
+  `finished`, `refresh`, `erase` and `rearm`. It is needed because 0.18.3's
+  `MultiState::suspend` is `self.clear(now).unwrap(); f(); self.draw(..).unwrap()`,
+  so a terminal write error inside a suspension panics in exactly the case this
+  section scopes as covered. `suspend` takes its closure out of an `Option`
+  inside the suspension, so the wrapped write happens EXACTLY ONCE whichever of
+  the two `unwrap`s trips.
+  **Retiring the renderer deliberately LEAKS the bars** (`std::mem::forget`).
+  `BarState::drop` draws through the very lock the panic poisoned, and a
+  destructor panic during unwinding aborts the process, which would turn "the
+  renderer degraded" into "otto died at teardown". One region exists per run
+  and holds one row per running task, so the leak is a handful of allocations
+  at the end of a run. This is load-bearing, not an oversight.
+  **Update, implementation audit round 1: the poisoned-bar-lock half of this is
+  MOOT BY CONSTRUCTION and is deliberately not implemented.** The hazard was
+  indicatif's own ticker thread (`progress_bar.rs:706`) locking and ticking
+  outside any facade call. Phase 5 never arms that ticker: otto drives its own
+  redraw through `Facade::refresh`, because a steady tick would redraw a
+  message nothing recomputed and the duration would never advance. With no
+  indicatif-spawned thread there is no frame that can poison the bar lock
+  outside a facade call. The OTHER half, a panic boundary around calls the
+  facade itself makes, was genuinely missing and is finding M3.
 - **terminal hangup**: writes fail `EIO`. Best effort, never fatal, matching
   `report_fatal` (`main.rs:240-249`).
 
@@ -405,7 +434,19 @@ owned it and it would have shipped unfixed.
 
 **Phase 5 owns the fix** (decided 2026-09-16, see Resolved Decisions). The
 facade tracks whether the last byte it wrote was `\n` and emits one before
-drawing rows OR printing a completion line. Without it the region additionally
+drawing rows OR printing a completion line.
+**Per STREAM, not per process. One flag for two streams is wrong and shipped
+wrong** (implementation audit round 1, finding M1). With a single flag, an
+unterminated chunk on stderr put a leading newline into a captured stdout that
+never asked for one, and an unterminated chunk on a redirected stdout was
+answered by a newline sent to a stderr somewhere else entirely, so the original
+`printf DONE` defect still reproduced whenever the two streams had different
+destinations. The remediation keeps `at_line_start` per stream and re-couples
+them only when they genuinely share one destination, decided once from `fstat`
+by comparing `(st_dev, st_ino, st_rdev)` on fds 1 and 2. That is a property of
+how otto was invoked and cannot change mid-run, so it is measured at startup
+and not re-probed. The pre-row-draw newline goes to the stream the rows land
+on, never to whichever stream the last write happened to use. Without it the region additionally
 overwrites the child's last line and a later erase deletes child output. Replay
 already does this explicitly (`scheduler/replay.rs:347-352`); the live path and
 the completion line must too.
@@ -778,6 +819,21 @@ was not a checkable statement.
   surface dressed as a simplification. The cost is a two-step ship order
   instead of one, which the deprecation of `progress-interval` forces anyway.
 
+- **2026-09-17, implementation audit round 1 (post-Phase-5, pre-tag).** Run
+  against `1783f1c..9c22b3d` with the doc at `Status: Implemented`, while every
+  commit was still local. Verdict: do not tag. Five must-fix findings, three
+  cheap wins, one deferred, every one reproduced by the panel against old and
+  new binaries. Four were code (`at_line_start` shared across two streams; the
+  row cap dropping the overflow row it exists to protect; no panic boundary
+  around indicatif; no `\x1b[0m` on handoff reclaim) and one was this document
+  (three statements false rather than stale, corrected in place above and each
+  marked). Confirmed sound by the same audit: the bookkeeping-parent yield with
+  no new overtaking hole, drain scoped to `Capped`, `Facade::refresh` over
+  indicatif's ticker, per-row stderr styling, no surviving live `always` claim,
+  and the single-writer invariant. Deferred: a partially written spill record
+  replayed twice in part, which needs disk-full during a tty handoff and
+  duplicates rather than loses bytes.
+
 ## Alternatives Considered
 
 ### Alternative 1: Fix the two defects in place
@@ -837,14 +893,24 @@ was not a checkable statement.
 
 `indicatif` and `console` are already in `Cargo.toml` and `indicatif` already
 drives a bar in `src/cli/commands/upgrade.rs:4`. `Cargo.lock` pins indicatif
-**0.18.3** and console **0.16.2**. **Phase 0 decided: STAY on 0.18.3.** 0.18.6
-requires console >= 0.16.4 against the locked 0.16.2, so it is a two-crate
-bump; it applies `is_dumb()` only inside `ProgressDrawTarget::term()`, a path
-this design does not take; and `auto` must read `CI` regardless, which no
-indicatif version knows about. otto owns the `TERM=dumb` policy itself. A
-Phase 0 test pins both locked versions so a `cargo update` cannot invalidate
-the measurements silently. The cost of staying is the Phase 5 row-style
-constraint.
+**0.18.3** and console **0.16.2**. **Phase 0 decided: STAY on 0.18.3.** Two
+reasons, both standing: 0.18.6 requires console >= 0.16.4 against the locked
+0.16.2, so it is a two-crate bump; and `auto` must read `CI` regardless, which
+no indicatif version knows about, so otto computes the predicate either way.
+otto owns the `TERM=dumb` policy itself. A Phase 0 test pins both locked
+versions so a `cargo update` cannot invalidate the measurements silently. The
+cost of staying is the Phase 5 row-style constraint.
+
+**A third reason was given and it was FALSE. Corrected here rather than quietly
+dropped** (implementation audit round 1, finding M5). This section previously
+said 0.18.6 applies `is_dumb()` "only inside `ProgressDrawTarget::term()`, a
+path this design does not take". The design takes exactly that path:
+`region.rs:122` constructs the region with `ProgressDrawTarget::stderr()`,
+which in 0.18.3 is literally `Self::term(Term::buffered_stderr(), 20)`
+(`draw_target.rs:41-43`). So 0.18.6's `is_dumb()` WOULD apply to otto's target.
+The conclusion survives on the two reasons above, and otto's own `TERM=dumb`
+check makes the upstream one redundant rather than desirable, but the reasoning
+was wrong and a later reader weighing the bump needs the corrected version.
 
 ### Performance
 
@@ -869,6 +935,15 @@ invariant Alternative 4 of the shipped doc protected.
 - pty harness asserting screen CONTENTS, not stripped text. `pty_stdout`
   (`tests/common/mod.rs:119-123`) strips CR but not cursor control, so
   escape-stripping cannot prove child output survived.
+  **Known weakness in this criterion, stated rather than left to be
+  rediscovered** (implementation audit round 1). Retaining the control bytes is
+  necessary but not sufficient: a `contains` assertion over the captured stream
+  cannot see an ERASURE, because the erased text is still present in the byte
+  stream that produced the final screen. Proving "the user saw X" needs a
+  terminal emulator replaying the stream into a screen buffer, which this
+  design does not build. Phase 5's tests comply with this bullet literally and
+  inherit its limit; that is a gap in the criterion, not a phase that skipped
+  work.
 - Negative cases that must bite: zero RENDERER bytes under `never` while task
   output and completion lines still arrive; no duplicate rows
   when nested; a dead row removed when a middle task finishes first.
