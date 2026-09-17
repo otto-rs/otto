@@ -1028,10 +1028,17 @@ existing ottofiles.
   pty test that asserts live rows therefore passes on a workstation and fails
   on every runner, which is exactly how this shipped: three tests in
   `tests/progress_region_test.rs` went red on the first push. The lever a test
-  has is `env_remove("CI")`, and it lives in the shared `isolate()` helper
-  (`tests/common/mod.rs`) rather than in each test, because forgetting it is
-  invisible locally. This is the cost of the cut and it was not predicted when
-  the cut was made.
+  has is `env_remove("CI")`, via `common::expect_live_region`
+  (`tests/common/mod.rs`). Deliberately NOT folded into `isolate()`, which
+  every test uses: `CI` is load-bearing for COLOUR too, since `anstream`
+  enables it on `is_terminal() && (term_supports_color() || clicolor_enabled
+  || is_ci())` and runners set no `TERM`, so on them `is_ci()` is the only
+  reason clap colours its help. Scrubbing it globally turned three red tests
+  into two different red tests. A workstation cannot reproduce either failure,
+  because a local shell exports `TERM` and satisfies the colour check by
+  another route; the environment that reproduces both is `CI=true` with `TERM`
+  unset. This is the cost of the cut and none of it was predicted when the cut
+  was made.
 
 ## Risks and Mitigations
 

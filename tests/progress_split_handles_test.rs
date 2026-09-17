@@ -114,8 +114,11 @@ impl SplitHandles {
                 &mut master_fd,
                 &mut slave_fd,
                 std::ptr::null_mut(),
-                std::ptr::null(),
-                std::ptr::null(),
+                // `*mut`, not `*const`: glibc declares these two `const` and
+                // Apple's libc does not, so a null `*const` builds on Linux
+                // and fails E0308 on macOS. A null `*mut` satisfies both.
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
             )
         };
         assert_eq!(rc, 0, "openpty failed: {}", std::io::Error::last_os_error());
@@ -224,7 +227,18 @@ fn reopen_through_dev_tty(cmd: &mut Command, target: i32) {
             }
             // fd 0 is the slave: `Command` dup2'd the configured stdio before
             // this closure runs.
-            if libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY, 0) < 0 {
+            // `ioctl`'s request is `c_ulong` on both platforms, but Apple
+            // types the TIOCSCTTY constant `c_uint` while glibc already types
+            // it `c_ulong`. So the conversion is REQUIRED on macOS (E0308
+            // without it) and redundant on Linux, where clippy's
+            // `useless_conversion` rejects it. One spelling has to build on
+            // both, so the lint is allowed here rather than the code being
+            // split behind a `cfg`.
+            #[allow(clippy::useless_conversion)]
+            let request = libc::c_ulong::from(libc::TIOCSCTTY);
+            // fd 0 is the slave: `Command` dup2'd the configured stdio before
+            // this closure runs.
+            if libc::ioctl(libc::STDIN_FILENO, request, 0) < 0 {
                 return Err(std::io::Error::last_os_error());
             }
             let fd = libc::open(dev_tty.as_ptr(), libc::O_WRONLY);

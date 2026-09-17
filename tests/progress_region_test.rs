@@ -60,6 +60,7 @@ fn write_ottofile(dir: &Path, name: &str, contents: &str) -> PathBuf {
 fn pty_run(argv: &[&str], home: &Path) -> (i32, String) {
     let mut cmd = common::pty_cmd(argv);
     isolate(&mut cmd, home);
+    common::expect_live_region(&mut cmd);
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().expect("`script` should allocate a pty and run otto");
 
@@ -434,6 +435,7 @@ fn a_completion_line_starts_on_its_own_line_when_only_stdout_is_redirected() {
     );
     let mut cmd = common::pty_cmd(&["sh", "-c", &script]);
     isolate(&mut cmd, &home);
+    common::expect_live_region(&mut cmd);
     let output = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
