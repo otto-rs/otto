@@ -91,21 +91,33 @@ impl SizedPty {
     fn start(args: &[&str], home: &Path, cwd: &Path, rows: u16) -> Self {
         let mut master_fd = 0;
         let mut slave_fd = 0;
-        let size = libc::winsize {
+        // `mut` and `&mut` are for the SIGNATURE, not because openpty writes
+        // here: Apple declares the last two parameters `*mut` where glibc
+        // declares them `*const`, and `&mut winsize` coerces to both. Same for
+        // the null: `*mut` satisfies both, `*const` only glibc. This is the
+        // third of three call sites that had to learn it.
+        let mut size = libc::winsize {
             ws_row: rows,
             ws_col: 80,
             ws_xpixel: 0,
             ws_ypixel: 0,
         };
         // Safe: both out-params are written on success, and the winsize is
-        // read-only input.
+        // input only.
+        //
+        // The `allow` is the Linux half of the same portability bind as the
+        // `mut` above: glibc takes `*const winsize`, so clippy sees a needless
+        // `&mut`, while Apple takes `*mut` and will not build without it. One
+        // spelling has to satisfy both, so the lint yields at this line rather
+        // than the call being split behind a `cfg`.
+        #[allow(clippy::unnecessary_mut_passed)]
         let rc = unsafe {
             libc::openpty(
                 &mut master_fd,
                 &mut slave_fd,
                 std::ptr::null_mut(),
-                std::ptr::null(),
-                &size,
+                std::ptr::null_mut(),
+                &mut size,
             )
         };
         assert_eq!(rc, 0, "openpty failed: {}", std::io::Error::last_os_error());
