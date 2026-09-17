@@ -46,6 +46,17 @@ fn strip_sgr(text: &str) -> String {
     re.replace_all(text, "").into_owned()
 }
 
+/// Strip every CSI sequence, colours and cursor control alike.
+///
+/// [`strip_sgr`]'s louder sibling, for the assertions that are about where a
+/// NEWLINE is rather than about what the screen renders: the live region moves
+/// the cursor up and clears lines between otto's own writes, and those bytes
+/// sit between text that is on one line and text that is on the next.
+fn strip_csi(text: &str) -> String {
+    let re = regex::Regex::new(r"\x1b\[[0-9;?]*[ -/]*[@-~]").expect("static regex");
+    re.replace_all(text, "").into_owned()
+}
+
 /// Run `argv` under a real pty, returning (exit code, decoded output).
 ///
 /// Both pipes are drained from their own threads so a full pipe buffer stalls
@@ -248,8 +259,8 @@ fn phase_4_no_tty_child_writes_before_every_admitted_task_has_reported() {
 // ---------------------------------------------------------------------------
 
 /// `read_until(b'\n')` yields a last chunk with no newline at EOF, and the live
-/// path writes it as-is. Measured on main at 1783f1c: otto's own completion
-/// line is then concatenated onto the task's last line.
+/// path used to write it as-is. Measured on main at 1783f1c: otto's own
+/// completion line was concatenated onto the task's last line.
 ///
 /// ```text
 /// [nonl] first line
@@ -257,14 +268,17 @@ fn phase_4_no_tty_child_writes_before_every_admitted_task_has_reported() {
 /// ```
 ///
 /// The design's "Unterminated final chunk" paragraph treats this as a hazard the
-/// live region introduces. It is not: the defect exists today, on the plain
-/// path, with no region anywhere. Replay already handles it explicitly
-/// (`scheduler/replay.rs:347-352`); the live path never has.
+/// live region introduces. It is not: the defect existed on the plain path, with
+/// no region anywhere. Replay already handled it explicitly
+/// (`scheduler/replay.rs:347-352`); the live path never did.
 ///
-/// This test PASSES today and pins the defect. The phase that fixes it inverts
-/// the assertion.
+/// **Inverted by Phase 5**, which owns the fix (design doc, Resolved Decisions,
+/// 2026-09-16): the facade tracks whether the last byte it wrote was a newline
+/// and emits one ahead of a completion line or a row draw. The `today_` twin
+/// that pinned the defect is this test, renamed rather than deleted, per the
+/// rule at the top of this file.
 #[test]
-fn today_an_unterminated_final_chunk_runs_into_the_completion_line() {
+fn an_unterminated_final_chunk_no_longer_runs_into_the_completion_line() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("home");
     let ottofile = write_ottofile(
@@ -287,9 +301,18 @@ tasks:
     assert_eq!(code, 0, "the fixture must run clean:\n{out}");
 
     assert!(
-        out.contains("[nonl] DONE[nonl] finished successfully"),
-        "expected the completion line jammed onto the unterminated chunk; if this no longer \
-         reproduces the live path grew the newline guard and this test should be inverted:\n{out}"
+        !out.contains("[nonl] DONE[nonl] finished successfully"),
+        "the completion line is still jammed onto the unterminated chunk; the facade's \
+         newline guard is not reaching it:\n{out}"
+    );
+    // The positive half: otto terminated the chunk itself. Asserted on the
+    // bytes rather than on a rendered screen, because the guard IS a byte -
+    // one `\n` written after the child's last unterminated chunk and before
+    // anything of otto's.
+    let plain = strip_csi(&out);
+    assert!(
+        plain.contains("[nonl] DONE\n"),
+        "expected otto to terminate the unterminated chunk itself:\n{plain:?}"
     );
 }
 

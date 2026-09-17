@@ -327,10 +327,20 @@ tasks:
 
     // Within a block the lines keep their own order, and the status line rides
     // along at the end of the block rather than arriving at completion time.
+    //
+    // The completion line's trailing duration is stripped before the compare.
+    // It is a wall-clock figure read from the subtask's own `TaskClock`
+    // (Phase 5 of `docs/design/2026-09-16-live-progress-renderer.md`), so its
+    // value is not pinnable; that the line is THERE, last, and inside the
+    // block is what this test is about.
     let clean = strip_ansi(&out);
-    let alpha: Vec<&str> = clean
+    let alpha: Vec<String> = clean
         .lines()
         .filter(|line| line_owner(line) == Some("say:alpha"))
+        .map(|line| match line.split_once("finished successfully") {
+            Some((head, _)) => format!("{head}finished successfully"),
+            None => line.to_string(),
+        })
         .collect();
     assert_eq!(
         alpha,

@@ -680,3 +680,223 @@ renderer anywhere:
   classifies `Capped`", which is `admission_for`, now `:418-426`; left as
   written, since that file is Phase 0's record and the line numbers in it were
   true when it was measured.
+
+## Phase 5: The live region, and the completion line
+
+Five pieces, all of them behind the facade Phase 2 built:
+
+- `src/executor/progress/region.rs` - the `MultiProgress`, the rows, the row
+  cap, the overflow row, row text, sanitization and grapheme truncation.
+- `src/executor/progress/duration.rs` - the ONE duration format a row and a
+  completion line both use.
+- `src/executor/progress/facade.rs` - the region field and its lock order, the
+  `install_region` entry point and its refresh thread, `task_started` /
+  `task_finished`, the newline guard (`write_line`, `ensure_line_start`), the
+  region erase on surrender and teardown, the re-arm on reclaim.
+- `TaskScheduler::completion_line` (`src/executor/scheduler.rs`) - the
+  completion and failure lines, measured from the task's own `TaskClock`.
+- the first-SIGINT teardown, in `abandon_run` (`scheduler/support.rs`), ahead of
+  `flush_cancelled_groups`.
+
+### Design decisions
+
+- **No indicatif ticker, anywhere** - `progress/region.rs` module comment. The
+  design's Lifecycle section has to scope the panic story honestly because
+  indicatif's `enable_steady_tick` spawns a thread that locks and draws holding
+  only indicatif's locks ("a panic there poisons the bar lock with no facade
+  frame on the stack"). A steady tick also would not do the job: it redraws a
+  row whose message nothing recomputed, so the duration in it would never
+  advance. otto drives the refresh from its own thread, which goes through the
+  facade like every other writer, so every byte this module writes is written
+  under otto's ordering lock and the hazard the doc scopes is not present at
+  all. The doc's `Facade` sketch has no refresh entry point; this is one
+  (`Facade::refresh`).
+- **The refresh thread's stop condition is the region's absence** -
+  `facade.rs::install_region`, `Facade::refresh`. Teardown takes the region, and
+  `refresh` returns `false` when there is none, so the thread exits. One piece
+  of state rather than a region plus a shutdown flag that can disagree with it -
+  the same reasoning Phase 4 used for drain mode ending on "nothing in flight".
+- **`install_region` is a free function; `Facade::set_region` is the method** -
+  `facade.rs`. The thread refreshes `facade()`, the process instance. A method
+  on `&self` would let a test holding a private `Facade` (which
+  `facade_tests.rs` and `ownership_tests.rs` both do, by Phase 2's and Phase 4's
+  design) start a thread pointed at the shared one.
+- **One lock order, stated once: `order` -> `terminal` -> `region`** -
+  `facade.rs`. Every site takes them in that sequence, which is what makes
+  "surrender erases the region" safe: the erase happens inside the same
+  acquisition that installs the hold, so no writer can land between them.
+- **`task_started` takes the `Arc<TaskClock>`, not just the name** -
+  `facade.rs::task_started`, called from `task_execution.rs` at the line that
+  starts the clock. The doc's API sketch is `task_started(&self, name: &str)`.
+  Same effect, correct seam: the row must read the SAME clock the completion
+  line reads or the two drift, which is the defect this phase exists to close,
+  and the clock is in hand at exactly that call site. Looking it up in
+  `TaskClocks` from inside the facade would put a second lookup path beside the
+  one the scheduler already has.
+- **Rows are ordered by when a task started, not by declaration order** -
+  `region.rs::attach`. The run set's iteration order is a `HashMap`'s (measured
+  by Phase 4, 2026-09-17), so "declaration order" is not available to sort by
+  anyway; more to the point, a row that moved when another task started would
+  make every duration jump sideways mid-read.
+- **The name column is sized from the WHOLE run set, capped at 24** -
+  `region.rs::Region::new`. Sizing it from the tasks currently running would
+  resize the column as tasks came and went. The cap is there because a long
+  foreach subtask name would otherwise push every other row's duration off a
+  narrow screen; a name past the cap overflows its own column and nobody
+  else's.
+- **The separator rule exists only while at least one row does** -
+  `region.rs::ensure_separator`, `clear_all`. A run with nothing in flight draws
+  nothing at all, so `Region::is_drawn` is `false` and `suspend` skips the
+  clear-and-redraw entirely. That is also why a `--progress auto` run of a
+  fast task emits no cursor operations: there was never a frame to erase.
+- **`{wide_msg}` with a template carrying NO styled placeholder, and the style
+  set AFTER `mp.add`** - `region.rs::attach`, `row_style`. This is Phase 0's
+  standing finding discharged: on indicatif 0.18.3
+  `ProgressDrawTarget::is_stderr()` answers `false` for a `Multi` target and
+  `ProgressBar::set_style` is its only consumer, so a `{msg:.green}`-shaped
+  template inside a `MultiProgress` is coloured by console's STDOUT decision
+  while the region draws on STDERR. `ProgressStyle::set_for_stderr` is
+  `pub(crate)` in indicatif, so otto cannot call it and cannot fix the decision
+  from outside. What otto can do is not hand indicatif a colour decision to
+  make: the template is plain, and the row's own colour comes from otto's
+  `stderr_takes_color()` applied to the name, which is the same predicate
+  `47b4605` introduced for status lines.
+- **Row text is truncated by otto first and by `{wide_msg}` second** -
+  `region.rs::row_text`, `truncate`. The doc asks for `width - 1`;
+  `{wide_msg}` truncates at `width`. otto's cut is the mechanism and
+  indicatif's is the backstop, so a row cannot wrap and desynchronize
+  indicatif's line count from the screen even if the terminal resizes between
+  the two.
+- **Terminal width and height are re-read on every draw** - `region.rs::width`,
+  `cap`. That IS the SIGWINCH handling: a resized terminal is a new answer from
+  the same call, with no signal handler to install and no cached number to
+  invalidate. `Term::stderr().size()` invents `(24, 80)` off a terminal, which
+  cannot be reached here because the region only exists in `ProgressMode::Live`.
+- **The completion line's duration comes from `TaskClock`, and a task without
+  one gets no duration** - `scheduler.rs::completion_line`. A virtual foreach
+  parent runs no script, a `tty:` task never creates streams, and a task that
+  failed before its spawn never started a clock. Printing a number for those
+  would mean reading `task_start_times`, which is the wrong instant and the
+  whole point of the doc's bullet. So `[bulk] finished successfully` has no
+  duration and `[bulk:a] finished successfully  2s` does.
+- **The duration is on the failure line too**, and on the cancellation path's
+  status lines (`scheduler.rs`, `replay.rs::record_report_for_replay`), through
+  the one `completion_line` helper. The doc says "the completion line"; under
+  OQ1=A the completion line is the only place a captured run learns how long
+  anything took, and that argument does not stop being true when the task
+  failed.
+- **`Facade::write_line` is a second entry point, not a flag on `write`** -
+  `facade.rs`. The doc's fix is "a `\n` before a completion line or a row
+  draw", not before every write, and the distinction is load-bearing: task
+  output goes through `write` and must stay byte-for-byte what the child
+  produced. Callers that author a line about a task use `write_line`
+  (`report_status_line`, `report_prune_failure`); `TeeWriter` and `graph.rs`
+  do not.
+- **The newline tracking is ONE flag across both streams** - `facade.rs`'s
+  `at_line_start`. They are one terminal: the column a completion line on
+  stdout starts at is wherever the last write to stderr left the cursor.
+- **`Facade::block`'s handles are wrapped in a `TrackedWriter`** -
+  `facade.rs::block_on_terminal`. Replay writes whole log files through those
+  handles, and a log whose last line is unterminated leaves the cursor mid-line
+  exactly like a live final chunk does. Replay already writes its own `\n` in
+  that case (`replay.rs`), so this is belt and braces there; it is not belt and
+  braces for the block's own trailing status line.
+- **The first-SIGINT teardown goes in `abandon_run`, ahead of
+  `flush_cancelled_groups`** - `scheduler/support.rs`. The doc asks for an
+  ORDERING against rows, which is why it was Phase 5's and not Phase 2's, and
+  this is that ordering: children are already reaped by this point, so erasing
+  the region and handing a surrendered terminal back before the notice is
+  written costs nothing and puts the notice on a clean screen.
+  `Facade::teardown` is idempotent, so the call at `app.rs`'s normal return
+  still runs harmlessly afterwards.
+- **`unicode-segmentation` added as a direct dependency** - `Cargo.toml`. It is
+  already in `Cargo.lock` through `comfy-table` and `convert_case`, so this adds
+  an edge and no crate. Needed because indicatif 0.18.3 is built WITHOUT its own
+  `unicode-segmentation` feature (`Cargo.lock` shows only `unicode-width`) and
+  `console::truncate_str` cuts on `char` boundaries, which can split a cluster
+  between a base character and its combining mark.
+
+### Deviations
+
+- **`Facade::task_started` takes a clock, against the doc's
+  `task_started(&self, name: &str)`.** Same effect, correct seam; the reason is
+  in Design decisions above.
+- **`Facade::refresh` is not in the doc's facade sketch at all.** It is the
+  consequence of not using indicatif's steady ticker: something has to
+  recompute a row's duration, and the doc's sketch assumed indicatif's own
+  thread would redraw. Recorded rather than quietly added.
+- **The rows carry no spinner.** Ian's original ask was "a spinner indicator";
+  the design doc's own mockup of what the user sees has none, and a growing
+  `running 4m05s` beside `no output for 41s` is the liveness signal it
+  specifies. Adding a spinner would need `pb.tick()` per refresh and a tick
+  character set, and it is not in the doc.
+- **The doc's mockup renders a sub-minute row as `0m08s`; this ships `8s`.**
+  One formatter serves the row and the completion line, and the mockup's own
+  completion lines (`1m54s`, `41m22s`) and its `no output for 41s` are
+  inconsistent with each other about the `0m` prefix. `format_task_duration`
+  picks the form both examples share: bare seconds under a minute, padded
+  seconds above it.
+- **`docs/commands/` needed nothing except one addition.** Audited for stale
+  `--progress-interval` / heartbeat / terminal-lock claims: `ottofile-reference.md`
+  was Phase 3's and is correct; nothing else in `docs/commands/` mentioned any
+  of them (`history.md`'s "still running" is about a run's duration column).
+  One bullet was ADDED to `buffered-foreach.md`, which is the page that
+  documents terminal-output ordering, saying the region is suspended once per
+  replayed block and so cannot split one. README's `--progress-interval` row
+  and usage example are replaced, per the doc.
+- **`tests/foreach_buffer_test.rs::test_buffered_blocks_print_in_item_order_with_no_interleaving`
+  was adjusted, not inverted.** It compared a buffered block's lines to a
+  literal list ending `"[say:alpha] finished successfully"`, which the new
+  duration breaks. The test is about item order and contiguity, not about the
+  completion line's wording, so it now strips the trailing duration before
+  comparing. The duration's VALUE is not pinnable: it is wall clock.
+
+### Tradeoffs
+
+- **A refresh thread at 5 Hz over an event-driven redraw.** A row's duration
+  advances with time, not with anything otto does, so the alternative is no
+  duration at all in a silent run - which is the complaint. The cost is one
+  sleeping thread and five uncontended mutex acquisitions a second; the bound
+  is that a torn-down region leaves the thread asleep for at most one
+  `REFRESH_INTERVAL`.
+- **Every otto write suspends the region, per write, exactly as Phase 0
+  measured.** The doc accepts this ("per-line suspension means each chatty line
+  clears and redraws up to K+1 rows") and mitigates it where it matters: replay
+  holds ONE suspension for a whole block. Phase 0's benchmark
+  (`per_line_suspension_costs_a_full_region_redraw_for_every_line`) is what
+  chose `K = max(3, height - 6)` rather than a larger cap: the redraw cost is
+  linear in the number of rows and a chatty task pays it per line.
+- **A dead row is proved gone through otto's own model, not through
+  indicatif's.** `mp.remove` has no observable effect a test can read, so
+  `a_task_finishing_in_the_middle_gives_its_row_up_to_a_waiting_task` asserts on
+  `Region::row_labels`, the list the screen is drawn FROM. The call to
+  `mp.remove` itself is covered only by that path being taken.
+- **The row cap is test-overridable (`Region::with_cap`)** rather than the
+  bounded-rows tests depending on what `console` reports for the harness's
+  captured stderr. A test cannot resize the terminal it does not have, and
+  depending on console's invented `(24, 80)` would make the cap tests pass or
+  fail on a number this module explicitly does not trust.
+- **`IDLE_THRESHOLD` is 5s and is not configurable.** Below it the idle figure
+  changes faster than it can be read and every row would carry one; a knob for
+  it is a tunable nobody asked for. The design's Non-Goals already exclude a
+  per-task progress override on the same reasoning.
+
+### Open questions
+
+- **`src/executor/graph.rs`'s write stayed `write`, not `write_line`.** `Graph`
+  is a builtin whose output is the whole of the run's stdout, so nothing can
+  have left the cursor mid-line before it. If the rule should be "every
+  otto-authored line uses `write_line`, no exceptions", that is a one-line
+  change.
+- **The completion line's duration separator is TWO spaces**
+  (`[api] finished successfully  1m54s`), copied from the design doc's own
+  "what the user actually sees" block. Confirm that is wanted and not a
+  typo in the mockup; one space is a one-character change.
+- **Nothing reads `TaskClock::note_beat` / `since_beat_ms` / `last_beat_ms`
+  any more.** They survived Phase 1 because the doc said to keep `TaskClock`
+  as-is, and the region reads `elapsed` and `idle_ms` only. They are dead code
+  with tests, not a defect; removing them is a decision about the shipped
+  `TaskClock` surface, not about this phase.
+- **`--progress-interval` is still accepted, ignored, and warned**, per the
+  migration plan. The release after this one removes it, along with
+  `RuntimeConfig::progress_interval` and the `otto.progress-interval` key.

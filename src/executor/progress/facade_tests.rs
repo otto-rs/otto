@@ -8,7 +8,8 @@ use std::{
     time::Duration,
 };
 
-use super::{Facade, Stream, facade};
+use super::{Facade, ProgressMode, Stream, facade};
+use crate::executor::clocks::TaskClocks;
 
 /// The whole reason the facade owns a lock: two callers cannot be inside a
 /// block at the same time, so a replayed block cannot be split.
@@ -150,4 +151,72 @@ fn teardown_is_idempotent() {
 #[test]
 fn the_process_facade_is_one_instance() {
     assert!(std::ptr::eq(facade(), facade()));
+}
+
+// ---------------------------------------------------------------------------
+// The live region behind the facade (Phase 5).
+// ---------------------------------------------------------------------------
+
+/// `Quiet` installs no renderer AT ALL, which is what makes "zero renderer
+/// bytes in a captured stream" a structural property rather than a renderer
+/// deciding to stay quiet.
+#[test]
+fn quiet_installs_no_region() {
+    let f = Facade::new();
+    assert!(!f.set_region(ProgressMode::Quiet, &["a".to_string()]));
+    assert!(
+        !f.refresh(),
+        "with no region there is nothing to refresh and no thread to keep"
+    );
+}
+
+/// Installed once. A second arming would give the process two `MultiProgress`
+/// instances drawing on one stderr, which is the doubled-renderer defect this
+/// whole design exists to close, arriving from inside instead of from a nested
+/// otto.
+#[test]
+fn a_live_region_is_installed_exactly_once() {
+    let f = Facade::new();
+    assert!(f.set_region(ProgressMode::Live, &["a".to_string(), "bb".to_string()]));
+    assert!(!f.set_region(ProgressMode::Live, &["a".to_string()]));
+    assert!(f.refresh(), "an installed region keeps the refresh thread going");
+}
+
+/// The refresh thread's stop condition is the region's absence, and teardown is
+/// what creates it. One state, not a region plus a flag that can disagree with
+/// it.
+#[test]
+fn teardown_retires_the_region_and_with_it_the_refresh_thread() {
+    let f = Facade::new();
+    assert!(f.set_region(ProgressMode::Live, &["a".to_string()]));
+    f.teardown();
+    assert!(!f.refresh(), "teardown must stop the refresh thread");
+}
+
+/// Row mutation is safe with no region installed: every scheduler call site is
+/// unconditional, because whether a run has a region is the facade's business
+/// and not the scheduler's.
+#[test]
+fn row_mutation_with_no_region_is_a_no_op() {
+    let f = Facade::new();
+    let clocks = TaskClocks::default();
+    f.task_started("a", clocks.start("a"));
+    f.task_finished("a");
+    f.task_finished("never-started");
+}
+
+/// Rows are not mutated while a `tty:` task owns the terminal: the region is
+/// erased for the child's whole lifetime, and touching a bar would draw on the
+/// terminal otto just handed away.
+#[test]
+fn a_surrendered_terminal_takes_no_row_updates() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let f = Facade::new();
+    assert!(f.set_region(ProgressMode::Live, &["owner".to_string(), "a".to_string()]));
+    let handoff = f.surrender("owner", temp.path().join("spill.log"));
+    let clocks = TaskClocks::default();
+    f.task_started("a", clocks.start("a"));
+    assert!(f.refresh(), "the region is still installed while surrendered");
+    drop(handoff);
+    let _ = f.take_held();
 }

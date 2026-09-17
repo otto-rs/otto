@@ -49,6 +49,13 @@ semver = "1.0"
 indicatif = "0.18"
 async-trait = "0.1.92"
 indexmap = { version = "2.14.1", features = ["serde"] }
+# Grapheme-cluster boundaries for the live progress region's row truncation
+# (`docs/design/2026-09-16-live-progress-renderer.md`, Phase 5). Already in
+# `Cargo.lock` through `comfy-table` and `convert_case`, so this adds a direct
+# edge and no new crate: indicatif 0.18.3 is built without its own
+# `unicode-segmentation` feature, and `console::truncate_str` cuts on `char`
+# boundaries, which can split a cluster.
+unicode-segmentation = "1.12"
 libc = "0.2.189"
 # https, not ssh: GitHub runners have no SSH key, and cargo dies in dependency
 # resolution before compiling anything (`no authentication methods succeeded`),

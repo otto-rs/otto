@@ -28,7 +28,7 @@ use super::{
     clocks::{TaskClock, TaskClocks},
     colors::{set_global_task_order, stderr_takes_color, stream_task_label},
     output::{OutputType, TaskMessage, TaskStreams, TuiTaskStatus, format_terminal_output},
-    progress::{Stream, facade},
+    progress::{Stream, facade, format_task_duration},
     workspace::{ExecutionContext, Workspace},
 };
 use crate::cfg::edge::When;
@@ -1473,6 +1473,41 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
         self.clocks.clone()
     }
 
+    /// Every task name in this run, for sizing the live region's name column.
+    ///
+    /// The whole run set, not the tasks running right now: a column that
+    /// resized as tasks came and went would make every row's duration jump
+    /// sideways.
+    pub fn task_names(&self) -> Vec<String> {
+        self.tasks.iter().map(|task| task.name.clone()).collect()
+    }
+
+    /// The completion line for a task that has just reported: what it was
+    /// called, what happened, and how long it ran.
+    ///
+    /// The duration comes from the task's own `TaskClock`, NOT from
+    /// `task_start_times`. That is measurement, not formatting:
+    /// `task_start_times` is stamped for every task from ONE shared run-start
+    /// `Instant` before dependency waits ("Tasks are conceptually 'in
+    /// progress' while waiting for deps", `execute_all`), while a `TaskClock`
+    /// starts when the task's streams are created. A task that waits ten
+    /// minutes on a dependency and then runs for a second would show
+    /// `running 1s` in its live row and `10m01s` here, which is the drift
+    /// Phase 5 of `docs/design/2026-09-16-live-progress-renderer.md` exists to
+    /// close. Dep-wait time is a different number and out of scope.
+    ///
+    /// No clock, no duration: a virtual foreach parent runs no script, a
+    /// `tty:` task never creates streams, and a task that failed before its
+    /// spawn never started one. Printing a number for those would mean
+    /// inventing one from the wrong instant, which is the defect above.
+    fn completion_line(&self, task_name: &str, word: &str, to_stderr: bool) -> String {
+        let label = self.status_label(task_name, to_stderr);
+        match self.clocks.get(task_name) {
+            Some(clock) => format!("{label} {word}  {}\n", format_task_duration(clock.elapsed())),
+            None => format!("{label} {word}\n"),
+        }
+    }
+
     /// What a scheduler status line leads with: `[task]`, or a bare `task`
     /// under `--no-prefix`.
     ///
@@ -1837,11 +1872,12 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
                     // but not here, so a no-prefix run printed `OTHER` followed
                     // by `[other] finished successfully`. For a buffered subtask
                     // this line travels with its block instead of printing now.
-                    let msg = format!(
-                        "{} {}\n",
-                        self.status_label(&completed_task, false),
-                        task_outcome_word(&final_status)
-                    );
+                    // Row off the screen before the line about it is printed:
+                    // otherwise the completion line is written above a row that
+                    // is about to be erased, and the erase takes a blank line
+                    // where the row was.
+                    facade().task_finished(&completed_task);
+                    let msg = self.completion_line(&completed_task, task_outcome_word(&final_status), false);
                     self.report_status_line(&mut cursor, &completed_task, msg, false, report_drain)
                         .await;
 
@@ -1910,7 +1946,8 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
 
                     // Print user-visible failure message (only in terminal mode).
                     // For a buffered subtask it travels with its block instead.
-                    let failure_msg = format!("{} failed\n", self.status_label(&task_name, true));
+                    facade().task_finished(&task_name);
+                    let failure_msg = self.completion_line(&task_name, "failed", true);
                     self.report_status_line(&mut cursor, &task_name, failure_msg, true, report_drain)
                         .await;
 

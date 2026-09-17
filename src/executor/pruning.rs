@@ -176,7 +176,7 @@ fn report_prune_failure(detail: &str) {
     warn!("Auto-prune failed: {detail}");
     // One facade write, not two: these two lines are one message, and a
     // concurrently replayed block must not land between them.
-    facade().write(
+    facade().write_line(
         Stream::Stderr,
         &format!(
             "otto: auto-prune failed: {detail}\notto: old runs under $OTTO_HOME are not being cleaned up; `otto Clean --dry-run` shows what is there\n"

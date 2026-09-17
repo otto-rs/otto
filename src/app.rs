@@ -5,7 +5,7 @@ use crate::cli::commands::history::HistoryCommand;
 use crate::cli::commands::stats::StatsCommand;
 use crate::cli::parser::{Task, ottofile_base_dir};
 use crate::cli::{CleanCommand, ConvertCommand, ParseOutcome, Parser};
-use crate::executor::progress::facade;
+use crate::executor::progress::{ProgressMode, facade};
 use crate::executor::{TaskScheduler, Workspace};
 use clap::ValueEnum as _;
 use eyre::{Report, Result, eyre};
@@ -314,8 +314,8 @@ pub struct RuntimeConfig {
     pub progress_interval: u64,
     /// Whether this run draws a live region on stderr, resolved ONCE here
     /// from `RunPlan::progress` against stderr's own state at startup and
-    /// never re-derived. No renderer reads this yet: Phase 5 of
-    /// docs/design/2026-09-16-live-progress-renderer.md adds it.
+    /// never re-derived. Consumed by `execute_with_terminal_output`, which
+    /// arms the region behind the output facade.
     pub progress_mode: crate::executor::progress::ProgressMode,
     pub retention: RetentionSpec,
     /// The task and subtask names literally requested, for the run record.
@@ -370,6 +370,7 @@ pub async fn run(config: RuntimeConfig) -> Result<()> {
         config.jobs,
         config.tui_mode,
         config.no_prefix,
+        config.progress_mode,
         config.retention,
         config.requested_tasks,
     )
@@ -385,6 +386,7 @@ pub async fn execute_tasks(
     jobs: usize,
     tui_mode: bool,
     no_prefix: bool,
+    progress_mode: ProgressMode,
     retention: RetentionSpec,
     requested_tasks: Vec<String>,
 ) -> Result<(), Report> {
@@ -410,6 +412,7 @@ pub async fn execute_tasks(
                 ottofile_path,
                 jobs,
                 no_prefix,
+                progress_mode,
                 retention,
                 requested_tasks,
             )
@@ -421,7 +424,17 @@ pub async fn execute_tasks(
         // to act on here: no prefix is ever printed to a terminal the TUI owns.
         execute_with_tui(tasks, hash, ottofile_path, jobs, retention, requested_tasks).await
     } else {
-        execute_with_terminal_output(tasks, hash, ottofile_path, jobs, no_prefix, retention, requested_tasks).await
+        execute_with_terminal_output(
+            tasks,
+            hash,
+            ottofile_path,
+            jobs,
+            no_prefix,
+            progress_mode,
+            retention,
+            requested_tasks,
+        )
+        .await
     }
 }
 
@@ -433,6 +446,7 @@ pub async fn execute_with_terminal_output(
     ottofile_path: Option<PathBuf>,
     jobs: usize,
     no_prefix: bool,
+    progress_mode: ProgressMode,
     retention: RetentionSpec,
     requested_tasks: Vec<String>,
 ) -> Result<(), Report> {
@@ -467,6 +481,13 @@ pub async fn execute_with_terminal_output(
     let workspace = Arc::new(workspace);
     let mut scheduler = TaskScheduler::new(executor_tasks, workspace.clone(), execution_context, jobs, false).await?;
     scheduler.set_no_prefix(no_prefix);
+
+    // The live region, armed here and nowhere else: after the run set is
+    // final (its names size the row's name column) and before the first task
+    // can start, so no task's row is missed. A no-op in `Quiet`, which is what
+    // makes a captured run emit zero renderer bytes - there is no renderer,
+    // rather than a renderer declining to draw.
+    crate::executor::progress::install_region(progress_mode, &scheduler.task_names());
 
     // Ctrl+C has to reach the scheduler, not just the process. Without this the
     // terminal's SIGINT default-killed otto outright and `abandon_run` never

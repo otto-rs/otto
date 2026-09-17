@@ -103,13 +103,13 @@ otto build
 current directory unless `-o/--ottofile` or `-C/--cwd` says otherwise.
 
 ```bash
-otto <task> [<task> ...]   # run one or more tasks by name
-otto --help                # list every task plus the six builtins below
-otto -j 4 build            # cap concurrency at 4 (default: number of CPUs,
+otto <task> [<task> ...]    # run one or more tasks by name
+otto --help                 # list every task plus the six builtins below
+otto -j 4 build             # cap concurrency at 4 (default: number of CPUs,
                             # or otto.jobs in the ottofile if set)
-otto -t build              # run under the interactive TUI dashboard
-otto --no-prefix build     # drop the "[task]" prefix from task output
-otto --progress-interval 5 build   # report a silent task every 5s instead of 10 (0 disables)
+otto -t build               # run under the interactive TUI dashboard
+otto --no-prefix build      # drop the "[task]" prefix from task output
+otto --progress never build # never draw the live progress region on stderr
 ```
 
 | Flag | Default | Does |
@@ -119,7 +119,8 @@ otto --progress-interval 5 build   # report a silent task every 5s instead of 10
 | `-j`, `--jobs <N>` | number of CPUs, or `otto.jobs` | Cap concurrent tasks at `N` |
 | `-t`, `--tui` | off | Run under the interactive TUI dashboard |
 | `--no-prefix` | off | Drop the `[task]` prefix from task output |
-| `--progress-interval <SECONDS>` | `10`, or `otto.progress-interval` | Seconds of task silence before otto reports the task is still running; `0` disables |
+| `--progress <auto\|never>` | `auto`, or `otto.progress` | Draw a live progress region on stderr: one redrawn row per running task, nothing added to scrollback. `auto` draws it only when stderr is a terminal, `TERM` is not `dumb`, and no `CI` env var is set, so a captured or piped run gets no renderer bytes at all; `never` disables it unconditionally. Also settable as `$OTTO_PROGRESS` |
+| `--progress-interval <SECONDS>` | n/a | **Deprecated, ignored, warns.** Used to gate a `still running` heartbeat line that no longer exists; superseded by `--progress`. Accepted for one release so existing ottofiles keep loading |
 
 **Builtins** (capitalized, run like any other task):
 

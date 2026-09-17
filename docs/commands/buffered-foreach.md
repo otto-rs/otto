@@ -95,6 +95,13 @@ when it is not.
 - **`--no-prefix` behaves the same as everywhere else**: prefixes are still
   stripped per line, both inside and outside a buffered block. Buffering
   only fixes contiguity, not prefix attribution.
+- **The live progress region does not split a block.** On a terminal otto
+  draws one redrawn row per running task at the bottom of the screen
+  (`--progress`, design doc
+  `docs/design/2026-09-16-live-progress-renderer.md`). The region is hidden
+  once for a whole replayed block, never once per line, so a block reaches the
+  screen exactly as contiguous as it is without a region, and the rows redraw
+  underneath it afterwards.
 
 ## `foreach.jobs`: per-group concurrency, overriding `-j`/`otto.jobs`
 

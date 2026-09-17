@@ -483,7 +483,12 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
             return;
         }
         let stream = if to_stderr { Stream::Stderr } else { Stream::Stdout };
-        facade().write(stream, &line);
+        // `write_line`, not `write`: a task whose last chunk had no trailing
+        // newline leaves the cursor mid-line, and otto's own line about that
+        // task then reads as a continuation of the task's output
+        // (`[nonl] DONE[nonl] finished successfully`, measured on `main` at
+        // `1783f1c`). The facade puts the newline in.
+        facade().write_line(stream, &line);
     }
 
     /// Emit every block that is now unblocked in `task_name`'s group: the
@@ -558,7 +563,7 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
         cursor.record(
             &report.name,
             PendingBlock {
-                status_line: format!("{} {word}\n", self.status_label(&report.name, to_stderr)),
+                status_line: self.completion_line(&report.name, word, to_stderr),
                 status_to_stderr: to_stderr,
                 drain: report.drain.clone(),
             },

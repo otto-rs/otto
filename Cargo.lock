@@ -1936,6 +1936,7 @@ dependencies = [
  "tar",
  "tempfile",
  "tokio",
+ "unicode-segmentation",
  "yaml_serde",
 ]
 

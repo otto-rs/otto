@@ -223,6 +223,16 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
             self.persist_skip_records().await;
             return Err(eyre!("run cancelled; {abandoned} running task(s) were killed"));
         }
+        // The first-SIGINT teardown (design doc, Lifecycle and teardown). The
+        // other three exit paths were Phase 2's; this one waited for Phase 5
+        // because what it asks for is an ORDERING against rows, and there were
+        // no rows until now: the run-cancelled notice and the flushed blocks
+        // below must not be written into a region that is about to be erased.
+        // `before_exit` does not fire here - `install_stop_handler` reaches it
+        // only on a SECOND signal - so this path needs its own call, and
+        // teardown is idempotent, so the one at `app.rs`'s normal return still
+        // runs harmlessly afterwards.
+        facade().teardown();
         self.flush_cancelled_groups(cursor, notice, statuses_at_cancel).await;
         self.persist_skip_records().await;
         Err(eyre!("run cancelled; {abandoned} running task(s) were killed"))

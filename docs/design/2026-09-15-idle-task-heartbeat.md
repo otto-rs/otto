@@ -2,9 +2,20 @@
 
 **Author:** Scott Idler
 **Date:** 2026-09-15
-**Status:** Implemented and shipped in v2.5.1 (6 of 6 acceptance criteria
-verified on the runner). Three follow-up stderr-colour fixes came after it,
-and they did not all ship together:
+**Status:** Superseded by
+`docs/design/2026-09-16-live-progress-renderer.md`. The feature this document
+describes was implemented and shipped in v2.5.1, then failed in production
+against `philo slim-dump` (doubled beats under a nested otto; an elapsed figure
+read as a silence figure) and was removed in full: the ticker, `beat_line` and
+the `still running` line are gone from the tree as of that design's Phase 1.
+`TaskClock` and the idle clock survive and are what the live region reads. Read
+this document for the history and the rejected alternatives; read the
+superseding one for what otto does today. What follows is the original text,
+left as written.
+
+Its original status, for the record: implemented and shipped in v2.5.1 (6 of 6
+acceptance criteria verified on the runner). Three follow-up stderr-colour
+fixes came after it, and they did not all ship together:
 
 - `fix(output): stop writing colour escapes into a redirected stderr` and
   `fix(output): honour CLICOLOR_FORCE on a redirected stderr` shipped in

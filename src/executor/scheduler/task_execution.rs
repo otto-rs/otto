@@ -378,6 +378,10 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
                     // never name it. Both drains share this one handle - a
                     // line on either stream means the task is not silent.
                     let clock = clocks.start(&task_name);
+                    // The row is given the clock itself, so the live row and
+                    // this task's completion line read the same measurement.
+                    // Outside any facade block, per the facade's third rule.
+                    facade().task_started(&task_name, clock.clone());
 
                     // Start output handling
                     let stdout_handle = {

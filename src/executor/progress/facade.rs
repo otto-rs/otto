@@ -21,12 +21,19 @@ use std::{
     cell::RefCell,
     io::{self, Write},
     path::PathBuf,
-    sync::{Mutex, MutexGuard, OnceLock, PoisonError},
+    sync::{
+        Mutex, MutexGuard, OnceLock, PoisonError,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use log::debug;
 
-use super::ownership::{Surrendered, TerminalHandoff};
+use super::{
+    mode::ProgressMode,
+    ownership::{Surrendered, TerminalHandoff},
+    region::{REFRESH_INTERVAL, Region},
+};
 
 /// Which of otto's own terminal streams a write is headed for.
 ///
@@ -74,6 +81,19 @@ pub struct Facade {
     /// wrote in that window. Always taken AFTER `order`, at every site, so the
     /// handoff cannot land in the middle of a block.
     terminal: Mutex<Option<Surrendered>>,
+    /// `Some` on the live path, from [`install_region`] until teardown. Always
+    /// taken AFTER `terminal`, at every site: one lock order, stated once.
+    region: Mutex<Option<Region>>,
+    /// Whether the last byte the facade wrote was a newline.
+    ///
+    /// This is the unterminated-final-chunk fix (design doc, "Unterminated
+    /// final chunk"), and it is a pre-existing defect on `main`, not something
+    /// the region introduced: `read_until(b'\n')` yields a final chunk with no
+    /// newline at EOF, so `printf DONE` in a task put otto's own completion
+    /// line on the end of the task's last line. Tracked across BOTH streams,
+    /// because they are one terminal: the cursor a completion line on stdout
+    /// starts at is wherever the last write to stderr left it.
+    at_line_start: AtomicBool,
 }
 
 /// The one facade. A `OnceLock` rather than a threaded parameter, mirroring the
@@ -85,6 +105,35 @@ pub fn facade() -> &'static Facade {
     FACADE.get_or_init(Facade::new)
 }
 
+/// Arm the live region on the process facade and start the thread that keeps
+/// its durations moving.
+///
+/// A free function rather than a method because of the thread: it refreshes
+/// [`facade()`], the process instance, and a method on `&self` would let a test
+/// holding a private `Facade` start a thread pointed at the shared one.
+///
+/// The thread is not joined and nothing waits for it. Its stop condition is the
+/// region's absence, which teardown creates, so a run that exits leaves it at
+/// most one [`REFRESH_INTERVAL`] asleep and a `std::thread` does not hold the
+/// process open past `main`.
+pub fn install_region(mode: ProgressMode, task_names: &[String]) {
+    if !facade().set_region(mode, task_names) {
+        return;
+    }
+    let spawned = std::thread::Builder::new().name("otto-progress".to_string()).spawn(|| {
+        while facade().refresh() {
+            std::thread::sleep(REFRESH_INTERVAL);
+        }
+        debug!("install_region: refresh thread stopping; the region is torn down");
+    });
+    if let Err(e) = spawned {
+        // The rows would then sit at whatever they last said. Loud, and not
+        // fatal: a run that cannot spawn a thread has bigger problems than a
+        // stale duration, and the region still redraws on every otto write.
+        log::warn!("install_region: could not start the progress refresh thread: {e}");
+    }
+}
+
 impl Facade {
     /// Not `pub`: callers reach the process-wide instance through [`facade`].
     /// Tests build their own to exercise the lock and the ownership handoff
@@ -93,6 +142,8 @@ impl Facade {
         Self {
             order: Mutex::new(()),
             terminal: Mutex::new(None),
+            region: Mutex::new(None),
+            at_line_start: AtomicBool::new(true),
         }
     }
 
@@ -107,6 +158,15 @@ impl Facade {
         self.terminal.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Take the region lock, recovering poisoning for the same reason
+    /// [`Facade::order`] does. A poisoned region lock means a panic happened
+    /// with rows half-updated, which costs at worst one wrong row for one
+    /// refresh interval; refusing to draw for the rest of the run would be the
+    /// worse failure.
+    fn region(&self) -> MutexGuard<'_, Option<Region>> {
+        self.region.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// One write, ordered against every other facade write, then flushed.
     ///
     /// Flushing per write (rather than batching) is deliberate: task output is
@@ -119,21 +179,75 @@ impl Facade {
     /// is nowhere left to report a failed terminal write to.
     pub fn write(&self, stream: Stream, bytes: &str) {
         let _order = self.order();
-        if let Some(held) = self.terminal().as_mut() {
+        self.deliver(stream, bytes);
+    }
+
+    /// One write that must START at column zero.
+    ///
+    /// Every line otto authors about a task goes through here - completion,
+    /// failure, skip, the run-cancelled notice, a prune warning - because a
+    /// task whose last chunk had no trailing newline leaves the cursor
+    /// mid-line, and otto's own line then reads as a continuation of the
+    /// task's: `[nonl] DONE[nonl] finished successfully`, measured on `main` at
+    /// `1783f1c`. Replay already did this for a log whose last line was
+    /// unterminated (`scheduler/replay.rs`); the live path never had.
+    ///
+    /// The guard is a newline, not a carriage return: the child's bytes are
+    /// already on the screen and are not otto's to erase.
+    pub fn write_line(&self, stream: Stream, bytes: &str) {
+        let _order = self.order();
+        if self.at_line_start.load(Ordering::Relaxed) {
+            self.deliver(stream, bytes);
+        } else {
+            self.deliver(stream, &format!("\n{bytes}"));
+        }
+    }
+
+    /// Send `bytes` where they are going, whatever otto is doing with the
+    /// terminal right now. Caller holds `order`.
+    ///
+    /// Three destinations and one of them is not the terminal: held, while a
+    /// `tty:` task owns it; through a region suspension, while rows are drawn;
+    /// straight out, otherwise.
+    fn deliver(&self, stream: Stream, bytes: &str) {
+        let mut terminal = self.terminal();
+        if let Some(held) = terminal.as_mut() {
             held.push(stream, bytes.as_bytes());
+            self.note_written(bytes);
             return;
         }
-        match stream {
-            Stream::Stdout => {
-                let mut w = io::stdout().lock();
-                let _ = w.write_all(bytes.as_bytes());
-                let _ = w.flush();
+        drop(terminal);
+        let mut region = self.region();
+        match region.as_mut() {
+            Some(region) => region.suspend(|| {
+                raw_write(stream, bytes);
+                self.note_written(bytes);
+                // Before the redraw `suspend` is about to do, which is the
+                // design doc's "the facade emits a `\n` before ... a row draw
+                // when the last byte it wrote was not one". Without it the
+                // first row overwrites the child's unterminated last line, and
+                // the next erase then deletes child output.
+                self.ensure_line_start();
+            }),
+            None => {
+                raw_write(stream, bytes);
+                self.note_written(bytes);
             }
-            Stream::Stderr => {
-                let mut w = io::stderr().lock();
-                let _ = w.write_all(bytes.as_bytes());
-                let _ = w.flush();
-            }
+        }
+    }
+
+    /// Record whether the terminal's cursor is now at column zero.
+    fn note_written(&self, bytes: &str) {
+        if let Some(last) = bytes.as_bytes().last() {
+            self.at_line_start.store(*last == b'\n', Ordering::Relaxed);
+        }
+    }
+
+    /// Put the cursor at column zero if it is not there already. Caller holds
+    /// `order`, and the region (if any) is already cleared.
+    fn ensure_line_start(&self) {
+        if !self.at_line_start.swap(true, Ordering::Relaxed) {
+            raw_write(Stream::Stderr, "\n");
         }
     }
 
@@ -167,15 +281,116 @@ impl Facade {
             return f(&mut streams);
         }
         drop(terminal);
+        let mut region = self.region();
+        match region.as_mut() {
+            // ONE suspension for the whole block, never one per line: that is
+            // what keeps a replayed group contiguous and what keeps a chatty
+            // block from clearing and redrawing the region per line.
+            Some(region) => region.suspend(|| self.block_on_terminal(f)),
+            None => self.block_on_terminal(f),
+        }
+    }
+
+    /// [`Facade::block`]'s terminal leg: the two locked handles, wrapped so the
+    /// newline tracking sees what a block wrote. Caller holds `order`, and the
+    /// region (if any) is suspended.
+    fn block_on_terminal<R>(&self, f: impl FnOnce(&mut BlockStreams<'_>) -> R) -> R {
         let stdout = io::stdout();
         let stderr = io::stderr();
-        let mut out = stdout.lock();
-        let mut err = stderr.lock();
+        let mut out = TrackedWriter {
+            inner: &mut stdout.lock(),
+            at_line_start: &self.at_line_start,
+        };
+        let mut err = TrackedWriter {
+            inner: &mut stderr.lock(),
+            at_line_start: &self.at_line_start,
+        };
         let mut streams = BlockStreams {
             out: &mut out,
             err: &mut err,
         };
-        f(&mut streams)
+        let result = f(&mut streams);
+        self.ensure_line_start();
+        result
+    }
+
+    /// Install the live region, once, and say whether it took.
+    ///
+    /// A no-op in [`ProgressMode::Quiet`], which is the whole tty gate: a
+    /// captured run gets no region and so writes zero renderer bytes, by there
+    /// being no renderer rather than by a renderer choosing to stay quiet.
+    ///
+    /// `task_names` is the run set, for the width of the name column. Read once
+    /// here rather than recomputed per row, so the column does not jump as
+    /// tasks come and go.
+    pub(super) fn set_region(&self, mode: ProgressMode, task_names: &[String]) -> bool {
+        if mode == ProgressMode::Quiet {
+            return false;
+        }
+        let _order = self.order();
+        let mut region = self.region();
+        if region.is_some() {
+            return false;
+        }
+        debug!("set_region: live region armed over {} task(s)", task_names.len());
+        *region = Some(Region::new(task_names));
+        true
+    }
+
+    /// A task started running: give it a row.
+    ///
+    /// Takes the task's own [`TaskClock`](crate::executor::clocks::TaskClock),
+    /// not just its name. The design doc's API sketch passes a name alone, but
+    /// the row has to read the same clock the completion line does or the two
+    /// drift, which is the defect this phase exists to close; the clock is only
+    /// in hand at the call site, so it comes in as an argument rather than
+    /// being looked up in a second map.
+    ///
+    /// Outside any [`Facade::block`], per the facade's third rule.
+    pub fn task_started(&self, name: &str, clock: std::sync::Arc<crate::executor::clocks::TaskClock>) {
+        let _order = self.order();
+        if self.terminal().is_some() {
+            return;
+        }
+        if let Some(region) = self.region().as_mut() {
+            self.ensure_line_start();
+            region.started(name, clock);
+        }
+    }
+
+    /// A task reported: take its row off the screen.
+    pub fn task_finished(&self, name: &str) {
+        let _order = self.order();
+        if self.terminal().is_some() {
+            return;
+        }
+        if let Some(region) = self.region().as_mut() {
+            self.ensure_line_start();
+            region.finished(name);
+        }
+    }
+
+    /// Recompute every row from its clock, and say whether the region is still
+    /// installed.
+    ///
+    /// The return value is the refresh thread's stop condition: teardown takes
+    /// the region, so the absence of one IS "stop refreshing". No second flag to
+    /// keep in step with the first.
+    pub fn refresh(&self) -> bool {
+        let _order = self.order();
+        if self.terminal().is_some() {
+            // Surrendered: the region is erased and the `tty:` child owns every
+            // column. Still installed, so the thread keeps going.
+            return self.region().is_some();
+        }
+        match self.region().as_mut() {
+            Some(region) => {
+                self.ensure_line_start();
+                region.refresh();
+                true
+            }
+            None => false,
+        }
     }
 
     /// Put the terminal back the way otto found it, ahead of anything that
@@ -188,12 +403,17 @@ impl Facade {
     /// Idempotent, because the exit paths overlap: a fatal error during a run
     /// that is also being signalled can reach two of them.
     ///
-    /// Today this only flushes. There is no live region to erase until Phase 5
-    /// of `docs/design/2026-09-16-live-progress-renderer.md` installs one; the
-    /// call sites exist now so that phase adds a renderer and not a scavenger
-    /// hunt for exit paths.
+    /// The region goes first, and it is ERASED rather than hidden: on a
+    /// terminal draw target `disconnect` is a no-op, so
+    /// `set_draw_target(hidden())` would leave the rows already on the screen
+    /// exactly where they are and only stop future draws. Erasing before the
+    /// held output is flushed is the same ordering every other site here keeps:
+    /// otto's own words never land in rows that are about to be wiped.
     pub fn teardown(&self) {
         let _order = self.order();
+        if let Some(mut region) = self.region().take() {
+            region.erase();
+        }
         // A run that exits while a `tty:` task still owns the terminal has held
         // output nobody else will ever flush: the task body that would hand
         // ownership back is about to be dropped, or already was. Teardown is
@@ -217,7 +437,10 @@ impl Facade {
     /// bound, and belongs to the caller because only it knows the task's run
     /// directory.
     ///
-    /// Phase 5 erases the live region here, before the child can draw over it.
+    /// The live region is erased here, before the child can draw over it, and
+    /// re-armed by [`Facade::reclaim`]. Driven by Phase 4's admission gate: by
+    /// the time a `tty:` task is admitted nothing else is in flight, so the
+    /// rows this erases are the last of them.
     pub fn surrender(&self, task: &str, spill_path: PathBuf) -> TerminalHandoff<'_> {
         let _order = self.order();
         let mut terminal = self.terminal();
@@ -229,6 +452,9 @@ impl Facade {
             return TerminalHandoff::new(self, false);
         }
         debug!("surrender: task={task} spill={}", spill_path.display());
+        if let Some(region) = self.region().as_mut() {
+            region.erase();
+        }
         *terminal = Some(Surrendered::new(task, spill_path));
         TerminalHandoff::new(self, true)
     }
@@ -238,7 +464,8 @@ impl Facade {
     /// Called from [`TerminalHandoff`]'s `Drop`, so it runs on the normal reap,
     /// on a spawn that failed, and on a cancelled run whose body is dropped.
     ///
-    /// Phase 5 re-arms the live region here, after the flush.
+    /// The region is re-armed here, AFTER the flush: held output is scrollback
+    /// and belongs above the rows, not underneath them.
     pub(super) fn reclaim(&self) {
         let _order = self.order();
         let held = self.terminal().take();
@@ -247,7 +474,21 @@ impl Facade {
         };
         let stdout = io::stdout();
         let stderr = io::stderr();
-        held.drain_into(&mut stdout.lock(), &mut stderr.lock());
+        {
+            let mut out = TrackedWriter {
+                inner: &mut stdout.lock(),
+                at_line_start: &self.at_line_start,
+            };
+            let mut err = TrackedWriter {
+                inner: &mut stderr.lock(),
+                at_line_start: &self.at_line_start,
+            };
+            held.drain_into(&mut out, &mut err);
+        }
+        if let Some(region) = self.region().as_mut() {
+            self.ensure_line_start();
+            region.rearm();
+        }
     }
 
     /// Take what is currently held without writing it anywhere.
@@ -261,6 +502,51 @@ impl Facade {
     pub(super) fn take_held(&self) -> Option<Surrendered> {
         let _order = self.order();
         self.terminal().take()
+    }
+}
+
+/// One best-effort write to one of otto's own handles.
+///
+/// Flushed per call, never panicking on failure: a run that ended because the
+/// terminal hung up has a stderr whose every write fails `EIO`, and there is
+/// nowhere left to report that to.
+fn raw_write(stream: Stream, bytes: &str) {
+    match stream {
+        Stream::Stdout => {
+            let mut w = io::stdout().lock();
+            let _ = w.write_all(bytes.as_bytes());
+            let _ = w.flush();
+        }
+        Stream::Stderr => {
+            let mut w = io::stderr().lock();
+            let _ = w.write_all(bytes.as_bytes());
+            let _ = w.flush();
+        }
+    }
+}
+
+/// A `Write` that keeps the facade's newline tracking honest about bytes that
+/// went out through a locked handle rather than through [`Facade::write`].
+///
+/// Replay writes whole log files this way, and a log whose last line is
+/// unterminated leaves the cursor mid-line exactly like a live final chunk
+/// does.
+struct TrackedWriter<'a> {
+    inner: &'a mut dyn Write,
+    at_line_start: &'a AtomicBool,
+}
+
+impl Write for TrackedWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let written = self.inner.write(buf)?;
+        if let Some(last) = buf[..written].last() {
+            self.at_line_start.store(*last == b'\n', Ordering::Relaxed);
+        }
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
     }
 }
 
