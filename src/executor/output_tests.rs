@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use super::*;
-use crate::executor::heartbeat::TaskClocks;
+use crate::executor::clocks::TaskClocks;
 
 #[tokio::test]
 async fn test_output_processing() {

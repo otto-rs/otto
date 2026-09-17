@@ -177,3 +177,70 @@ seven-match writer grep across four files and the four `terminal_lock()`
 acquisition sites. Every `file:line` citation in the Phase 0, Phase 4 and
 Phase 5 bullets, and in Architecture, API Design and Lifecycle and teardown, was
 read against the source and is correct, with item 5 above the only exception.
+
+## Phase 1: Remove the heartbeat
+
+`heartbeat.rs` renamed to `clocks.rs` (and its `#[path]`-included test file to
+`clocks_tests.rs`). Deleted: `beat_line`, `Heartbeat`, `Shutdown`, `Drop for
+Heartbeat`, `spawn`, `wake_granularity`, `MAX_WAKE`, `saturating_ms`, `tick`,
+`due_beats`, `emit_due` - the whole ticker, including its terminal write at the
+old `heartbeat.rs:429`. `TaskClock` and `TaskClocks` (`note_line`, `note_beat`,
+`idle_ms`, `since_beat_ms`, `elapsed`, `candidates`, all of it) are untouched,
+per the design doc's instruction to keep `TaskClock` as-is.
+
+### Design decisions
+
+- Followed the ticker's only remaining callers to their source rather than
+  stopping at `heartbeat.rs`. `TaskScheduler::start_heartbeat()`
+  (`scheduler.rs`) was the ticker's only arming site, and
+  `TaskScheduler::progress_interval` (the field) existed only to feed it, so
+  both were deleted along with `set_progress_interval()`. That made
+  `progress_interval` a dead parameter through `app.rs`'s
+  `execute_tasks` -> `execute_with_terminal_output` chain, so it was dropped
+  from both signatures and their three call sites. `RuntimeConfig.progress_interval`
+  itself (the CLI/config-facing field, still populated from `RunPlan` and
+  asserted by `app_tests.rs`) was left alone: it is Phase 3's territory, not
+  this phase's, and it is not dead - the test reads it.
+- `tests/progress_heartbeat_test.rs` was rewritten rather than deleted or left
+  in place. Its dozen wall-clock tests (up to 25s each) asserted the heartbeat
+  fires on schedule; with the ticker gone every positive assertion
+  (`beats.len() >= 3`, `!beats.is_empty()`) would fail for real, and the
+  negative ones (`--progress-interval 0` emits nothing) would pass but for the
+  wrong reason - proving nothing is impossible when nothing can ever beat.
+  Replaced with three fast (~2s) tests asserting the mirror claim: no `still
+  running` line appears at any `--progress-interval` value, including the
+  `\r`-redrawn-bar shape the original feature existed for, and that
+  `--progress-interval` itself still parses and runs without error (its
+  removal is Phase 3's job).
+- `scheduler.rs`'s `tick_candidates()` doc comment referenced "Phase 3's ticker
+  thread" (the OLD, shipped design's phase); reworded since that thread no
+  longer exists. Left the surrounding "heartbeat"/"still running" language
+  alone everywhere else it appears only in doc comments or CLI help text
+  (`cli/parser.rs`, `cli/parser/help.rs`, `cfg/otto.rs`, `colors.rs`,
+  `scheduler_tests_c.rs`) - those describe `progress-interval` CLI/config
+  plumbing or historical rationale that Phase 3 owns, and none of them is
+  false about code this phase touched.
+
+### Deviations
+
+- None from the design doc's Phase 1 bullets themselves. The cascading
+  deletions above (scheduler field/method, `app.rs` parameter threading,
+  rewriting the e2e test file) are not named in the doc's Phase 1 section, but
+  they are the direct, unavoidable consequence of deleting the ticker the doc
+  does name: leaving them in place would have left a dead private field
+  (`progress_interval`) and a test suite asserting removed behavior, neither
+  of which compiles/passes cleanly.
+
+### Tradeoffs
+
+- Rewrote `tests/progress_heartbeat_test.rs` in place (same filename) rather
+  than deleting it and starting a new file. The design doc's own instruction
+  ("update or delete any test that asserts a beat line, rather than preserving
+  it") reads as license for either; keeping the filename preserves the
+  end-to-end coverage this feature's removal deserves without inventing a new
+  name only to have Phase 5 possibly need an equivalent file again for the
+  live region.
+
+### Open questions
+
+None.

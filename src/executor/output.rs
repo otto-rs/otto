@@ -14,8 +14,8 @@ use tokio::{
 };
 
 use super::{
+    clocks::TaskClock,
     colors::{stderr_takes_color, stream_task_label},
-    heartbeat::TaskClock,
 };
 
 /// Capacity of a task's output broadcast channel. Large because a chatty task can

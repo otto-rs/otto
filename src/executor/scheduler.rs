@@ -25,8 +25,8 @@ use super::state::SkipKind;
 use super::task::{Task, TaskEdge};
 use super::{
     action::{ActionProcessor, ProcessedAction},
+    clocks::{TaskClock, TaskClocks},
     colors::{set_global_task_order, stderr_takes_color, stream_task_label},
-    heartbeat::{self, TaskClock, TaskClocks},
     output::{OutputType, TaskMessage, TaskStreams, TuiTaskStatus, format_terminal_output, terminal_lock},
     workspace::{ExecutionContext, Workspace},
 };
@@ -1260,13 +1260,8 @@ pub struct TaskScheduler<F: FileSystem = crate::ports::RealFs> {
     /// `TaskScheduler::new()` call sites (tests included) don't have to
     /// thread a flag that almost none of them exercise.
     no_prefix: bool,
-    /// Seconds of task silence before otto reports the task is still
-    /// running; `0` disables. Set via `set_progress_interval()`, same
-    /// reasoning as `no_prefix` above. Read by `start_heartbeat()`, which is
-    /// the ticker's only arming site.
-    progress_interval: u64,
     /// Every non-`tty:` task's idle clock for this run (design doc
-    /// docs/design/2026-09-15-idle-task-heartbeat.md). Timing only: what is
+    /// docs/design/2026-09-16-live-progress-renderer.md). Timing only: what is
     /// alive is `live_children` below, and this map only says how long each of
     /// those has been silent.
     clocks: Arc<TaskClocks>,
@@ -1321,11 +1316,6 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
             tasks,
             tui_mode,
             no_prefix: false,
-            // Matches otto's own CLI default (`cli::parser::DEFAULT_PROGRESS_INTERVAL`)
-            // so a caller that never calls `set_progress_interval` (most of
-            // today's test call sites) still carries otto's real default
-            // rather than an arbitrary placeholder.
-            progress_interval: 10,
             clocks: Arc::new(TaskClocks::default()),
             live_children: LiveChildren::default(),
             message_tx: None,
@@ -1401,52 +1391,11 @@ impl<F: FileSystem + 'static> TaskScheduler<F> {
         self.no_prefix = no_prefix;
     }
 
-    pub fn set_progress_interval(&mut self, progress_interval: u64) {
-        self.progress_interval = progress_interval;
-    }
-
-    /// Start this run's `still running` ticker.
-    ///
-    /// Called immediately before `execute_all` and stopped immediately after it
-    /// returns, which is the whole of the ticker's lifetime. Armed no earlier
-    /// than that on purpose: an invocation that executes no task (`--tasks`,
-    /// `--help`, `makefile convert`, every other subcommand) never reaches
-    /// here, and Phase 0 of the design doc measured what an earlier arming
-    /// breaks - `makefile_converter_test::test_strict_passes_a_makefile_that_converts_cleanly`
-    /// asserts an empty stderr and `tasks_flag_test::tasks_defaults_to_yaml_on_a_real_tty`
-    /// parses a pty's merged streams as one YAML document.
-    ///
-    /// Nothing is emitted under `--tui`, matching the `tui_mode` guard on
-    /// `report_status_line`: the dashboard owns its own rendering.
-    pub fn start_heartbeat(&self) -> heartbeat::Heartbeat {
-        // Zero is the off switch `spawn` already honors for
-        // `--progress-interval 0`, so TUI mode reuses it rather than adding a
-        // second way to be disabled.
-        let interval = if self.tui_mode { 0 } else { self.progress_interval };
-        let children = self.live_children.clone();
-        heartbeat::spawn(
-            Duration::from_secs(interval),
-            self.no_prefix,
-            self.clocks.clone(),
-            // The tick's liveness read, taken on the ticker thread: a
-            // `blocking_lock` on a tokio mutex is legal there and only there,
-            // since it panics inside a runtime context. Reading the registry
-            // itself is what leaves nothing to drift.
-            move || {
-                let mut names: Vec<String> = children.blocking_lock().keys().cloned().collect();
-                names.sort();
-                names
-            },
-        )
-    }
-
-    /// The tasks a heartbeat tick would consider right now, each with its
+    /// The tasks a live-progress read would consider right now, each with its
     /// clock: every task with a live child that has one.
     ///
     /// Liveness is read straight from the registry the task bodies write, so
-    /// there is nothing to drift. Async because that registry is a tokio mutex;
-    /// Phase 3's ticker thread takes the same two reads with `blocking_lock`
-    /// from outside the runtime.
+    /// there is nothing to drift. Async because that registry is a tokio mutex.
     pub async fn tick_candidates(&self) -> Vec<(String, Arc<TaskClock>)> {
         self.clocks.candidates(&self.live_child_names().await)
     }

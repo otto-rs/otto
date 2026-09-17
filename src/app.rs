@@ -309,8 +309,10 @@ pub struct RuntimeConfig {
     /// See docs/design/2026-08-28-boundary-fixes-and-dynamic-foreach.md Phase 8.
     pub no_prefix: bool,
     /// Seconds of task silence before otto reports the task is still
-    /// running. See `RunPlan::progress_interval`; nothing reads this until
-    /// Phase 3 of docs/design/2026-09-15-idle-task-heartbeat.md.
+    /// running. See `RunPlan::progress_interval`. The heartbeat that used to
+    /// read this was removed in Phase 1 of
+    /// docs/design/2026-09-16-live-progress-renderer.md; nothing reads this
+    /// field until that doc's Phase 3 wires the deprecation warning.
     pub progress_interval: u64,
     pub retention: RetentionSpec,
     /// The task and subtask names literally requested, for the run record.
@@ -360,7 +362,6 @@ pub async fn run(config: RuntimeConfig) -> Result<()> {
         config.jobs,
         config.tui_mode,
         config.no_prefix,
-        config.progress_interval,
         config.retention,
         config.requested_tasks,
     )
@@ -376,7 +377,6 @@ pub async fn execute_tasks(
     jobs: usize,
     tui_mode: bool,
     no_prefix: bool,
-    progress_interval: u64,
     retention: RetentionSpec,
     requested_tasks: Vec<String>,
 ) -> Result<(), Report> {
@@ -402,7 +402,6 @@ pub async fn execute_tasks(
                 ottofile_path,
                 jobs,
                 no_prefix,
-                progress_interval,
                 retention,
                 requested_tasks,
             )
@@ -412,22 +411,9 @@ pub async fn execute_tasks(
         // TUI mode already suppresses all terminal output (suppress_terminal
         // is derived from tui_mode in the scheduler), so no_prefix has nothing
         // to act on here: no prefix is ever printed to a terminal the TUI owns.
-        // The heartbeat is TUI's non-goal too (Non-Goals,
-        // docs/design/2026-09-15-idle-task-heartbeat.md), so `progress_interval`
-        // is not threaded into `execute_with_tui`.
         execute_with_tui(tasks, hash, ottofile_path, jobs, retention, requested_tasks).await
     } else {
-        execute_with_terminal_output(
-            tasks,
-            hash,
-            ottofile_path,
-            jobs,
-            no_prefix,
-            progress_interval,
-            retention,
-            requested_tasks,
-        )
-        .await
+        execute_with_terminal_output(tasks, hash, ottofile_path, jobs, no_prefix, retention, requested_tasks).await
     }
 }
 
@@ -439,7 +425,6 @@ pub async fn execute_with_terminal_output(
     ottofile_path: Option<PathBuf>,
     jobs: usize,
     no_prefix: bool,
-    progress_interval: u64,
     retention: RetentionSpec,
     requested_tasks: Vec<String>,
 ) -> Result<(), Report> {
@@ -474,7 +459,6 @@ pub async fn execute_with_terminal_output(
     let workspace = Arc::new(workspace);
     let mut scheduler = TaskScheduler::new(executor_tasks, workspace.clone(), execution_context, jobs, false).await?;
     scheduler.set_no_prefix(no_prefix);
-    scheduler.set_progress_interval(progress_interval);
 
     // Ctrl+C has to reach the scheduler, not just the process. Without this the
     // terminal's SIGINT default-killed otto outright and `abandon_run` never
@@ -484,18 +468,8 @@ pub async fn execute_with_terminal_output(
     // dashboard flag to set and no terminal to hand back.
     install_stop_handler(scheduler.cancel_signal(), || {}, || {});
 
-    // The `still running` ticker is armed here and nowhere earlier: this is the
-    // last point before the run itself, so an invocation that executes no task
-    // never starts one (docs/design/2026-09-15-idle-task-heartbeat.md, Phase 0).
-    let mut heartbeat = scheduler.start_heartbeat();
-
     // Execute all tasks, capturing result
     let result = scheduler.execute_all().await;
-
-    // Stopped before anything else prints. The stop is half of "no heartbeat
-    // follows the final status line"; the other half is the ticker re-deciding
-    // under the terminal lock, since a tick can be waiting for that lock here.
-    heartbeat.stop();
 
     // Close the run out in the database before anything else reads it: prune
     // included, since a run left `running` is a run `Clean` cannot age out.
