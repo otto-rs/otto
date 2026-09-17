@@ -60,7 +60,13 @@ pub fn otto_std_cmd(home: &Path) -> std::process::Command {
 /// such as `script -qec "<otto ...>"` in the pty tests, where the binary is
 /// spawned by the shell `script` starts and inherits `script`'s environment.
 pub fn isolate<'c>(cmd: &'c mut std::process::Command, home: &Path) -> &'c mut std::process::Command {
-    cmd.env("OTTO_HOME", home).env_remove("OTTO_DB_PATH")
+    // `CI` is scrubbed here, not per test, because forgetting it is invisible
+    // locally and fatal in CI: `--progress auto` is Live only when no `CI` var
+    // is set (`progress::mode`), so a pty test that asserts live rows passes on
+    // a workstation and fails on every runner. `always` was cut in Phase 0, so
+    // there is no flag that can force a region back on; scrubbing the variable
+    // is the only lever a test has.
+    cmd.env("OTTO_HOME", home).env_remove("OTTO_DB_PATH").env_remove("CI")
 }
 
 /// Build a `StateManager` rooted at `home`'s `otto.db`, for tests that talk

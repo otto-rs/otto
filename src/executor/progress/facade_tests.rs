@@ -243,8 +243,11 @@ fn pty_slave() -> (OwnedFd, OwnedFd) {
             &mut master_fd,
             &mut slave_fd,
             std::ptr::null_mut(),
-            std::ptr::null(),
-            std::ptr::null(),
+            // `*mut`, not `*const`: glibc declares these two as `const` and
+            // Apple's libc does not, so a null `*const` compiles on Linux and
+            // fails E0308 on macOS. A null `*mut` satisfies both.
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
         )
     };
     assert_eq!(rc, 0, "openpty failed: {}", std::io::Error::last_os_error());

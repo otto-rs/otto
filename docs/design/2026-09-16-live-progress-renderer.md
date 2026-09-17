@@ -1022,6 +1022,17 @@ existing ottofiles.
   Concretely `row_cap` now gives 1 at height 3, 2 at height 4, 3 at height 5,
   and is unchanged from 6 up.
 
+- **Cutting `always` makes the live region untestable in any CI environment
+  without scrubbing the environment.** `auto` is Live only when no `CI` var is
+  set, and with `always` gone there is no flag that forces a region back on. A
+  pty test that asserts live rows therefore passes on a workstation and fails
+  on every runner, which is exactly how this shipped: three tests in
+  `tests/progress_region_test.rs` went red on the first push. The lever a test
+  has is `env_remove("CI")`, and it lives in the shared `isolate()` helper
+  (`tests/common/mod.rs`) rather than in each test, because forgetting it is
+  invisible locally. This is the cost of the cut and it was not predicted when
+  the cut was made.
+
 ## Risks and Mitigations
 
 | Risk | Likelihood | Impact | Mitigation |
