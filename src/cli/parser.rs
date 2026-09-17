@@ -1087,8 +1087,17 @@ impl Parser {
         // field doc for why), so it is validated here through the same
         // `ProgressSetting::parse` the CLI flag uses - the one place both
         // surfaces share the same accepted spellings and the same error text.
-        if !progress_explicit && let Some(progress) = &self.config_spec.otto.progress {
-            self.progress = ProgressSetting::parse(progress).map_err(|e| eyre!("otto.progress: {e}"))?;
+        //
+        // VALIDATED whether or not it wins, and applied only when it does. An
+        // ottofile is shared; parsing it only when no higher-precedence source
+        // is present made a typo'd `otto.progress` refuse the run for everyone
+        // who does not export `$OTTO_PROGRESS` and pass silently for everyone
+        // who does. `otto.jobs` cannot drift that way because serde types it.
+        if let Some(progress) = &self.config_spec.otto.progress {
+            let from_file = ProgressSetting::parse(progress).map_err(|e| eyre!("otto.progress: {e}"))?;
+            if !progress_explicit {
+                self.progress = from_file;
+            }
         }
 
         // Inject built-in commands

@@ -900,3 +900,137 @@ Five pieces, all of them behind the facade Phase 2 built:
 - **`--progress-interval` is still accepted, ignored, and warned**, per the
   migration plan. The release after this one removes it, along with
   `RuntimeConfig::progress_interval` and the `otto.progress-interval` key.
+
+## Audit remediation (round 1)
+
+Remediation on top of the completed five phases, not a sixth phase. Base
+`9c22b3d`. Findings from the round-1 implementation audit
+(`/tmp/review-panel/2iTWowMT/synthesis.md`, probes in `probes.md`): must-fix
+M1-M4, cheap wins C1-C3. M5 is the doc's own corrections and is not mine. D1 is
+deferred by decision, below.
+
+### Design decisions
+
+- **Line state is per stream, plus a measured "are these one destination?"
+  answer** - `src/executor/progress/facade.rs`, `Facade::at_line_start` /
+  `set_line_start` / `streams_share_destination` - because neither a single flag
+  nor two independent flags is correct on its own. The single flag put a leading
+  newline into a captured stdout when the unterminated chunk was on stderr, and
+  sent the corrective newline to stderr when the stream that needed it was a
+  redirected stdout. Two independent flags fix both and break the case the
+  single flag got right: one terminal, where an unterminated chunk on either
+  stream leaves the same cursor mid-line. `fstat` on both handles and comparing
+  `(st_dev, st_ino, st_rdev)` answers exactly that question - one terminal
+  answers the same triple twice, so does `> log 2>&1`, and two pipes do not -
+  and it is a property of the invocation, so it is read once at construction.
+- **The corrective newline before a row draw goes to the REGION's stream**, not
+  to the stream the write went to (`Facade::deliver`, `REGION_STREAM`). The
+  question that write answers is "is the terminal the rows are about to land on
+  at column zero", and a write to a redirected stdout moved no cursor there.
+- **`row_cap` reserves the separator and the overflow row inside the clamp**
+  (`region.rs`, `CHROME_ROWS`), not only inside `RESERVED_ROWS`. The floor
+  overrides the reserve on a short terminal: `max(3, h - 6)` is 3 at h=3, and
+  three task rows plus two chrome rows is five lines on a three-line screen, so
+  indicatif dropped the overflow row the cap exists to protect. Heights 6 and up
+  are unchanged, which is why the audit's 8-row control still reads the same.
+- **The panic boundary is `Region::shielded`, one wrapper every entry point
+  that reaches indicatif goes through** - `suspend`, `started`, `finished`,
+  `refresh`, `erase`, `rearm`. `suspend` additionally guarantees its closure
+  runs exactly once: it is taken out of an `Option` inside the suspension, so a
+  panic in indicatif's `clear().unwrap()` (before the write) still performs the
+  plain write, and a panic in its `draw().unwrap()` (after the write) does not
+  repeat it.
+- **Retiring LEAKS the bars** (`Region::retire`). `BarState::drop` finishes the
+  bar, and finishing draws, taking the same indicatif `RwLock` the panic just
+  poisoned. A panic in a destructor during unwinding aborts the process, so
+  without the leak a degraded renderer turned into `SIGABRT` at teardown -
+  observed, not predicted: the first version of the boundary aborted the test
+  binary. One region per run, a row per running task, so the leak is bounded by
+  the run.
+- **The defensive `\x1b[0m` goes in `Facade::reclaim`, before the held output
+  is drained** and gated on stderr being a terminal. Before the drain because
+  the held bytes are otto's own and would otherwise render in the child's
+  colour; gated because a captured stream has no attributes to reset and must
+  not gain escape bytes. It deliberately does not go through `note_written`: a
+  reset moves no cursor, so it changes no line state.
+- **`otto.progress` is validated whenever it is present and applied only when
+  it wins** (`src/cli/parser.rs`). Validation and precedence are two questions
+  and the old code answered both with one `if`.
+- **`Region::refresh` rebalances against the CURRENT cap** before redrawing, and
+  demotion takes from the end of `drawn` to the front of `waiting` so a shrink
+  and a regrow return the same rows in the same order. This also makes
+  `region.rs`'s "re-read per use ... which is also the SIGWINCH handling" claim
+  and notes' "width and height are re-read on every draw" true; before it, the
+  cap was read in `started` and nowhere else.
+
+### Deviations
+
+- **The panic boundary lives in `Region`, not in `Facade`.** The doc says "the
+  facade catches". Same effect, correct seam: `Region` is the only module that
+  calls indicatif, it is reachable only through the facade, and only it can
+  retire the renderer and keep `suspend`'s return value. Catching in `Facade`
+  would have needed the same closure-taken-once dance one frame further out,
+  with no way to mark the renderer retired.
+- **The other half of doc:388-394, "the facade must treat a poisoned bar lock
+  as renderer permanently retired", is NOT implemented, on purpose.** It was
+  written against indicatif's steady ticker, which Phase 4/5 removed; with no
+  indicatif-spawned thread there is no bar-lock panic outside a facade frame, so
+  the requirement is moot by construction. `Region::retire` covers the case that
+  does exist, a panic inside a facade frame.
+- **`row_cap(3)` is now 1, not 2.** `a_short_terminal_is_clamped_below_the_floor`
+  pinned the old answer by name and is inverted, not deleted, to
+  `a_short_terminal_still_leaves_the_separator_and_the_overflow_row_a_line_each`.
+- **`tests/progress_spike_pty_test.rs`'s SIGWINCH fixture is left alone.** Its
+  comment claims it tells "handled" from "ignored" and it cannot, but it is a
+  Phase 0 measurement of the pre-region baseline and it still measures that
+  correctly. The missing fixture is added beside it rather than by rewriting it:
+  `tests/progress_winsize_test.rs` owns the pty master, so it can choose and
+  change the winsize, which no `script`-based test can.
+
+### Tradeoffs
+
+- **`fstat` comparison vs. `isatty` on both handles** for the one-destination
+  question. `isatty` cannot tell `> log 2>&1` (one destination) from `> out
+  2> err` (two), and both are configurations otto supports. `fstat` treats
+  `> f 2> f` - two independent opens of one path - as shared, which is at worst
+  one stray newline in output whose two streams are already interleaving on
+  independent offsets.
+- **Leaking the bars on retire vs. dropping them inside another
+  `catch_unwind`.** A destructor panic is not catchable; it aborts. Leaking is
+  the only way to keep a degraded render from becoming a dead process.
+- **Rebalancing on `refresh` (5/s) vs. installing a SIGWINCH handler.** A
+  handler is a second source of truth for a number `Term::stderr().size()`
+  already answers, and the design's whole position on the winsize is "re-read
+  it, do not cache it". The cost is that a resize takes up to one refresh
+  interval to land, which is 200ms.
+- **Retiring is permanent rather than retried.** The first panic poisons
+  indicatif's own `RwLock`, which indicatif does not recover, so a retry would
+  panic again on every later call. A run that lost its renderer keeps its
+  output; it does not get its rows back.
+- **`tests/progress_winsize_test.rs` costs ~19s of suite time** (three runs of
+  six 6s tasks). The shorter fixture that would have fit in 2s cannot show a
+  resize taking effect while tasks are still running, which is the whole claim.
+
+### Open questions
+
+- **D1, the partially written spill record, is deferred and unfixed.**
+  `ownership.rs`'s `spill_write` writes `tag | len | bytes` and, if the payload
+  write fails after a prefix reached disk, appends the WHOLE payload to
+  `overflow`; `drain_spill`'s `io::copy(&mut reader.take(len), sink)` never
+  compares the copied count to `len`, so the prefix is emitted and then the
+  full payload again. It needs a disk-full during a tty handoff, the path
+  already prints a WARNING naming the spill failure, and it duplicates bytes
+  rather than losing them. Worth one line in Known Limits even if the code does
+  not change.
+- **The audit demoted, and this remediation did not touch, the "screen
+  CONTENTS" criterion.** The doc defines the phrase as "strips CR but not cursor
+  control" and `tests/progress_region_test.rs` complies with that definition
+  literally; codex's falsification of the criterion reproduces, so
+  `out.contains` cannot see an erasure even with the control bytes retained.
+  That is a weak criterion in the doc's Testing Strategy, not work a phase
+  skipped.
+- **`tests/progress_winsize_test.rs` removes `$CI` from otto's environment.**
+  `ProgressMode::resolve` is Quiet whenever `$CI` is set, so without the removal
+  every assertion in the file would be vacuously satisfied on a CI runner
+  instead of failing there. The pty tests that predate it do not do this and
+  would go quiet on a runner. Whether they should is a separate call.

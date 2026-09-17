@@ -19,7 +19,7 @@
 
 use std::{
     cell::RefCell,
-    io::{self, Write},
+    io::{self, IsTerminal, Write},
     path::PathBuf,
     sync::{
         Mutex, MutexGuard, OnceLock, PoisonError,
@@ -46,6 +46,30 @@ pub enum Stream {
     Stdout,
     Stderr,
 }
+
+impl Stream {
+    /// This stream's slot in the facade's per-stream arrays.
+    fn index(self) -> usize {
+        match self {
+            Self::Stdout => 0,
+            Self::Stderr => 1,
+        }
+    }
+
+    /// The other one. Line state propagates across this edge, and only when
+    /// the two handles turn out to be the same destination.
+    fn other(self) -> Self {
+        match self {
+            Self::Stdout => Self::Stderr,
+            Self::Stderr => Self::Stdout,
+        }
+    }
+}
+
+/// The stream the live region draws on, named once rather than spelled
+/// `Stream::Stderr` at each of the five sites that mean "the terminal the rows
+/// are on" rather than "the stream this write is going to".
+const REGION_STREAM: Stream = Stream::Stderr;
 
 /// Both streams, locked together, handed to a [`Facade::block`] closure.
 ///
@@ -84,16 +108,31 @@ pub struct Facade {
     /// `Some` on the live path, from [`install_region`] until teardown. Always
     /// taken AFTER `terminal`, at every site: one lock order, stated once.
     region: Mutex<Option<Region>>,
-    /// Whether the last byte the facade wrote was a newline.
+    /// Whether the last byte the facade wrote to each stream was a newline,
+    /// indexed by [`Stream::index`].
     ///
     /// This is the unterminated-final-chunk fix (design doc, "Unterminated
     /// final chunk"), and it is a pre-existing defect on `main`, not something
     /// the region introduced: `read_until(b'\n')` yields a final chunk with no
     /// newline at EOF, so `printf DONE` in a task put otto's own completion
-    /// line on the end of the task's last line. Tracked across BOTH streams,
-    /// because they are one terminal: the cursor a completion line on stdout
-    /// starts at is wherever the last write to stderr left it.
-    at_line_start: AtomicBool,
+    /// line on the end of the task's last line.
+    ///
+    /// Per stream, not one flag for both. One flag was right only when the two
+    /// handles land on the same destination, and wrong in both directions
+    /// otherwise: an unterminated chunk on stderr put a leading newline into a
+    /// captured stdout that never needed one, and an unterminated chunk on a
+    /// redirected stdout was answered by a newline sent to a stderr that was
+    /// somewhere else entirely. [`Facade::one_destination`] is what re-couples
+    /// them when they really are one terminal.
+    at_line_start: [AtomicBool; 2],
+    /// Whether otto's stdout and stderr resolve to the SAME open destination -
+    /// one terminal, or one file both were redirected to.
+    ///
+    /// Decided once, from `fstat`, because it is a property of how otto was
+    /// invoked and cannot change mid-run. When it holds, the two streams share
+    /// one cursor and so share one line state; when it does not, a newline
+    /// written to one says nothing about where the other is.
+    one_destination: bool,
 }
 
 /// The one facade. A `OnceLock` rather than a threaded parameter, mirroring the
@@ -139,11 +178,19 @@ impl Facade {
     /// Tests build their own to exercise the lock and the ownership handoff
     /// without racing the harness's captured output.
     pub(super) fn new() -> Self {
+        Self::with_one_destination(streams_share_destination())
+    }
+
+    /// [`Facade::new`] with the stdout/stderr sharing answer supplied rather
+    /// than measured, so a test can assert both configurations without being
+    /// at the mercy of how the harness wired its own handles.
+    pub(super) fn with_one_destination(one_destination: bool) -> Self {
         Self {
             order: Mutex::new(()),
             terminal: Mutex::new(None),
             region: Mutex::new(None),
-            at_line_start: AtomicBool::new(true),
+            at_line_start: [AtomicBool::new(true), AtomicBool::new(true)],
+            one_destination,
         }
     }
 
@@ -196,7 +243,7 @@ impl Facade {
     /// already on the screen and are not otto's to erase.
     pub fn write_line(&self, stream: Stream, bytes: &str) {
         let _order = self.order();
-        if self.at_line_start.load(Ordering::Relaxed) {
+        if self.line_start(stream) {
             self.deliver(stream, bytes);
         } else {
             self.deliver(stream, &format!("\n{bytes}"));
@@ -213,7 +260,7 @@ impl Facade {
         let mut terminal = self.terminal();
         if let Some(held) = terminal.as_mut() {
             held.push(stream, bytes.as_bytes());
-            self.note_written(bytes);
+            self.note_written(stream, bytes.as_bytes());
             return;
         }
         drop(terminal);
@@ -221,33 +268,51 @@ impl Facade {
         match region.as_mut() {
             Some(region) => region.suspend(|| {
                 raw_write(stream, bytes);
-                self.note_written(bytes);
+                self.note_written(stream, bytes.as_bytes());
                 // Before the redraw `suspend` is about to do, which is the
                 // design doc's "the facade emits a `\n` before ... a row draw
                 // when the last byte it wrote was not one". Without it the
                 // first row overwrites the child's unterminated last line, and
-                // the next erase then deletes child output.
-                self.ensure_line_start();
+                // the next erase then deletes child output. The region's own
+                // stream, not `stream`: this is about where the ROWS are about
+                // to land, and a write to a redirected stdout moved no cursor
+                // on the terminal they land on.
+                self.ensure_line_start(REGION_STREAM);
             }),
             None => {
                 raw_write(stream, bytes);
-                self.note_written(bytes);
+                self.note_written(stream, bytes.as_bytes());
             }
         }
     }
 
-    /// Record whether the terminal's cursor is now at column zero.
-    fn note_written(&self, bytes: &str) {
-        if let Some(last) = bytes.as_bytes().last() {
-            self.at_line_start.store(*last == b'\n', Ordering::Relaxed);
+    /// Whether `stream`'s cursor is at column zero.
+    fn line_start(&self, stream: Stream) -> bool {
+        self.at_line_start[stream.index()].load(Ordering::Relaxed)
+    }
+
+    /// Record where `stream`'s cursor now is, and the other stream's too when
+    /// the two are one destination.
+    fn set_line_start(&self, stream: Stream, value: bool) {
+        self.at_line_start[stream.index()].store(value, Ordering::Relaxed);
+        if self.one_destination {
+            self.at_line_start[stream.other().index()].store(value, Ordering::Relaxed);
         }
     }
 
-    /// Put the cursor at column zero if it is not there already. Caller holds
-    /// `order`, and the region (if any) is already cleared.
-    fn ensure_line_start(&self) {
-        if !self.at_line_start.swap(true, Ordering::Relaxed) {
-            raw_write(Stream::Stderr, "\n");
+    /// Record whether `stream`'s cursor is now at column zero.
+    fn note_written(&self, stream: Stream, bytes: &[u8]) {
+        if let Some(last) = bytes.last() {
+            self.set_line_start(stream, *last == b'\n');
+        }
+    }
+
+    /// Put `stream`'s cursor at column zero if it is not there already. Caller
+    /// holds `order`, and the region (if any) is already cleared.
+    fn ensure_line_start(&self, stream: Stream) {
+        if !self.line_start(stream) {
+            raw_write(stream, "\n");
+            self.set_line_start(stream, true);
         }
     }
 
@@ -299,18 +364,20 @@ impl Facade {
         let stderr = io::stderr();
         let mut out = TrackedWriter {
             inner: &mut stdout.lock(),
-            at_line_start: &self.at_line_start,
+            facade: self,
+            stream: Stream::Stdout,
         };
         let mut err = TrackedWriter {
             inner: &mut stderr.lock(),
-            at_line_start: &self.at_line_start,
+            facade: self,
+            stream: Stream::Stderr,
         };
         let mut streams = BlockStreams {
             out: &mut out,
             err: &mut err,
         };
         let result = f(&mut streams);
-        self.ensure_line_start();
+        self.ensure_line_start(REGION_STREAM);
         result
     }
 
@@ -353,7 +420,7 @@ impl Facade {
             return;
         }
         if let Some(region) = self.region().as_mut() {
-            self.ensure_line_start();
+            self.ensure_line_start(REGION_STREAM);
             region.started(name, clock);
         }
     }
@@ -365,7 +432,7 @@ impl Facade {
             return;
         }
         if let Some(region) = self.region().as_mut() {
-            self.ensure_line_start();
+            self.ensure_line_start(REGION_STREAM);
             region.finished(name);
         }
     }
@@ -385,7 +452,7 @@ impl Facade {
         }
         match self.region().as_mut() {
             Some(region) => {
-                self.ensure_line_start();
+                self.ensure_line_start(REGION_STREAM);
                 region.refresh();
                 true
             }
@@ -472,23 +539,45 @@ impl Facade {
         let Some(held) = held else {
             return;
         };
+        self.reset_attributes();
         let stdout = io::stdout();
         let stderr = io::stderr();
         {
             let mut out = TrackedWriter {
                 inner: &mut stdout.lock(),
-                at_line_start: &self.at_line_start,
+                facade: self,
+                stream: Stream::Stdout,
             };
             let mut err = TrackedWriter {
                 inner: &mut stderr.lock(),
-                at_line_start: &self.at_line_start,
+                facade: self,
+                stream: Stream::Stderr,
             };
             held.drain_into(&mut out, &mut err);
         }
         if let Some(region) = self.region().as_mut() {
-            self.ensure_line_start();
+            self.ensure_line_start(REGION_STREAM);
             region.rearm();
         }
+    }
+
+    /// Close any SGR state a `tty:` child left open, before otto writes a byte
+    /// of its own.
+    ///
+    /// The design's handoff diagram requires it on reclaim, and it is not
+    /// decorative: a child that exits with `\x1b[31m` still active tints every
+    /// byte otto writes for the rest of the run. It went unnoticed because
+    /// otto's own coloured label happens to carry a reset; under `NO_COLOR` it
+    /// carries none and the bleed is total.
+    ///
+    /// Only onto a terminal, and never through [`Facade::note_written`]: a
+    /// reset moves no cursor, so it changes no line state, and a captured
+    /// stream has no attributes to reset and must not gain escape bytes.
+    fn reset_attributes(&self) {
+        if !io::stderr().is_terminal() {
+            return;
+        }
+        raw_write(REGION_STREAM, "\x1b[0m");
     }
 
     /// Take what is currently held without writing it anywhere.
@@ -502,6 +591,38 @@ impl Facade {
     pub(super) fn take_held(&self) -> Option<Surrendered> {
         let _order = self.order();
         self.terminal().take()
+    }
+}
+
+/// Whether otto's own stdout and stderr land on the same open destination.
+///
+/// `fstat` on both handles and compare the device, inode and rdev: one
+/// terminal answers the same triple twice, `> log 2>&1` answers the same
+/// triple twice, and two pipes, two files, or a file and a terminal do not.
+/// That is exactly the question the facade's line state has to answer, and it
+/// is a question about the invocation rather than about the bytes, so it is
+/// asked once.
+///
+/// A handle that cannot be `fstat`ed is treated as NOT shared: the cost of
+/// guessing wrong that way is a missing newline on one line, and the cost of
+/// guessing wrong the other way is a spurious newline in a captured stream,
+/// which is the regression this replaces.
+fn streams_share_destination() -> bool {
+    fn identity(fd: i32) -> Option<(libc::dev_t, libc::ino_t, libc::dev_t)> {
+        let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+        // Safe: `fstat` writes the whole `struct stat` on success and touches
+        // nothing else, and the fd is one of the process's own standard
+        // handles.
+        let rc = unsafe { libc::fstat(fd, stat.as_mut_ptr()) };
+        if rc != 0 {
+            return None;
+        }
+        let stat = unsafe { stat.assume_init() };
+        Some((stat.st_dev, stat.st_ino, stat.st_rdev))
+    }
+    match (identity(libc::STDOUT_FILENO), identity(libc::STDERR_FILENO)) {
+        (Some(out), Some(err)) => out == err,
+        _ => false,
     }
 }
 
@@ -533,15 +654,14 @@ fn raw_write(stream: Stream, bytes: &str) {
 /// does.
 struct TrackedWriter<'a> {
     inner: &'a mut dyn Write,
-    at_line_start: &'a AtomicBool,
+    facade: &'a Facade,
+    stream: Stream,
 }
 
 impl Write for TrackedWriter<'_> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let written = self.inner.write(buf)?;
-        if let Some(last) = buf[..written].last() {
-            self.at_line_start.store(*last == b'\n', Ordering::Relaxed);
-        }
+        self.facade.note_written(self.stream, &buf[..written]);
         Ok(written)
     }
 

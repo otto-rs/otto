@@ -17,7 +17,12 @@
 //! other writer, so every byte this module writes is written under otto's
 //! ordering lock.
 
-use std::{collections::VecDeque, sync::Arc, time::Duration};
+use std::{
+    collections::VecDeque,
+    panic::{self, AssertUnwindSafe},
+    sync::Arc,
+    time::Duration,
+};
 
 use console::Term;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -42,9 +47,20 @@ pub const REFRESH_INTERVAL: Duration = Duration::from_millis(200);
 /// goal is about. Above it, silence is the thing the reader is asking about.
 const IDLE_THRESHOLD: Duration = Duration::from_secs(5);
 
-/// Rows reserved above the region: the overflow row, the completion line about
-/// to be printed, and the shell prompt the run returns to.
+/// Rows reserved above the region: the separator, the overflow row, the
+/// completion line about to be printed, and slack for the shell prompt the run
+/// returns to.
 const RESERVED_ROWS: u16 = 6;
+
+/// The rows the region draws that are not task rows: the separator above them
+/// and the `... and N more running` row below them.
+///
+/// Subtracted inside the cap, not just counted in [`RESERVED_ROWS`], because
+/// the floor can override the reserve: on a three-row terminal `max(3, h - 6)`
+/// is 3, and three task rows plus these two need five lines. indicatif then
+/// silently drops the rows that do not fit, and the one it drops is the
+/// overflow row the cap exists to protect.
+const CHROME_ROWS: u16 = 2;
 
 /// The fewest task rows the region will draw, however short the terminal is.
 const MIN_ROWS: usize = 3;
@@ -96,6 +112,12 @@ pub struct Region {
     /// Whether otto's own lines on stderr take colour. Read once: it is a
     /// property of the stream, not of a row.
     color: bool,
+    /// Set once the renderer has panicked. indicatif unwraps its own I/O
+    /// results, so a terminal write that fails inside a draw takes the whole
+    /// call down; the design's answer is that otto degrades to plain writes
+    /// rather than letting one failed render poison every later writer. A
+    /// retired region draws nothing again for the rest of the run.
+    retired: bool,
     /// Test-only row cap. Production reads the terminal every time it needs
     /// one, which is also how a resize is handled; a test cannot resize the
     /// harness's terminal and must not depend on what `console` invents for a
@@ -126,6 +148,7 @@ impl Region {
             overflow: None,
             name_width,
             color: crate::executor::colors::stderr_takes_color(),
+            retired: false,
             #[cfg(test)]
             cap_override: None,
         }
@@ -138,6 +161,30 @@ impl Region {
             cap_override: Some(cap),
             ..Self::new(task_names)
         }
+    }
+
+    /// A region drawing at `target` instead of stderr, for the panic-boundary
+    /// test: the only way to reach indicatif's unwraps is to hand it a
+    /// terminal whose writes fail.
+    #[cfg(test)]
+    pub(super) fn with_draw_target(task_names: &[String], target: indicatif::ProgressDrawTarget) -> Self {
+        Self {
+            mp: MultiProgress::with_draw_target(target),
+            ..Self::new(task_names)
+        }
+    }
+
+    /// Whether the renderer has been retired by a panic.
+    #[cfg(test)]
+    pub(super) fn is_retired(&self) -> bool {
+        self.retired
+    }
+
+    /// Change the fixed row cap mid-test, which is a resize as far as
+    /// everything downstream of [`Region::cap`] can tell.
+    #[cfg(test)]
+    pub(super) fn set_cap(&mut self, cap: usize) {
+        self.cap_override = Some(cap);
     }
 
     /// The labels currently ON the screen, top to bottom.
@@ -164,7 +211,60 @@ impl Region {
     /// bytes, and clearing and redrawing nothing around every line of task
     /// output is pure cost.
     pub fn is_drawn(&self) -> bool {
-        self.separator.is_some()
+        !self.retired && self.separator.is_some()
+    }
+
+    /// Run `f` against indicatif with a panic boundary around it, and retire
+    /// the renderer if it trips.
+    ///
+    /// indicatif unwraps: `MultiState::suspend` is `clear().unwrap(); f();
+    /// draw().unwrap()` and both halves return `io::Result`, so a terminal
+    /// write that fails mid-draw panics on whichever thread was writing task
+    /// output. The design's answer is that a render failure degrades to plain
+    /// writes, and this is where that happens. Retiring is permanent for the
+    /// run: the first panic also poisons indicatif's own `RwLock`, which it
+    /// does not recover, so every later call would panic too.
+    ///
+    /// `AssertUnwindSafe` deliberately: the region's invariants are rebuilt
+    /// from the clocks on the next draw, and the only state a half-finished
+    /// draw can leave wrong is which rows are on the screen - which retiring
+    /// makes moot.
+    fn shielded<R>(&mut self, what: &str, f: impl FnOnce(&mut Self) -> R) -> Option<R> {
+        if self.retired {
+            return None;
+        }
+        match panic::catch_unwind(AssertUnwindSafe(|| f(self))) {
+            Ok(value) => Some(value),
+            Err(_) => {
+                log::warn!("region: the renderer panicked in {what}; retiring it and writing plainly from here on");
+                self.retire();
+                None
+            }
+        }
+    }
+
+    /// Stand the renderer down for good, and make sure nothing draws again on
+    /// the way out.
+    ///
+    /// The bars are LEAKED rather than dropped. `BarState::drop` finishes the
+    /// bar, and finishing draws: it takes indicatif's own `RwLock` - the one
+    /// the panic just poisoned - so dropping a bar here panics too. A panic in
+    /// a destructor during unwinding is not recoverable, it aborts the process,
+    /// which would turn "the renderer degraded" into "otto died at teardown".
+    /// One region exists per run and it holds a row per running task, so the
+    /// leak is a handful of allocations at the very end of a run.
+    fn retire(&mut self) {
+        self.retired = true;
+        for gone in std::mem::take(&mut self.drawn) {
+            std::mem::forget(gone.bar);
+        }
+        if let Some(bar) = self.overflow.take() {
+            std::mem::forget(bar);
+        }
+        if let Some(bar) = self.separator.take() {
+            std::mem::forget(bar);
+        }
+        self.waiting.clear();
     }
 
     /// Hide the region around `f`, which writes to the terminal directly.
@@ -172,15 +272,38 @@ impl Region {
     /// `MultiProgress::suspend` clears, runs `f`, then force-redraws. That is
     /// the erase-before-write invariant the design doc wanted bound to one
     /// module.
+    ///
+    /// `f` runs EXACTLY once whatever indicatif does. A panic in the clear
+    /// happens before `f` and leaves it to be run plainly; a panic in the
+    /// redraw happens after it and must not run it twice, which is why the
+    /// closure is taken out of an `Option` rather than called again.
     pub fn suspend<R>(&mut self, f: impl FnOnce() -> R) -> R {
         if !self.is_drawn() {
             return f();
         }
-        self.mp.suspend(f)
+        let mut pending = Some(f);
+        let mut done = None;
+        self.shielded("suspend", |region| {
+            region.mp.suspend(|| {
+                if let Some(f) = pending.take() {
+                    done = Some(f());
+                }
+            });
+        });
+        match done {
+            Some(value) => value,
+            None => pending
+                .take()
+                .expect("suspend ran neither the renderer's closure nor the plain one")(),
+        }
     }
 
     /// A task started: give it a row, or count it against the overflow row.
     pub fn started(&mut self, name: &str, clock: Arc<TaskClock>) {
+        self.shielded("started", |region| region.start_row(name, clock));
+    }
+
+    fn start_row(&mut self, name: &str, clock: Arc<TaskClock>) {
         if self.drawn.iter().any(|d| d.row.name == name) || self.waiting.iter().any(|r| r.name == name) {
             return;
         }
@@ -204,6 +327,10 @@ impl Region {
     /// reaps only the leading run of finished bars, so a task that finishes
     /// third leaves a dead row behind until the two ahead of it also finish.
     pub fn finished(&mut self, name: &str) {
+        self.shielded("finished", |region| region.finish_row(name));
+    }
+
+    fn finish_row(&mut self, name: &str) {
         if let Some(index) = self.drawn.iter().position(|d| d.row.name == name) {
             let gone = self.drawn.remove(index);
             self.mp.remove(&gone.bar);
@@ -221,12 +348,46 @@ impl Region {
         self.redraw();
     }
 
-    /// Recompute every row from its clock. Called on the refresh interval.
+    /// Recompute every row from its clock, and rebalance the rows against the
+    /// terminal's CURRENT height. Called on the refresh interval.
+    ///
+    /// The rebalance is where a resize is handled. `started` is the only other
+    /// place that reads the cap, so without this a terminal that shrank kept
+    /// every row it had attached - in a window that no longer has room for
+    /// them, which is exactly the case [`row_cap`] exists to bound - and a
+    /// terminal that grew promoted nobody until a task happened to finish.
     pub fn refresh(&mut self) {
         if !self.is_drawn() {
             return;
         }
-        self.redraw();
+        self.shielded("refresh", |region| {
+            region.rebalance();
+            region.redraw();
+        });
+    }
+
+    /// Move rows between the screen and the waiting queue until the number
+    /// drawn matches the cap the terminal currently allows.
+    ///
+    /// Demotion takes from the END of `drawn` and puts it at the FRONT of
+    /// `waiting`, so a shrink and a regrow return the same rows to the same
+    /// order rather than shuffling the region every time the window moves.
+    fn rebalance(&mut self) {
+        let cap = self.cap().max(1);
+        while self.drawn.len() > cap {
+            let Some(gone) = self.drawn.pop() else {
+                break;
+            };
+            self.mp.remove(&gone.bar);
+            self.waiting.push_front(gone.row);
+        }
+        while self.drawn.len() < cap {
+            let Some(next) = self.waiting.pop_front() else {
+                break;
+            };
+            self.attach(next);
+        }
+        self.sync_overflow();
     }
 
     /// Take the region off the screen without forgetting it.
@@ -235,20 +396,22 @@ impl Region {
     /// a terminal draw target is a no-op, so swapping the target hides future
     /// draws and leaves the rows already on the screen exactly where they are.
     pub fn erase(&mut self) {
-        let _ = self.mp.clear();
+        self.shielded("erase", |region| {
+            let _ = region.mp.clear();
+        });
     }
 
     /// Put the region back after an erase, with every row recomputed.
     pub fn rearm(&mut self) {
-        self.redraw();
+        self.shielded("rearm", |region| region.redraw());
     }
 
     /// How many task rows this terminal gets.
     ///
-    /// `max(3, height - 6)`, clamped to `height - 1` so a terminal shorter than
-    /// the floor cannot be asked for more rows than it has. Re-read per use
-    /// rather than cached, which is also the SIGWINCH handling: a resized
-    /// terminal is a new answer from the same call.
+    /// See [`row_cap`] for the arithmetic. Re-read per use rather than cached,
+    /// and read on every [`Region::refresh`] as well as on every `started`,
+    /// which is the SIGWINCH handling: a resized terminal is a new answer from
+    /// the same call, and `refresh` is what asks it while a run is in flight.
     fn cap(&self) -> usize {
         #[cfg(test)]
         if let Some(cap) = self.cap_override {
@@ -348,13 +511,17 @@ impl Region {
 
 /// How many task rows fit a terminal `height` rows tall.
 ///
-/// `max(3, height - 6)`, clamped to `height - 1` so a terminal shorter than the
-/// floor cannot be asked for more rows than it has. The six are the separator,
-/// the overflow row, the completion line about to print, and slack for the
-/// shell prompt the run returns to.
+/// `max(3, height - 6)`, clamped to `height - 2` so that whatever the floor
+/// says, the separator and the overflow row still have a line each. The six are
+/// those two plus the completion line about to print plus slack for the shell
+/// prompt the run returns to; the clamp is the same two again, because on a
+/// short terminal the floor overrides the reserve and something has to stop it
+/// asking for more lines than the screen has. One row is the last resort: a
+/// region with no task row in it says nothing at all.
 fn row_cap(height: u16) -> usize {
     let room = height.saturating_sub(RESERVED_ROWS) as usize;
-    room.max(MIN_ROWS).min(height.saturating_sub(1).max(1) as usize)
+    let drawable = height.saturating_sub(CHROME_ROWS).max(1) as usize;
+    room.max(MIN_ROWS).min(drawable)
 }
 
 /// The style every row in the region wears.

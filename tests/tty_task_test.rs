@@ -527,6 +527,64 @@ fn pty_project(temp: &TempDir, ottofile: &str) -> (PathBuf, PathBuf, PathBuf) {
     (home, proj, markers)
 }
 
+/// A `tty:` child that exits with red still active. Nothing in otto's own
+/// output turns it off unless otto says so.
+const SGR_LEAK_OTTOFILE: &str = r#"
+otto:
+  api: 1
+
+tasks:
+  owner:
+    tty: true
+    bash: |
+      printf '\033[31mOWNER\n'
+"#;
+
+/// The handoff diagram requires a defensive `\x1b[0m` when otto takes the
+/// terminal back, and it was missing: measured on a pty with `NO_COLOR=1`, so
+/// otto's own label carries no SGR of its own, every byte otto wrote after the
+/// child exited rendered red.
+///
+/// `NO_COLOR=1` is the fixture, not a detail. With colour on, otto's own
+/// coloured label happens to contain a reset, which masked the bleed.
+#[test]
+fn the_terminal_comes_back_from_a_tty_task_with_the_childs_colour_closed() {
+    let temp = TempDir::new().unwrap();
+    let (home, proj, _markers) = pty_project(&temp, SGR_LEAK_OTTOFILE);
+
+    let mut cmd = common::pty_cmd(&[OTTO_BIN, "owner"]);
+    isolate(&mut cmd, &home);
+    let output = cmd
+        .current_dir(&proj)
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("script should run otto under a pty");
+    let text = format!(
+        "{}{}",
+        common::pty_stdout(&output.stdout),
+        common::pty_stdout(&output.stderr)
+    );
+    assert!(output.status.success(), "the fixture must run clean:\n{text:?}");
+
+    let owner = text
+        .find("OWNER")
+        .unwrap_or_else(|| panic!("the tty child never reached the terminal, so nothing is being measured:\n{text:?}"));
+    let completion = text
+        .find("[owner] finished successfully")
+        .unwrap_or_else(|| panic!("otto wrote no completion line, so nothing is being measured:\n{text:?}"));
+    let reset = text[owner..]
+        .find("\x1b[0m")
+        .map(|at| at + owner)
+        .unwrap_or_else(|| panic!("otto never closed the child's SGR state:\n{text:?}"));
+    assert!(
+        reset < completion,
+        "the reset landed AFTER otto's own line, which is already rendered red:\n{text:?}"
+    );
+}
+
 const READ_STDIN_OTTOFILE: &str = r#"
 otto:
   api: 1

@@ -367,6 +367,98 @@ fn a_completion_line_starts_on_its_own_line_after_an_unterminated_chunk_through_
     );
 }
 
+/// `printf ERR >&2` leaves the UNTERMINATED chunk on stderr while the
+/// completion line goes to stdout. The two are different destinations here (two
+/// pipes), so stdout's cursor is at column zero and needs no correction.
+const UNTERMINATED_STDERR: &str = r#"
+otto:
+  api: 1
+
+tasks:
+  errnonl:
+    bash: |
+      printf ERR >&2
+"#;
+
+/// Measured regression: one `at_line_start` flag served both streams, so an
+/// unterminated chunk on stderr marked STDOUT dirty too and the completion line
+/// arrived with a leading newline that nothing on stdout had earned. Against
+/// v2.5.3 the same run produced `[errnonl] finished successfully\n` with no
+/// leading newline, which makes this an undisclosed change to captured stdout.
+#[test]
+fn an_unterminated_chunk_on_stderr_puts_no_newline_into_a_captured_stdout() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let ottofile = write_ottofile(temp.path(), "errnonl.yml", UNTERMINATED_STDERR);
+
+    let output = otto_cmd(&home)
+        .arg("-o")
+        .arg(&ottofile)
+        .arg("errnonl")
+        .output()
+        .expect("otto should run");
+    assert!(output.status.success(), "the fixture must run clean");
+    let out = strip_sgr(&String::from_utf8_lossy(&output.stdout));
+
+    assert!(
+        !out.starts_with('\n'),
+        "captured stdout opens with a newline that no write to stdout called for: {out:?}"
+    );
+    assert!(
+        out.starts_with("[errnonl] finished successfully"),
+        "the completion line must be the first thing on stdout: {out:?}"
+    );
+}
+
+/// The other direction of the same defect, and the case Phase 5's own criterion
+/// did NOT hold in: the unterminated chunk is on a REDIRECTED stdout while
+/// stderr is the terminal. The corrective newline used to go to stderr
+/// unconditionally and mark the shared flag clean, so the stream that actually
+/// needed one never got it and the captured file read
+/// `[nonl] DONE[nonl] finished successfully` - byte for byte the shape the
+/// design names as the defect being fixed.
+#[test]
+fn a_completion_line_starts_on_its_own_line_when_only_stdout_is_redirected() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let ottofile = write_ottofile(temp.path(), "nonl.yml", UNTERMINATED);
+    let captured = temp.path().join("stdout.txt");
+
+    // stdout to a file, stderr left on the pty: the two streams are different
+    // destinations, which is the whole point of the fixture.
+    let script = format!(
+        "{} -o {} nonl > {}",
+        shell_word(OTTO_BIN),
+        shell_word(&ottofile.display().to_string()),
+        shell_word(&captured.display().to_string())
+    );
+    let mut cmd = common::pty_cmd(&["sh", "-c", &script]);
+    isolate(&mut cmd, &home);
+    let output = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("`script` should allocate a pty and run otto");
+    let pty_text = common::pty_stdout(&output.stdout);
+    assert!(output.status.success(), "the fixture must run clean:\n{pty_text}");
+
+    let out = strip_sgr(&fs::read_to_string(&captured).expect("the redirected stdout file"));
+    assert!(
+        !out.contains("DONE[nonl] finished successfully"),
+        "the completion line is jammed onto the unterminated chunk in the captured file:\n{out:?}"
+    );
+    assert!(
+        out.contains("[nonl] DONE\n[nonl] finished successfully"),
+        "otto did not terminate the child's last chunk on the stream that needed it:\n{out:?}"
+    );
+}
+
+/// Single-quote one word for the shell `script -c` hands its string to.
+fn shell_word(word: &str) -> String {
+    format!("'{}'", word.replace('\'', r"'\''"))
+}
+
 // ---------------------------------------------------------------------------
 // The Acceptance Criteria row that could not run until a renderer existed.
 // ---------------------------------------------------------------------------

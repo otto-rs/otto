@@ -135,6 +135,48 @@ fn a_poisoned_ordering_lock_is_recovered_not_propagated() {
     f.teardown();
 }
 
+// ---------------------------------------------------------------------------
+// Line state, per stream.
+// ---------------------------------------------------------------------------
+
+/// One flag for two streams was wrong in both directions. The measured
+/// regression: `printf ERR >&2` with both streams captured to separate files
+/// put a LEADING newline into stdout, because the unterminated chunk on stderr
+/// cleared the one shared flag and the completion line on stdout then
+/// "corrected" a cursor that was already at column zero.
+#[test]
+fn an_unterminated_chunk_on_one_stream_leaves_the_other_at_line_start() {
+    let f = Facade::with_one_destination(false);
+    f.note_written(Stream::Stderr, b"ERR");
+    assert!(
+        !f.line_start(Stream::Stderr),
+        "stderr is mid-line after an unterminated chunk"
+    );
+    assert!(
+        f.line_start(Stream::Stdout),
+        "a write to stderr moved no cursor on a stdout that is somewhere else"
+    );
+}
+
+/// And the other half: when the two handles ARE one destination - one terminal,
+/// or one file both were redirected to - they share a cursor, so they share a
+/// line state. This is the case the single flag got right, and it has to keep
+/// working.
+#[test]
+fn two_handles_on_one_destination_share_one_line_state() {
+    let f = Facade::with_one_destination(true);
+    f.note_written(Stream::Stdout, b"DONE");
+    assert!(
+        !f.line_start(Stream::Stderr),
+        "an unterminated chunk on stdout left the shared cursor mid-line"
+    );
+    f.note_written(Stream::Stderr, b"\n");
+    assert!(
+        f.line_start(Stream::Stdout),
+        "a newline on stderr put the shared cursor back at column zero"
+    );
+}
+
 /// Teardown is reached from overlapping exit paths - a fatal error during a
 /// run that is also being signalled hits two of them - so it has to be safe to
 /// call more than once.

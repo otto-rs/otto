@@ -26,12 +26,176 @@ fn the_row_cap_leaves_room_for_the_overflow_row_and_the_prompt() {
 /// The floor and the clamp are two different guards and a short terminal needs
 /// both: `max(3, ...)` would ask a 3-row terminal for 3 rows plus a separator
 /// plus an overflow row.
+///
+/// Inverted from `a_short_terminal_is_clamped_below_the_floor`, which pinned
+/// `row_cap(3) == 2`. Two task rows plus the separator plus the overflow row is
+/// four lines in a three-line terminal, so indicatif dropped the overflow row -
+/// the exact row the cap was written to protect. The clamp reserves both chrome
+/// rows now, so every height below leaves them a line each.
 #[test]
-fn a_short_terminal_is_clamped_below_the_floor() {
+fn a_short_terminal_still_leaves_the_separator_and_the_overflow_row_a_line_each() {
     assert_eq!(row_cap(9), MIN_ROWS);
-    assert_eq!(row_cap(3), 2);
+    for height in 1..=12u16 {
+        let cap = row_cap(height);
+        assert!(
+            cap >= 1,
+            "a region with no task row in it says nothing: height {height}"
+        );
+        assert!(
+            cap + CHROME_ROWS as usize <= (height as usize).max(3),
+            "row_cap({height}) == {cap} asks for {} lines in a {height}-line terminal",
+            cap + CHROME_ROWS as usize
+        );
+    }
+    assert_eq!(row_cap(3), 1);
+    assert_eq!(row_cap(4), 2);
+    assert_eq!(row_cap(5), 3);
     assert_eq!(row_cap(1), 1);
     assert_eq!(row_cap(0), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Resize: the cap is re-read while a run is in flight, not only when a task
+// starts.
+// ---------------------------------------------------------------------------
+
+/// A terminal that shrinks must give rows back, and one that grows must take
+/// them again. Before this, `self.cap()` was read in exactly one place -
+/// `started` - so a populated region kept every row it had through a resize:
+/// shrinking left six rows attached in a three-row window with no overflow row,
+/// and growing promoted nobody until a task happened to finish.
+#[test]
+fn a_resize_moves_rows_between_the_screen_and_the_overflow_row() {
+    let mut region = Region::with_cap(&names(&["a", "b", "c", "d"]), 4);
+    for task in ["a", "b", "c", "d"] {
+        region.started(task, clock(task));
+    }
+    assert_eq!(region.row_labels(), vec!["a", "b", "c", "d"]);
+    assert!(!region.has_overflow_row(), "four rows under a cap of four hide nothing");
+
+    region.set_cap(2);
+    region.refresh();
+    assert_eq!(region.row_labels(), vec!["a", "b"], "a shrink must demote from the end");
+    assert_eq!(region.waiting_len(), 2);
+    assert!(
+        region.has_overflow_row(),
+        "the rows a shrink took off the screen still have to be counted"
+    );
+
+    region.set_cap(4);
+    region.refresh();
+    assert_eq!(
+        region.row_labels(),
+        vec!["a", "b", "c", "d"],
+        "a regrow must promote the same rows back in the same order"
+    );
+    assert_eq!(region.waiting_len(), 0);
+    assert!(!region.has_overflow_row(), "nothing is hidden any more");
+}
+
+// ---------------------------------------------------------------------------
+// The panic boundary.
+// ---------------------------------------------------------------------------
+
+/// A terminal whose every operation fails, which is the only way to reach
+/// indicatif's own unwraps: `MultiState::suspend` is `clear().unwrap(); f();
+/// draw().unwrap()`, and both halves return `io::Result`.
+#[derive(Debug)]
+struct BrokenTerm;
+
+impl BrokenTerm {
+    fn hung_up() -> std::io::Error {
+        std::io::Error::other("deliberate: the terminal hung up mid-draw")
+    }
+}
+
+impl indicatif::TermLike for BrokenTerm {
+    fn width(&self) -> u16 {
+        80
+    }
+
+    fn height(&self) -> u16 {
+        24
+    }
+
+    fn move_cursor_up(&self, _: usize) -> std::io::Result<()> {
+        Err(Self::hung_up())
+    }
+
+    fn move_cursor_down(&self, _: usize) -> std::io::Result<()> {
+        Err(Self::hung_up())
+    }
+
+    fn move_cursor_right(&self, _: usize) -> std::io::Result<()> {
+        Err(Self::hung_up())
+    }
+
+    fn move_cursor_left(&self, _: usize) -> std::io::Result<()> {
+        Err(Self::hung_up())
+    }
+
+    fn write_line(&self, _: &str) -> std::io::Result<()> {
+        Err(Self::hung_up())
+    }
+
+    fn write_str(&self, _: &str) -> std::io::Result<()> {
+        Err(Self::hung_up())
+    }
+
+    fn clear_line(&self) -> std::io::Result<()> {
+        Err(Self::hung_up())
+    }
+
+    fn flush(&self) -> std::io::Result<()> {
+        Err(Self::hung_up())
+    }
+}
+
+/// The design's promise: "indicatif unwraps; the facade catches, so a render
+/// failure degrades to plain writes instead of poisoning every later writer."
+///
+/// Three claims in one, because they are one behaviour: the panic does not
+/// escape, the suspended write still happens EXACTLY once, and the renderer
+/// stays retired afterwards rather than panicking again on every later call
+/// against indicatif's own poisoned lock.
+#[test]
+fn a_renderer_panic_is_caught_and_the_write_still_happens_exactly_once() {
+    let target = indicatif::ProgressDrawTarget::term_like(Box::new(BrokenTerm));
+    let mut region = Region::with_draw_target(&names(&["a"]), target);
+    region.started("a", clock("a"));
+    assert!(
+        region.is_drawn(),
+        "the fixture needs a drawn region, or `suspend` short-circuits and proves nothing"
+    );
+
+    let mut writes = 0;
+    let value = region.suspend(|| {
+        writes += 1;
+        "the plain write"
+    });
+    assert_eq!(value, "the plain write", "the closure's value must still come back");
+    assert_eq!(
+        writes, 1,
+        "the suspended write must run once: not zero (output lost to a render failure) \
+         and not twice (a panic after the write re-running it)"
+    );
+    assert!(
+        region.is_retired(),
+        "a renderer that panicked must be retired; indicatif does not recover its own poisoned lock"
+    );
+
+    let mut later = 0;
+    region.suspend(|| later += 1);
+    assert_eq!(later, 1, "a retired region still writes, plainly");
+    assert!(
+        !region.is_drawn(),
+        "a retired region has nothing on the screen to suspend"
+    );
+    // None of these may panic either: every one of them reaches indicatif.
+    region.refresh();
+    region.erase();
+    region.rearm();
+    region.finished("a");
 }
 
 // ---------------------------------------------------------------------------

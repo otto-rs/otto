@@ -89,6 +89,97 @@ fn progress_always_is_rejected_through_the_env_var_too() {
     assert!(out.contains("always"), "error should name the rejected value:\n{out}");
 }
 
+/// An invalid `otto.progress` in a shared ottofile must be refused whoever
+/// runs it.
+///
+/// Measured before this: the file's value was parsed only when no
+/// higher-precedence source was present, so `otto: {progress: bogus}` refused
+/// the run for a colleague with no `OTTO_PROGRESS` exported and ran clean for a
+/// colleague who had one. Same file, same typo, two answers.
+#[test]
+fn an_invalid_otto_progress_is_refused_whether_or_not_the_env_var_wins() {
+    fn run_with_bogus_file_value(extra_env: &[(&str, &str)]) -> (i32, String) {
+        let dir = TempDir::new().expect("tempdir");
+        fs::write(
+            dir.path().join("otto.yml"),
+            "otto:\n  progress: bogus\ntasks:\n  quiet:\n    bash: echo START\n",
+        )
+        .expect("write ottofile");
+        let home = dir.path().join("otto-home");
+        fs::create_dir_all(&home).expect("create otto home");
+
+        let mut cmd = std::process::Command::new(OTTO_BIN);
+        cmd.arg("quiet");
+        isolate(&mut cmd, &home);
+        for (k, v) in extra_env {
+            cmd.env(k, v);
+        }
+        let output = cmd
+            .current_dir(dir.path())
+            .env_remove("OTTOFILE")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .expect("run otto");
+        let mut merged = String::from_utf8_lossy(&output.stdout).into_owned();
+        merged.push_str(&String::from_utf8_lossy(&output.stderr));
+        (output.status.code().unwrap_or(-1), merged)
+    }
+
+    for env in [
+        &[][..],
+        &[("OTTO_PROGRESS", "never")][..],
+        &[("OTTO_PROGRESS", "auto")][..],
+    ] {
+        let (code, out) = run_with_bogus_file_value(env);
+        assert_eq!(code, 1, "otto.progress: bogus must be refused with env {env:?}:\n{out}");
+        assert!(
+            out.contains("otto.progress") && out.contains("bogus"),
+            "the error must name the key and the value with env {env:?}:\n{out}"
+        );
+        assert!(
+            !out.contains("START"),
+            "the task must not have run with env {env:?}:\n{out}"
+        );
+    }
+}
+
+/// And the precedence the validation must not disturb: a valid file value
+/// loses to `OTTO_PROGRESS`, and a valid file value alone still applies.
+#[test]
+fn a_valid_otto_progress_still_loses_to_the_env_var_and_still_applies_alone() {
+    let dir = TempDir::new().expect("tempdir");
+    fs::write(
+        dir.path().join("otto.yml"),
+        "otto:\n  progress: never\ntasks:\n  quiet:\n    bash: echo START\n",
+    )
+    .expect("write ottofile");
+    let home = dir.path().join("otto-home");
+    fs::create_dir_all(&home).expect("create otto home");
+
+    for env in [&[][..], &[("OTTO_PROGRESS", "auto")][..]] {
+        let mut cmd = std::process::Command::new(OTTO_BIN);
+        cmd.arg("quiet");
+        isolate(&mut cmd, &home);
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        let output = cmd
+            .current_dir(dir.path())
+            .env_remove("OTTOFILE")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .expect("run otto");
+        let out = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "a valid file value must load with env {env:?}:\n{out}"
+        );
+        assert!(out.contains("START"), "the task must run with env {env:?}:\n{out}");
+    }
+}
+
 /// Success criterion: an ottofile carrying `progress-interval` loads
 /// successfully and warns.
 #[test]
