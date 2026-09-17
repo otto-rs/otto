@@ -218,6 +218,13 @@ parent: acquire ownership  -> erase region, stop ticker, mark surrendered
 child : owns the terminal
       : reap
 parent: reset defensively (\x1b[0m), re-read winsize, re-arm region
+(the reset goes to whichever of otto's handles IS a terminal, once per
+destination rather than once per handle, and it runs on BOTH handback paths:
+reclaim and teardown. Implementation audit round 2, findings N2 and N3: it
+originally gated on stderr alone and had a single call site in reclaim, so a
+run with stderr captured left the stdout terminal coloured, and a first SIGINT
+reaching teardown first could drain the held output and skip the reset
+entirely.)
 ```
 
 While surrendered, the facade BUFFERS otto-authored writes rather than dropping
@@ -442,11 +449,28 @@ never asked for one, and an unterminated chunk on a redirected stdout was
 answered by a newline sent to a stderr somewhere else entirely, so the original
 `printf DONE` defect still reproduced whenever the two streams had different
 destinations. The remediation keeps `at_line_start` per stream and re-couples
-them only when they genuinely share one destination, decided once from `fstat`
-by comparing `(st_dev, st_ino, st_rdev)` on fds 1 and 2. That is a property of
-how otto was invoked and cannot change mid-run, so it is measured at startup
-and not re-probed. The pre-row-draw newline goes to the stream the rows land
-on, never to whichever stream the last write happened to use. Without it the region additionally
+them only when they genuinely share one destination, decided once at startup
+because it is a property of how otto was invoked and cannot change mid-run.
+The pre-row-draw newline goes to the stream the rows land on, never to
+whichever stream the last write happened to use.
+
+**"Same destination" is a question about TERMINALS first and inodes second,
+and getting that order wrong is a regression this design already shipped
+once** (implementation audit round 2, finding N1). The first implementation
+compared only the `fstat` triple `(st_dev, st_ino, st_rdev)` on fds 1 and 2.
+That is filesystem identity, not terminal identity: `/dev/tty` and that
+terminal's own pts slave are ONE terminal sharing ONE cursor, but their triples
+differ ((7,12,1280) against (146,3,34816)), so the probe called them decoupled
+and the concatenation defect came back for anyone routing one stream through
+`/dev/tty`. Measured across three binaries: v2.5.3 concatenated, the first fix
+was correct, the fstat-only version concatenated again.
+The predicate now asks `isatty` on both fds FIRST and returns coupled if both
+are terminals, falling through to the triple compare otherwise. Two different
+terminals for stdout and stderr is not an invocation otto sees; files are not
+terminals, so `> a 2> b` stays decoupled; and `> log 2>&1` already compares
+equal on the triples. A handle that cannot be `fstat`ed is treated as NOT
+shared, because the cost of that wrong guess is one missing newline while the
+cost of the opposite is a spurious newline in a captured stream. Without it the region additionally
 overwrites the child's last line and a later erase deletes child output. Replay
 already does this explicitly (`scheduler/replay.rs:347-352`); the live path and
 the completion line must too.
@@ -988,8 +1012,15 @@ existing ottofiles.
   the binary before any shared ottofile adopts the key, and remove the key
   before rolling a binary back. This is the same hazard the shipped design
   carried for `progress-interval`.
-- **`K = max(3, term_height - 6)`** is clamped to `term_height - 1` so a very
-  short terminal cannot ask for more rows than exist.
+- **`K = max(3, term_height - 6)`** is clamped to `term_height - 2`, not
+  `term_height - 1`, so a very short terminal cannot ask for more rows than
+  exist. The two reserved lines are the separator and the persistent
+  `... and N more running` row, which are drawn lines like any other and have
+  to be counted against the height (implementation audit round 1, finding M2:
+  the original `- 1` clamp meant six tasks on a three-row terminal produced
+  ZERO overflow rows, so the cap dropped the exact row it exists to protect).
+  Concretely `row_cap` now gives 1 at height 3, 2 at height 4, 3 at height 5,
+  and is unchanged from 6 up.
 
 ## Risks and Mitigations
 
